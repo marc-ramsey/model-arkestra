@@ -1,0 +1,44 @@
+FROM registry.fedoraproject.org/fedora:44
+
+# Vulkan + CUDA compat drivers for AMD Strix Halo (gfx1151)
+RUN dnf install -y --setopt=install_weak_deps=False \
+        vulkan-loader mesa-vulkan-drivers libcurl libgomp spirv-headers-devel \
+    && dnf clean all
+
+ENV AMD_VULKAN_ICD=RADV
+ENV VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json
+ENV MESA_SHADER_CACHE_DIR=/tmp/mesa-shader-cache
+ENV LLAMA_CACHE=/home/lemonade/hub
+ENV ROCBLAS_USE_HIPBLASLT=1
+ENV GGML_CUDA_ENABLE_UNIFIED_MEMORY=ON
+
+# Build llama-server from master (latest Vulkan pipeline)
+RUN dnf install -y git cmake gcc-g++ make clang llvm-devel \
+    && cd /tmp \
+    && git clone --depth 1 https://github.com/ggml-org/llama.cpp.git \
+    && cd llama.cpp \
+    && mkdir -p build \
+    && cd build \
+    && cmake .. -DLLAMA_VULKAN=ON -DCMAKE_BUILD_TYPE=Release \
+    && make llama-server -j$(nproc) \
+    && cp llama-server /usr/local/bin/llama-server \
+    && cd /tmp && rm -rf llama.cpp \
+    && dnf remove -y git cmake gcc-g++ clang llvm-devel \
+    && dnf clean all
+
+# Equivalent of host llama-vulkan.sh – sets env + launches llama-server with Vulkan presets
+RUN cat > /usr/local/bin/llama-vulkan.sh << 'SCRIPT'
+#!/bin/bash
+export LLAMA_CACHE=/home/lemonade/hub
+export ROCBLAS_USE_HIPBLASLT=1
+export GGML_CUDA_ENABLE_UNIFIED_MEMORY=ON
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH
+exec /usr/local/bin/llama-server \
+    -fa on -ngl 999 --no-mmap "$@"
+SCRIPT
+chmod 755 /usr/local/bin/llama-vulkan.sh
+
+WORKDIR /root
+VOLUME ["/models"]
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/llama-server"]

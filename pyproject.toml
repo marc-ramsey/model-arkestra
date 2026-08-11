@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "-m 'not slow'"
+markers = [
+    "slow: tests that download & start a real LLM (~5-10 min first run, fast after cache)",
+]
+
+[project]
+name = "model-arkestra"
+version = "0.1.0"
+description = "Async process-based LLM server manager."
+requires-python = ">=3.11"
+dependencies = [
+    "llm-config-manager",
+    "aiohttp>=3.9",
+]
