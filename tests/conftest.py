@@ -20,6 +20,7 @@ exported for modules that need low-level cleanup inside their own fixtures.
 """
 
 from __future__ import annotations
+import asyncio
 import os
 import signal
 import subprocess
@@ -144,3 +145,78 @@ def _cleanup_ports() -> None:
     yield
     for port in _CLEANUP_PORTS:
         _kill_port(port)
+
+
+# ── Podman test resource tracker (guaranteed teardown via fixture) ───────────
+
+
+class _PodmanCleanupTracker:
+    """Tracks podman containers, watcher tasks, and ports created during a test.
+
+    All tracked resources are cleaned up in fixture teardown — even if the test
+    fails an assertion or crashes.  Each test class that needs it instantiates
+    one tracker and calls ``track_*`` methods as resources are created.
+    """
+
+    def __init__(self) -> None:
+        self._containers: list[str] = []
+        self._tasks: list[asyncio.Task] = []  # type: ignore[type-arg]
+        self._ports: set[int] = set()
+
+    def track_container(self, cid: str) -> None:
+        """Mark a podman container for removal in teardown."""
+        self._containers.append(cid)
+
+    def track_task(self, task: asyncio.Task) -> None:
+        """Mark an async watcher task for cancellation in teardown."""
+        self._tasks.append(task)
+
+    def track_port(self, port: int) -> None:
+        """Mark a port for killing in teardown."""
+        self._ports.add(port)
+
+
+@pytest.fixture()
+async def podman_cleanup() -> _PodmanCleanupTracker:
+    """Fixture that tracks podman containers/tasks/ports with guaranteed teardown.
+
+    Import and use inside test methods — it is not autouse so only tests that
+    need it pay the cost:
+
+        async def test_something(self, podman_cleanup):
+            cleanup = podman_cleanup
+            cid = await _start_container(...)
+            cleanup.track_container(cid)
+
+    Teardown cancels watcher tasks (awaited), removes containers, and kills ports
+    — regardless of whether the test passed or raised an assertion error.
+    """
+    tracker = _PodmanCleanupTracker()
+    yield tracker
+
+    # ── Teardown (always runs, even on assertion failure) ───────────────
+
+    # 1. Cancel watcher tasks first — they may spawn new containers we need
+    for task in tracker._tasks:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    # 2. Remove tracked containers
+    for cid in tracker._containers:
+        subprocess.run(["podman", "rm", "-f", cid], capture_output=True, timeout=10)
+
+    # 3. Kill tracked ports
+    for port in tracker._ports:
+        result = subprocess.run(
+            ["lsof", "-ti:", str(port)], capture_output=True, text=True
+        )
+        for pid in result.stdout.strip().split():
+            if pid:
+                try:
+                    os.kill(int(pid), 9)
+                except OSError:
+                    pass
+

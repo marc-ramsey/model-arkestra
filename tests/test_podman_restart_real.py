@@ -23,25 +23,8 @@ def _podman(*args: str) -> subprocess.CompletedProcess:
     return result
 
 
-@pytest.fixture(scope="module")
-def alpine_image():
-    subprocess.run(["podman", "pull", "alpine:latest"], capture_output=True, timeout=120)
-    return "alpine:latest"
-
-
-def _make_runner(port=None):
-    mock_cm = MagicMock()
-    mock_cm.get_model.return_value = {"image": "alpine:latest", "container_port": 80}
-    return PodmanModelRunner(
-        config_manager=mock_cm,
-        restart_delay=0.05,
-        restart_limit=3,
-        ready_timeout=60,
-        ready_poll_ms=100,
-    )
-
-
 def _kill_port(port: int) -> None:
+    """Kill process on *port* and remove any containers mapped to it."""
     # Kill via lsof (most common)
     result = subprocess.run(["lsof", "-ti:", str(port)], capture_output=True, text=True)
     for pid in result.stdout.strip().split():
@@ -119,10 +102,12 @@ class TestContainerStartAndDetectExit:
 class TestWatchContainerDetectsExit:
     @pytest.mark.asyncio
     @pytest.mark.slow
-    async def test_watch_detects_exit(self, alpine_image):
+    async def test_watch_detects_exit(self, alpine_image, podman_cleanup):
+        cleanup = podman_cleanup
         runner = _make_runner()
         port = 18001
         name = f"alpine-watcher-{uuid.uuid4().hex[:8]}"
+
         ctx = _ModelContext("alpine-exit", port)
         runner._models["alpine-exit"] = ctx
         ctx.state = RunnerState.RUNNING
@@ -139,9 +124,7 @@ class TestWatchContainerDetectsExit:
 
         ctx.container_id = cid
         print(f"[+] Started container: {cid[:12]}")
-
-        # Track all containers we spawn during this test
-        spawned_cids = [cid]
+        cleanup.track_container(cid)
 
         task = asyncio.create_task(runner._watch_container("alpine-exit", ctx))
         await asyncio.sleep(0.5)
@@ -154,17 +137,9 @@ class TestWatchContainerDetectsExit:
             f"Expected restart detected, got count={ctx.restart_count}"
         print(f"[+] Watcher detected exit → {ctx.restart_count} restart(s)")
 
+        cleanup.track_task(task)
+        cleanup.track_port(port)
         await runner.stop()
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        finally:
-            # Kill the original + any restarted containers
-            for c in spawned_cids:
-                _podman("rm", "-f", c)
-            _kill_port(port)
 
 
 # ── Test 3: stop() prevents restart after crash ───────────────────────────────
@@ -172,10 +147,12 @@ class TestWatchContainerDetectsExit:
 class TestStopPreventsRestart:
     @pytest.mark.asyncio
     @pytest.mark.slow
-    async def test_stop_prevents_restart(self, alpine_image):
+    async def test_stop_prevents_restart(self, alpine_image, podman_cleanup):
+        cleanup = podman_cleanup
         runner = _make_runner()
         port = 18002
         name = f"alpine-stop-{uuid.uuid4().hex[:8]}"
+
         ctx = _ModelContext("alpine-stop-test", port)
         runner._models["alpine-stop-test"] = ctx
         ctx.state = RunnerState.RUNNING
@@ -192,6 +169,7 @@ class TestStopPreventsRestart:
 
         ctx.container_id = cid
         print(f"[+] Started container: {cid[:12]}")
+        cleanup.track_container(cid)
 
         task = asyncio.create_task(runner._watch_container("alpine-stop-test", ctx))
         await asyncio.sleep(0.3)
@@ -201,20 +179,14 @@ class TestStopPreventsRestart:
         await runner.stop()
         await asyncio.sleep(3.0)  # wait for next poll cycle (2s)
 
+        cleanup.track_task(task)
+        cleanup.track_port(port)
+
         assert ctx.state == RunnerState.STOPPED, \
             f"Expected STOPPED, got {ctx.state}"
         assert ctx.restart_count == 0, \
             f"stop() should block restart, but count={ctx.restart_count}"
         print("[+] stop() correctly prevented restart after crash")
-
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        finally:
-            _podman("rm", "-f", cid)
-            _kill_port(port)
 
 
 # ── Test 4: Full runner lifecycle via start()/stop_all() ─────────────────────
