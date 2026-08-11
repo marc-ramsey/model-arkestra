@@ -92,7 +92,7 @@ class BaseModelRunner(ABC):
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.stop_all()
+        await self.shutdown()
 
     # ── Internal Core ──────────────────────────────────────
 
@@ -410,9 +410,14 @@ class BaseModelRunner(ABC):
         ctx.state = RunnerState.STOPPED
 
     async def stop_all(self) -> None:
+        """Stop all model processes, leaving entries in STOPPED state for restart-on-start."""
         for key in list(self._models):
             await self._stop_single(key)
-            del self._models[key]
+
+    async def shutdown(self) -> None:
+        """Stop all models and clear the store — full teardown."""
+        await self.stop_all()
+        self._models.clear()
 
     async def _watch_process_or_container(self, model_name: str, ctx: _ModelContext) -> None:
         if ctx.process is not None:

@@ -129,7 +129,7 @@ async def _cleanup_after_test(mr: ModelArkestra) -> None:
     yield
     if mr._runners:  # only bother if something was actually started
         try:
-            await mr.stop_all()
+            await mr.shutdown()  # clears _models, _runners, resets port counter
         except RuntimeError:
             pass  # event loop may be closed — nothing we can do
 

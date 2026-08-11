@@ -172,14 +172,18 @@ async for event in runner.astream("gpt-oss-20b", {"prompt": "Write a haiku"}):
 # Stop a single model
 await runner.stop("gemma-4-26b-instruct")
 
-# Stop all running models, wait for watchers to settle
+# Stop all running models — processes are killed but model entries remain
+# in STOPPED state so start() can restart them in-place on the same port.
 await runner.stop_all()
 
-# Or use the context manager (auto-calls stop_all on exit)
+# Full teardown — stops all models, clears internal state, resets port allocator
+await runner.shutdown()
+
+# Or use the context manager (auto-calls shutdown() on exit)
 async with ModelArkestra("config.yaml"):
     await runner.start("qwen3-4b")
     # ... do work ...
-# → stop_all() called here
+# → shutdown() called here, port counter resets to start value
 ```
 
 ---
@@ -218,7 +222,11 @@ Stops the running instance and starts a new one on the **same port**.  Optional 
 
 #### `async stop_all() -> None`
 
-Shuts down every model. Cancels all background watcher tasks, then clears internal state.
+Stops all model processes. Model entries remain in `_models` with state ``STOPPED`` — calling `start()` again on a stopped model restarts it in-place on the same port.
+
+#### `async shutdown() -> None`
+
+Full teardown: stops all models, clears all runner and model entries, and resets the port allocator to ``models-start-port``. Use this for final cleanup (e.g. context manager exit, test teardown).
 
 #### `async ainvoke(model_name: str, prompt: str) -> str`
 

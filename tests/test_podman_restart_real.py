@@ -23,6 +23,18 @@ def _podman(*args: str) -> subprocess.CompletedProcess:
     return result
 
 
+def _make_runner():
+    mock_cm = MagicMock()
+    mock_cm.get_model.return_value = {"image": "alpine:latest", "container_port": 80}
+    return PodmanModelRunner(
+        config_manager=mock_cm,
+        restart_delay=0.05,
+        restart_limit=3,
+        ready_timeout=60,
+        ready_poll_ms=100,
+    )
+
+
 def _kill_port(port: int) -> None:
     """Kill process on *port* and remove any containers mapped to it."""
     # Kill via lsof (most common)
@@ -58,6 +70,15 @@ def _kill_port(port: int) -> None:
         ).stdout.strip()
         if f'"{port}/tcp"' in portmap or str(port) in portmap:
             subprocess.run(["podman", "rm", "-f", cid], capture_output=True, timeout=10)
+
+
+# ── Module fixture: ensure alpine image is available ─────────────────────────
+
+@pytest.fixture(scope="module")
+def alpine_image():
+    """Pull alpine:latest once per test module (slow, shared)."""
+    subprocess.run(["podman", "pull", "alpine:latest"], capture_output=True, timeout=120)
+    return "alpine:latest"
 
 
 # ── Test 1: Container starts and can be externally killed ─────────────────────

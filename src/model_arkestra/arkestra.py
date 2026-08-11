@@ -228,8 +228,14 @@ class ModelArkestra:
         await self.start(model_name, backend=backend, container=container)
 
     async def stop_all(self) -> None:
+        """Stop all model processes across every runner, keeping entries alive."""
         for r in self._runners.values():
             await r.stop_all()
+
+    async def shutdown(self) -> None:
+        """Full teardown — stop models, clear runners, reset port allocator."""
+        for r in self._runners.values():
+            await r.shutdown()
         self._runners.clear()
         self._next_port = self._cm.data.get('models-start-port', 18000)
 

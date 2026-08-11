@@ -298,3 +298,20 @@ class PodmanModelRunner(BaseModelRunner):
         """Ensure stale container reference is cleared before restarting."""
         ctx.container_id = None
         return await super()._before_restart(ctx)
+
+    async def shutdown(self) -> None:
+        """Full teardown — stop models, force-remove containers, clear state."""
+        cids = [getattr(ctx, "container_id", None) for ctx in list(self._models.values())]
+        await super().shutdown()
+        for cid in cids:
+            if cid:
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        "podman", "rm", "-f", cid,
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.DEVNULL,
+                        env=os.environ,
+                    )
+                    await proc.wait()
+                except Exception:
+                    pass
