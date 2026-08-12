@@ -8,22 +8,41 @@ This is **not** a replacement for [Lemonade](https://github.com/ollama/lemonade)
 
 ModelArkestra handles port allocation and backend→runner routing.
 
-<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%">
-<tr><td style="width:100%;padding:0">ModelArkestra — port allocation, backend→runner routing</td></tr>
-<tr><td style="width:100%;padding:0"><table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%">
-<tr><td style="padding:0">_build_runner_class_map() → config-driven</td></tr>
-<tr><td style="padding:0">runners: section maps type → class</td></tr>
-<tr><td style="padding:0">_get_runner_instance(type, model) → lazy factory</td></tr>
-</table></td></tr>
-<tr><td style="width:100%;padding:0"><table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%">
-<tr><td style="width:34%;padding-right:8px;padding:0"><b>ProcessModelRunner</b></td><td style="width:66%;padding:0"><b>ContainerModelRunner<br>(abstract base)</b></td></tr>
-</table></td></tr>
-<tr><td style="width:100%;padding:0"><table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%">
-<tr><td style="width:34%;padding-right:8px;padding:0">subprocesses</td><td style="width:66%;padding:0"><table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%">
-<tr><td colspan="2" style="padding:0">PodmanModel Runner ↔ DockerModel Runner</td></tr>
-<tr><td style="padding:0;width:50%">containers</td><td style="padding:0;width:50%">containers</td></tr>
-</table></td></tr>
-</table></td></tr>
+<table style="border-collapse: collapse; width: 100%; table-layout: fixed; border: 1px solid black; font-family: sans-serif; text-align: center; margin: 0;">
+  <!-- Top Section (Full Width) -->
+  <tr>
+    <td colspan="3" style="border: 1px solid black; padding: 10px;"><b style="font-style: italic;">ModelArkestra</b></td>
+  </tr>
+  <tr>
+    <td colspan="3" style="border: 1px solid black; padding: 4px; font-size: 0.9em;">── port allocation, backend→runner routing</td>
+  </tr>
+  <tr>
+    <td colspan="3" style="border: 1px solid black; padding: 4px; font-size: 0.9em;">__build__runner_class_map() → config-driven</td>
+  </tr>
+  <tr>
+    <td colspan="3" style="border: 1px solid black; padding: 4px; font-size: 0.9em;">runners: section maps type → class</td>
+  </tr>
+  <tr>
+    <td colspan="3" style="border: 1px solid black; padding: 4px; font-size: 0.9em;">__get___runner__instance(type, model) → lazy factory</td>
+  </tr>
+
+  <!-- Bottom Section -->
+  <tr>
+    <td rowspan="3" style="border: 1px solid black; padding: 15px 5px; vertical-align: middle;">
+      <b style="font-style: italic;">ProcessModelRunner</b><br><br>subprocesses
+    </td>
+    <td colspan="2" style="border: 1px solid black; padding: 8px;">
+      <b style="font-style: italic;">ContainerModelRunner</b><br>(abstract base)
+    </td>
+  </tr>
+  <tr>
+    <td style="border: 1px solid black; padding: 8px;"><b style="font-style: italic;">PodmanModelRunner</b></td>
+    <td style="border: 1px solid black; padding: 8px;"><b style="font-style: italic;">DockerModelRunner</b></td>
+  </tr>
+  <tr>
+    <td style="border: 1px solid black; padding: 8px;">OCI containers</td>
+    <td style="border: 1px solid black; padding: 8px;">OCI containers</td>
+  </tr>
 </table>
 
 ### Runner routing — explicit args override config
