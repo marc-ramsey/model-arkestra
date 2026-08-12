@@ -6,24 +6,20 @@ This is **not** a replacement for [Lemonade](https://github.com/ollama/lemonade)
 
 ## Architecture
 
-```
-┌───────────────────────────────────────────────────┐
-│                   ModelArkestra                     │
-│  ── port allocation, backend→runner routing        │
-├───────────────────────────────────────────────────┤
-│    _build_runner_class_map() → config-driven       │
-│    runners: section maps type → class              │
-│    _get_runner_instance(type, model) → lazy factory│
-├──────────────────────┬────────────────────────────┤
-│     ProcessModel     │  ContainerModelRunner      │
-│         Runner       │   (abstract base)          │
-│                      ├──────────────┬─────────────┤
-│    subprocesses      │  PodmanModel │ DockerModel │
-│                      │    Runner    │   Runner    │
-│                      │              │             │
-│                      │  containers  │ containers  │
-└──────────────────────┴──────────────┴─────────────┘
-```
+ModelArkestra handles port allocation and backend→runner routing.
+
+<table>
+<tr><td style="width:100%">ModelArkestra — port allocation, backend→runner routing</td></tr>
+<tr><td style="width:100%"><table style="width:100%">
+<tr><td style="width:34%;padding-right:8px"><b>ProcessModelRunner</b></td><td style="width:66%"><b>ContainerModelRunner</b></td></tr>
+</table></td></tr>
+<tr><td style="width:100%"><table style="width:100%">
+<tr><td style="width:34%;padding-right:8px">subprocesses</td><td style="width:66%"><table style="width:100%">
+<tr><td>PodmanModel ↔ DockerModel</td></tr>
+<tr><td>containers</td></tr>
+</table></td></tr>
+</table></td></tr>
+</table>
 
 ### Runner routing — explicit args override config
 
