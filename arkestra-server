@@ -1,0 +1,23 @@
+#!/usr/bin/env python3
+"""Arkestra OpenAI-compatible proxy server.
+
+Usage:
+    arkestra-server --config config.yaml [--port 8080] [--broadcast-addr 127.0.0.1] ...
+
+This is a convenience wrapper around ``python -m model_arkestra.proxy`` with the same
+CLI flags. Install via ``pip install "model-arkestra[proxy]"`` to get it on PATH.
+"""
+from __future__ import annotations
+import sys
+
+
+def main() -> None:
+    from model_arkestra.proxy import main as _proxy_main
+    _proxy_main()
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.exit(0)

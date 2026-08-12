@@ -291,11 +291,12 @@ class ModelArkestra:
         return result
 
     # ── request API ────────────────────────────────────────────────────
-    async def ainvoke(self, model_name: str, prompt: str = "", backend: Optional[str] = None, messages: Optional[list] = None) -> str:
+    async def ainvoke(self, model_name: str, prompt: str = "", backend: Optional[str] = None,
+                      messages: Optional[list] = None, **kwargs: Any) -> str:
         runner = self._get_runner(model_name, {}, backend)
         if messages is not None:
-            return await runner.ainvoke(model_name, "", messages=messages)
-        return await runner.ainvoke(model_name, prompt)
+            return await runner.ainvoke(model_name, "", messages=messages, **kwargs)
+        return await runner.ainvoke(model_name, prompt, **kwargs)
 
     async def astream(self, model_name: str, payload: Dict[str, Any], backend: Optional[str] = None) -> AsyncIterator[Dict[str, Any]]:
         runner = self._get_runner(model_name, {}, backend)

@@ -1,0 +1,3 @@
+[submodule "vendor/llm-config-manager"]
+	path = vendor/llm-config-manager
+	url = https://github.com/marc-ramsey/llm-config-manager.git

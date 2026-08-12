@@ -30,6 +30,7 @@ class _ModelContext:
         self.state = RunnerState.STOPPED
         self.restart_count = 0
         self.last_error: Optional[str] = None
+        self.broadcast_addr: str = "0.0.0.0"
 
     def __repr__(self) -> str:
         return f"<{self.name} port={self.port} state={self.state.name}>"

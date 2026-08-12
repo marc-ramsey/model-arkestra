@@ -20,7 +20,8 @@ class BaseModelRunner(ABC):
     def __init__(self, config_manager: Any, restart_delay: float = 5.0,
                  restart_limit: int = 4, shutdown_timeout: float = 20.0,
                  ready_timeout: float = 120.0, ready_poll_ms: float = 100.0,
-                 warmup_delay: float = 20.0, port_drain_timeout: float = 20.0):
+                 warmup_delay: float = 20.0, port_drain_timeout: float = 20.0,
+                 broadcast_addr: str = "0.0.0.0"):
         self.cm = config_manager
         self.restart_delay = restart_delay
         self.restart_limit = restart_limit
@@ -29,6 +30,9 @@ class BaseModelRunner(ABC):
         self.ready_poll_ms = ready_poll_ms
         self.warmup_delay = warmup_delay
         self.port_drain_timeout = port_drain_timeout
+        # Resolve broadcast_addr: explicit param > config fallback > global default
+        cfg_br = (self.cm.data.get("runners") or {}).get("broadcast_addr")
+        self.broadcast_addr = broadcast_addr if broadcast_addr is not None else (cfg_br or "0.0.0.0")
         self._watchers: Dict[str, asyncio.Task] = {}
         self._models: Dict[str, _ModelContext] = {}
 
@@ -278,8 +282,8 @@ class BaseModelRunner(ABC):
                     raise RunnerError(f"Request failed: {e}")
             raise RunnerError("Maximum retries exceeded for completion request")
 
-    async def ainvoke(self, model_name: str, prompt: str) -> str:
-        res = await self._complete_async(model_name, prompt)
+    async def ainvoke(self, model_name: str, prompt: str = "", **kwargs) -> str:
+        res = await self._complete_async(model_name, prompt, **kwargs)
         return res.get("content", "")
 
     async def request(self, model_name: str, path: str, **kwargs) -> Any:
@@ -330,6 +334,7 @@ class BaseModelRunner(ABC):
 
             ctx = _ModelContext(model_name, eff_port)
             ctx.backend_id = effective_backend
+            ctx.broadcast_addr = self.broadcast_addr
             self._models[model_name] = ctx
             ctx.state = RunnerState.LOADING
 

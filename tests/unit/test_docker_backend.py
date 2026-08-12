@@ -60,6 +60,7 @@ class TestBuildDockerCmdNewArch:
         inner.get_vector = MagicMock(return_value=None)
         runner = MagicMock()
         runner.cm = inner
+        runner.broadcast_addr = "0.0.0.0"
         return runner
 
     @pytest.fixture(autouse=True)
@@ -93,7 +94,7 @@ class TestBuildDockerCmdNewArch:
         cmd_parts = _build_docker_cmd(mock_config_manager, ctx, {})
         assert "-p" in cmd_parts
         # Docker uses host:port with identical numbers — no container-internal port mapping
-        assert "18003:18003" in cmd_parts
+        assert "0.0.0.0:18003:18003" in cmd_parts
 
     @pytest.mark.asyncio
     async def test_container_name(self, mock_config_manager, ctx):
@@ -189,6 +190,7 @@ class TestBuildDockerCmdLegacy:
     def mock_config_manager(self):
         cm = MagicMock()
         cm.get_backend.return_value = None  # No backends → triggers legacy path
+        cm.broadcast_addr = "0.0.0.0"
         return cm
 
     def test_legacy_image_from_model_data(self, mock_config_manager):
@@ -205,12 +207,12 @@ class TestBuildDockerCmdLegacy:
         assert "--host 0.0.0.0" in cmd_str
 
     def test_legacy_port_mapping(self, mock_config_manager):
-        """Legacy path also uses host=port mapping (same inside and out)."""
+        """Legacy path also uses addr:host:container port mapping."""
         ctx = _ModelContext("m", 18003)
         model_data = {"image": "img:v1", "cmd": "-ngl 999"}
         cmd_parts = _build_docker_cmd(mock_config_manager, ctx, model_data)
         assert "-p" in cmd_parts
-        assert "18003:18003" in cmd_parts
+        assert "0.0.0.0:18003:18003" in cmd_parts
 
 
 # ── Dispatch error paths (unchanged from old test) ────────────────────────

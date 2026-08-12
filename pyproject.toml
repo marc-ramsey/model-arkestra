@@ -2,6 +2,10 @@
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
+[project.scripts]
+arkestra-server = "model_arkestra.proxy:main"
+arkestra-cli = "model_arkestra.cli:main"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 addopts = "-m 'not slow'"
@@ -11,10 +15,14 @@ markers = [
 
 [project]
 name = "model-arkestra"
-version = "0.1.0"
+version = "0.2.0"
 description = "Async process-based LLM server manager."
 requires-python = ">=3.11"
 dependencies = [
     "llm-config-manager",
     "aiohttp>=3.9",
 ]
+
+[project.optional-dependencies]
+proxy = ["fastapi>=0.115", "uvicorn[standard]>=0.30"]
+langchain = ["langchain-core>=0.3"]

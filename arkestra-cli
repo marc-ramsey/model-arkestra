@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+"""Arkestra terminal chat client.
+
+Usage:
+    arkestra-cli --config config.yaml --model qwen3-4b          # direct (connects to model ports)
+    arkestra-cli --server http://localhost:8080 --model gpt-4     # via server
+
+Types ``/help`` for commands, ``/quit`` or ``Ctrl+D`` to exit.
+
+Supports streaming output and full multi-turn conversation history.
+"""
+from __future__ import annotations
+import argparse
+import asyncio
+import json
+import sys
+
+try:
+    import aiohttp
+except ImportError:
+    print("Error: aiohttp is required. Install with: pip install \"model-arkestra[proxy]\"", file=sys.stderr)
+    sys.exit(1)
+
+
+DEFAULT_SYS_PROMPT = "You are a helpful assistant."
+
+
+# ── Direct mode ─────────────────────────────────────────────────────
+
+async def chat_direct(config_path: str, model_name: str, broadcast_addr: str) -> None:
+    """Chat directly against ModelArkestra — no server needed."""
+    from model_arkestra.arkestra import ModelArkestra
+
+    async with ModelArkestra(config_path, broadcast_addr=broadcast_addr) as runner:
+        await runner.start(model_name)
+
+        # Grab the allocated port for display
+        ctx = runner._get_model_contexts()[0] if runner._get_model_contexts() else None
+        port_str = f" (port {ctx.port})" if ctx else ""
+        print(f"\nChatting with {model_name}{port_str}")
+        print("Type /help for commands, /quit to exit.\n")
+
+        history: list[dict] = [{"role": "system", "content": DEFAULT_SYS_PROMPT}]
+        await _chat_loop(runner, model_name, history)
+
+
+# ── Proxy mode ───────────────────────────────────────────────────────
+
+async def chat_server(server_url: str, model: str) -> None:
+    """Chat via an ArkestraServer server."""
+    url = f"{server_url.rstrip('/')}/v1/chat/completions"
+
+    print(f"\nConnected to server at {url}")
+    print("Type /help for commands, /quit to exit.\n")
+
+    history: list[dict] = [{"role": "system", "content": DEFAULT_SYS_PROMPT}]
+    async with aiohttp.ClientSession() as session:
+        await _chat_loop(session, url, model, history)
+
+
+# ── Shared chat loop ─────────────────────────────────────────────────
+
+async def _chat_loop(runner_or_session, target: str | str, history: list[dict]) -> None:
+    """Common interactive chat loop — parameterised for direct vs server."""
+    while True:
+        user_input = await _prompt()
+        if not user_input:
+            break
+
+        cmd = _parse_command(user_input)
+        if cmd == "quit":
+            print("Goodbye.")
+            return
+        if cmd == "help":
+            _print_help()
+            continue
+        if cmd == "clear":
+            history.clear()
+            history.append({"role": "system", "content": DEFAULT_SYS_PROMPT})
+            print("(history cleared)\n")
+            continue
+        if cmd == "history":
+            for m in history:
+                role = m["role"].upper()
+                preview = m["content"][:80] + ("..." if len(m["content"]) > 80 else "")
+                print(f"  [{role}] {preview}")
+            print()
+            continue
+
+        new_system = cmd[9:].strip() if cmd.startswith("/system ") else None
+        if new_system:
+            history[0] = {"role": "system", "content": new_system}
+            print("System prompt updated.\n")
+            continue
+
+        # ── Normal chat message ───────────────────────────────────────
+        is_direct = hasattr(runner_or_session, 'ainvoke')
+        history.append({"role": "user", "content": user_input})
+
+        if is_direct:
+            await _send_direct(runner_or_session, target, history)
+        else:
+            await _send_server(runner_or_session, target, model_name=target, history=history)
+
+
+async def _send_direct(runner, model_name: str, history: list[dict]) -> None:
+    """Send message via direct ModelArkestra runner."""
+    try:
+        result = await runner.ainvoke(model_name, messages=history)
+        print(f"\n[{model_name}] {result}\n")
+    except Exception as e:
+        print(f"\nError: {e}", file=sys.stderr)
+        history.pop()  # remove failed user message
+
+
+async def _send_server(session, url: str, model_name: str, history: list[dict]) -> None:
+    """Send streaming request via server."""
+    print(f"[{model_name}] ", end="", flush=True)
+    try:
+        async with session.post(url, json={
+            "model": model_name,
+            "messages": history,
+            "stream": True,
+        }) as resp:
+            if resp.status != 200:
+                err = await resp.text()
+                print(f"\nError {resp.status}: {err}\n")
+                history.pop()
+                return
+
+            async for line in resp.content:
+                line = line.strip()
+                if not line or not line.startswith(b"data: "):
+                    continue
+                data = line[6:]
+                if data == b"[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data)
+                    token = chunk["choices"][0]["delta"].get("content", "")
+                    print(token, end="", flush=True)
+                except (json.JSONDecodeError, KeyError):
+                    pass
+
+        print("\n")  # newline after response
+    except aiohttp.ClientError as e:
+        print(f"\nConnection error: {e}", file=sys.stderr)
+        history.pop()
+
+
+# ── Helpers ───────────────────────────────────────────────────────────
+
+async def _prompt() -> str | None:
+    """Read user input. Returns None on EOF."""
+    try:
+        return await asyncio.get_running_loop().run_in_executor(
+            None, lambda: input("\n> ")
+        )
+    except EOFError:
+        return None
+
+
+def _parse_command(text: str) -> str | None:
+    """Return command string if input is a slash-command, else None."""
+    stripped = text.strip()
+    if stripped in ("/quit", "/exit"):
+        return "quit"
+    if stripped == "/help":
+        return "help"
+    if stripped == "/clear":
+        return "clear"
+    if stripped == "/history":
+        return "history"
+    if stripped.startswith("/system "):
+        return stripped  # caller handles the rest
+    return None
+
+
+def _print_help() -> None:
+    print("""
+Commands:
+  /help          Show this message
+  /quit          Exit the chat
+  /clear         Clear conversation history
+  /history       Show full conversation history
+  /system <txt>  Change the system prompt
+
+Chat preserves full multi-turn history — every turn is sent to the model.
+""")
+
+
+# ── Entry point ───────────────────────────────────────────────────────
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        prog="arkestra-cli",
+        description="Terminal chat client for ModelArkestra models.",
+    )
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--config", "-c", help="YAML config file path (direct mode)")
+    group.add_argument("--server", "-x", default=None, help="Server URL (e.g. http://localhost:8080)")
+    parser.add_argument("--model", "-m", required=True, help="Model name to chat with")
+    parser.add_argument("--broadcast-addr", default=None,
+                        help='Broadcast address for models (default: 0.0.0.0)')
+
+    args = parser.parse_args()
+    broadcast_addr = args.broadcast_addr if args.broadcast_addr is not None else "0.0.0.0"
+
+    if args.server:
+        asyncio.run(chat_server(args.server, args.model))
+    else:
+        asyncio.run(chat_direct(args.config, args.model, broadcast_addr))
+
+
+if __name__ == "__main__":
+    main()

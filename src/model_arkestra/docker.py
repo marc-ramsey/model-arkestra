@@ -73,8 +73,8 @@ def _build_docker_cmd(
         # Container name
         parts.extend(["--name", safe_container_name(ctx.name, ctx.port)])
 
-        # Port mapping — same port inside and out.
-        parts.extend(["-p", f"{ctx.port}:{ctx.port}"])
+        # Port mapping — same port inside and out, bound to broadcast_addr.
+        parts.extend(["-p", f"{runner.broadcast_addr}:{ctx.port}:{ctx.port}"])
 
         # HF cache mount (read-write)
         hf_cache = os.environ.get("HF_HUB_CACHE", "/home/lemonade/hub")
@@ -99,10 +99,10 @@ def _build_docker_cmd(
         else:
             llama_arg_list = []
 
-        # Ensure host binding.
+        # Ensure host binding (match the broadcast_addr).
         if "--host" not in llama_arg_list:
             llama_arg_list.append("--host")
-            llama_arg_list.append("0.0.0.0")
+            llama_arg_list.append(runner.broadcast_addr)
 
         parts.extend([image, "llama-server"])
         if binary_path:
@@ -126,8 +126,8 @@ def _build_docker_cmd(
 
     parts.extend(["--name", safe_container_name(ctx.name, ctx.port)])
 
-    # Same port inside and out.
-    parts.extend(["-p", f"{ctx.port}:{ctx.port}"])
+    # Same port inside and out, bound to broadcast_addr.
+    parts.extend(["-p", f"{runner.broadcast_addr}:{ctx.port}:{ctx.port}"])
 
     hf_cache = os.environ.get("HF_HUB_CACHE", "/home/lemonade/hub")
     if os.path.exists(hf_cache):
@@ -137,7 +137,7 @@ def _build_docker_cmd(
     # Legacy: model cmd already has resolved binary path.  Just pass it through.
     cmd_args = model_data.get("cmd", "") or ""
     if "--host" not in cmd_args:
-        cmd_args += " --host 0.0.0.0"
+        cmd_args += f" --host {runner.broadcast_addr}"
 
     parts.extend([image])
     parts.extend(shlex.split(cmd_args))

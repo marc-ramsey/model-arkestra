@@ -55,6 +55,7 @@ class TestBuildPodmanCmdNewArch:
         inner.assemble_command = MagicMock(return_value=([], ""))
         runner = MagicMock()
         runner.cm = inner
+        runner.broadcast_addr = "0.0.0.0"
         runner.INSIDE_PORT = 9091
         return runner
 
@@ -86,7 +87,7 @@ class TestBuildPodmanCmdNewArch:
     async def test_port_mapping(self, mock_config_manager, ctx):
         cmd_parts = _build_podman_cmd(mock_config_manager, ctx, {})
         assert "-p" in cmd_parts
-        assert "18003:9091" in cmd_parts
+        assert "0.0.0.0:18003:9091" in cmd_parts
 
     @pytest.mark.asyncio
     async def test_container_name(self, mock_config_manager, ctx):
@@ -115,7 +116,7 @@ class TestBuildPodmanCmdNewArch:
         model_data = {"container_port": 9091}
         cmd_parts = _build_podman_cmd(mock_config_manager, ctx, model_data)
         assert "-p" in cmd_parts
-        assert "18003:9091" in cmd_parts
+        assert "0.0.0.0:18003:9091" in cmd_parts
 
 
 # ── Legacy fallback (no backends section) ───────────────────────────────────
@@ -126,6 +127,7 @@ class TestBuildPodmanCmdLegacy:
         cm = MagicMock()
         # No backends → get_backend returns None
         cm.get_backend.return_value = None
+        cm.broadcast_addr = "0.0.0.0"
         return cm
 
     def test_legacy_image_from_model_data(self, mock_config_manager):
@@ -146,7 +148,7 @@ class TestBuildPodmanCmdLegacy:
         model_data = {"image": "img:v1", "cmd": "foo", "container_port": 3000}
         cmd_parts = _build_podman_cmd(mock_config_manager, ctx, model_data)
         assert "-p" in cmd_parts
-        assert "18003:3000" in cmd_parts
+        assert "0.0.0.0:18003:3000" in cmd_parts
 
 
 # ── Dispatch error paths (unchanged from old test) ──────────────────────────

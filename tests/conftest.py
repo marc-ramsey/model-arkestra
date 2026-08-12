@@ -43,6 +43,9 @@ _START_PORT: int = int(_cfg.get("models-start-port", 18000))
 _NUM_PORTS:   int = int(_cfg.get("model-ports", 32))
 _CLEANUP_PORTS = tuple(range(_START_PORT, _START_PORT + _NUM_PORTS))
 
+# Also cover proxy test ports (e.g. 20100)
+_EXTRA_PORTS = tuple(range(20090, 20110))
+
 
 # ── Port / process helpers (reusable by test modules) ────────────────────────
 
@@ -50,7 +53,7 @@ _CLEANUP_PORTS = tuple(range(_START_PORT, _START_PORT + _NUM_PORTS))
 def _kill_port(port: int) -> None:
     """Kill any process listening on *port* using ``lsof``."""
     result = subprocess.run(
-        ["lsof", "-ti:", str(port)], capture_output=True, text=True
+        ["lsof", f"-ti:{port}"], capture_output=True, text=True
     )
     for pid in result.stdout.strip().split():
         if pid:
@@ -155,8 +158,12 @@ def _cleanup_ports() -> None:
     """Kill any process on the configured port range before and after each module."""
     for port in _CLEANUP_PORTS:
         _kill_port(port)
+    for port in _EXTRA_PORTS:
+        _kill_port(port)
     yield
     for port in _CLEANUP_PORTS:
+        _kill_port(port)
+    for port in _EXTRA_PORTS:
         _kill_port(port)
 
 
@@ -224,7 +231,7 @@ async def podman_cleanup() -> _PodmanCleanupTracker:
     # 3. Kill tracked ports
     for port in tracker._ports:
         result = subprocess.run(
-            ["lsof", "-ti:", str(port)], capture_output=True, text=True
+            ["lsof", f"-ti:{port}"], capture_output=True, text=True
         )
         for pid in result.stdout.strip().split():
             if pid:

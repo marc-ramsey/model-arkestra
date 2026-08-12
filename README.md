@@ -1,14 +1,8 @@
-# Model Runner Documentation
+Model Arkestra is a lightweight Python orchestrator for running local LLM inference engines — primarily [llama.cpp](https://github.com/ggerganov/llama.cpp) — across your choice of backends, from bare-metal subprocesses to isolated containers (Podman / Docker). It exists so you can deploy and manage models on your own hardware with **safety and stability**, without the overhead of a full-blown proxy or cluster manager.
 
-The `model_arkestra` package manages the full lifecycle of local LLM inference servers. It has three layers:
+This is **not** a replacement for [Lemonade](https://github.com/ollama/lemonade) or [llama-swap](https://github.com/sgl-project/llama-swap). No model registries, no auto-scaling, no Kubernetes babysitting. If you just want models up and running on your own GPU — with clean lifecycle management, graceful shutdowns, and restart resilience out of the box — Arkestra is the straight line between config file and inference.
 
-- **ModelArkestra** — centralized entry point that manages port allocation, resolves backends via configuration, and delegates to backend-specific runners.
-- **ContainerModelRunner** (intermediate base) — shared container logic for Podman and Docker (port drain wait, health watching, restart handling, force-remove on teardown).
-- **Runners** — concrete implementations: `ProcessModelRunner` (direct subprocess), `PodmanModelRunner`, and `DockerModelRunner`.
-
-Models are addressed by **model name** alone. Callers interact purely by model name — the runner automatically picks the correct backend from config. Each model runs on exactly one backend at a time.
-
----
+> *Author's note: This was a first attempt at entirely AI-coded project, built using [unsloth/unsloth/Qwen3.6-35B-A3B-MTP-GGUF:Q4_K_XL](https://huggingface.co/unsloth/unsloth/Qwen3.6-35B-A3B-MTP-GGUF) on a [Corsair AI Workstation 300](https://www.corsair.com/us/en/cp/category/builds/corsair-ai-workstation-300/) with 128GB integrated memory. This was not vibe coding — I watched the reasoning carefully and intervened hundreds of times when things started going off track. Most interventions were along the lines of "stop looping," "overthinking the problem," or "focus on the problem, nothing else," with occasional "NO, do it this way…" Total time from start to completion: roughly 50 hours. Consider this an experiment.*
 
 ## Architecture
 
@@ -272,8 +266,14 @@ result = await runner.ainvoke(
         {"role": "assistant", "content": "2 + 2 = 4"},
         {"role": "user", "content": "And 3 times that?"},
     ],
+    temperature=0.7,          # forwarded to the runner
 )
+
+# Single prompt with stop tokens
+result = await runner.ainvoke("qwen3-4b", "Write a poem.", stop=["\n\n"])
 ```
+
+Additional keyword arguments (e.g. `temperature`, `stop`, `top_p`) are forwarded through to the underlying runner's invoke method.
 
 When both `prompt` and `messages` are provided, `messages` takes precedence.
 
@@ -535,6 +535,8 @@ macros:
   ctx-default: 131072
 ```
 
+> **Note on macro syntax:** Config files use the `${MACRO}` pattern — values are resolved by `llm_config_manager` from the `macros:` section. Shell-style `${VAR:-default}` is **not** supported.
+
 ### `backends:` section — executable registry
 
 Each backend entry specifies an argument template and which runner type should handle it.
@@ -623,6 +625,30 @@ async with ModelHttpClient(timeout=60) as client:
 ```
 
 > **Note:** `ModelHttpClient` is a standalone utility — the runner classes use aiohttp directly internally and do not depend on this wrapper. It exists primarily for testing and external integrations.
+
+## Running Tests
+
+The project uses `pytest` with a modular fixture system (`tests/conftest.py`) that provides shared model runners, port cleanup, and per-test isolation. All tests are collected from `tests/`, `tests/unit/`, and any module-scoped test files.
+
+```bash
+# Run all tests (fast + slow)
+python -m pytest -v --tb=short
+
+# Run only fast tests (skips models that download/run LLMs)
+python -m pytest -v --tb=short -m "not slow"
+
+# Run only slow integration tests (requires a working GPU/backend or container runtime)
+python -m pytest -v --tb=short -m slow
+```
+
+**Fixture summary:**
+
+| Fixture | Scope | Purpose |
+|---|---|---|
+| `mr` | module | Shared `ModelArkestra` instance — port allocation and runner maps are shared across the module |
+| `_cleanup_after_test` | function (autouse) | Stops all models after each test so every method sees a clean slate |
+| `_cleanup_ports` | module (autouse) | Safety net that kills any lingering processes on configured ports before/after each module |
+| `podman_cleanup` | function | Tracks podman containers/tasks/ports with guaranteed teardown — opt-in per-test fixture |
 
 ---
 

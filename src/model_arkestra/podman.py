@@ -109,12 +109,9 @@ def _build_podman_cmd(
             parts.extend(["-e", f"LD_LIBRARY_PATH={ld}"])
 
         parts.extend(["--name", safe_container_name(ctx.name, ctx.port)])
-        parts.extend(["-p", f"{ctx.port}:{runner.INSIDE_PORT}"])
+        parts.extend(["-p", f"{runner.broadcast_addr}:{ctx.port}:{runner.INSIDE_PORT}"])
 
         hf_cache = os.environ.get("HF_HUB_CACHE", "/home/lemonade/hub")
-        if os.path.exists(hf_cache):
-            parts.extend(["-v", f"{hf_cache}:/usr/local/hf_hub"])
-            container_env.setdefault("HF_HUB_CACHE", "/usr/local/hf_hub")
 
         for dev in devices:
             parts.extend(["--device", str(dev)])
@@ -144,9 +141,9 @@ def _build_podman_cmd(
                 fixed_args.append(llama_arg_list[i])
                 i += 1
         if not fixed_args:
-            fixed_args = ["--host", "0.0.0.0"]
+            fixed_args = ["--host", runner.broadcast_addr]
         elif "--host" not in fixed_args:
-            fixed_args.extend(["--host", "0.0.0.0"])
+            fixed_args.extend(["--host", runner.broadcast_addr])
 
         # launcher.sh: first arg = binary, rest = --model etc.
         if binary_path:
@@ -176,16 +173,13 @@ def _build_podman_cmd(
     inside_port = model_data.get(
         "container_port", PodmanModelRunner.INSIDE_PORT
     )
-    parts.extend(["-p", f"{ctx.port}:{inside_port}"])
+    parts.extend(["-p", f"{runner.broadcast_addr}:{ctx.port}:{inside_port}"])
 
     hf_cache = os.environ.get("HF_HUB_CACHE", "/home/lemonade/hub")
-    if os.path.exists(hf_cache):
-        parts.extend(["-v", f"{hf_cache}:/usr/local/hf_hub"])
-        parts.extend(["-e", "HF_HUB_CACHE=/usr/local/hf_hub"])
 
     cmd_args = model_data.get("cmd", "") or ""
     if "--host" not in cmd_args:
-        cmd_args += " --host 0.0.0.0"
+        cmd_args += f" --host {runner.broadcast_addr}"
 
     parts.extend([image, "-c", cmd_args])
     return parts
