@@ -51,6 +51,44 @@ class ModelArkestra:
     def get_backend(self, backend_id: str) -> Optional[Dict[str, Any]]:
         return self._cm.get_backend(backend_id)
 
+    # ── model introspection (runtime state) ────────────────────────────
+
+    def _get_model_contexts(self) -> list[_ModelContext]:
+        """Return all tracked _ModelContext objects across every runner."""
+        contexts: list[_ModelContext] = []
+        for r in self._runners.values():
+            contexts.extend(r._models.values())  # noqa: SLF001
+        return contexts
+
+    def get_model_list(self) -> list[str]:
+        """List of model names tracked at runtime (may include stopped/errored models)."""
+        return [ctx.name for ctx in self._get_model_contexts()]
+
+    def get_v1_models(self) -> Dict[str, Any]:
+        """OpenAI-compatible ``/v1/models`` response."""
+        from time import time
+
+        data = []
+        for ctx in self._get_model_contexts():
+            model_cfg = self.get_model(ctx.name) or {}
+            backend_id = ctx.backend_id or model_cfg.get("backend")
+            owned_by = str(model_cfg.get("owned_by", "local")) if isinstance(model_cfg, dict) else "local"
+            state_label = str(ctx.state).lower().replace("runnerstate.", "")
+
+            entry: Dict[str, Any] = {
+                "id": ctx.name,
+                "object": "model",
+                "created": int(time()),
+                "owned_by": owned_by,
+                "status": state_label,
+                "port": ctx.port,
+                "runner_type": ctx.runner_type,
+                "backend_id": backend_id,
+            }
+            data.append(entry)
+
+        return {"object": "list", "data": data}
+
     # ── runner class registry (config-driven) ─────────────────────────
 
     def _build_runner_class_map(self) -> None:
@@ -144,6 +182,14 @@ class ModelArkestra:
                         return rtype
             return default_type
         return "process"
+
+    # ── context manager ────────────────────────────────────────────────
+
+    async def __aenter__(self) -> "ModelArkestra":
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.shutdown()
 
     # ── lifecycle API ──────────────────────────────────────────────────
     async def start(

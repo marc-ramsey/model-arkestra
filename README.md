@@ -4,7 +4,7 @@ The `model_arkestra` package manages the full lifecycle of local LLM inference s
 
 - **ModelArkestra** — centralized entry point that manages port allocation, resolves backends via configuration, and delegates to backend-specific runners.
 - **ContainerModelRunner** (intermediate base) — shared container logic for Podman and Docker (port drain wait, health watching, restart handling, force-remove on teardown).
-- **Backend Runners** — concrete implementations: `ProcessModelRunner` (direct subprocess), `PodmanModelRunner`, and `DockerModelRunner`.
+- **Runners** — concrete implementations: `ProcessModelRunner` (direct subprocess), `PodmanModelRunner`, and `DockerModelRunner`.
 
 Models are addressed by **model name** alone. Callers interact purely by model name — the runner automatically picks the correct backend from config. Each model runs on exactly one backend at a time.
 
@@ -96,9 +96,10 @@ from model_arkestra.arkestra import ModelArkestra
 runner = ModelArkestra("config.yaml", ready_timeout=120.0)
 
 async with runner:
-    ...
+    # ... use runner.start(), stop(), ainvoke(), etc ...
+# → shutdown() called automatically on exit
 
-# Direct backend runners for standalone use
+# Direct runners for standalone use (they do support context managers)
 from model_arkestra.process import ProcessModelRunner
 
 cm = ConfigManager("config.yaml")  # optional: pass ConfigManager directly
@@ -111,7 +112,7 @@ runner = ProcessModelRunner(cm, shutdown_timeout=20.0, ready_timeout=120.0)
 # Auto-assigns port and picks runner from config chain
 await runner.start("gpt-oss-20b")
 
-# Model with backend: rocm → automatic podman routing (no runner= needed)
+# Model with backend: rocm → runner picks podman from config chain (no runner= needed)
 await runner.start("qwen3-4b:rocm")
 
 # Explicit backend override (also routes correctly via config chain)
@@ -138,8 +139,8 @@ Calling `start()` again on a stopped model restarts it in-place on the same port
 # Identical restart — same config, same port
 await runner.restart("gpt-oss-20b")
 
-# Switch backend (and thus runner) for the restarted instance
-await runner.restart("qwen3-4b", backend="rocm")   # podman → process
+# Switch backend (runner resolves to podman from config)
+await runner.restart("qwen3-4b", backend="rocm")
 
 # Force a specific container runtime regardless of config
 await runner.restart("qwen3-4b", runner="docker")
@@ -189,8 +190,8 @@ await runner.stop_all()
 # For container runners, also force-removes all stopped containers.
 await runner.shutdown()
 
-# Or use the context manager (auto-calls shutdown() on exit)
-async with ModelArkestra("config.yaml"):
+# Or use async context manager (auto-calls shutdown() on exit)
+async with ModelArkestra("config.yaml") as runner:
     await runner.start("qwen3-4b")
     # ... do work ...
 # → shutdown() called here, port counter resets to start value
@@ -206,7 +207,7 @@ The centralized entry point. Does not launch any processes at this point — mod
 |---|---|---|---|
 | `config_path` | `str` | *(required)* | Path to the YAML config file. |
 | `start_port` | `int` | `18000` | Fallback starting port — only used when `models-start-port` is absent from config. Port allocation reads the actual values from config at init time. |
-| `**runner_kwargs` | — | — | Passed through to each backend runner (e.g. `ready_timeout`, `warmup_delay`). |
+| `**runner_kwargs` | — | — | Passed through to each runner instance (e.g. `ready_timeout`, `warmup_delay`). |
 
 ### Backward-compat shims
 
@@ -238,11 +239,11 @@ Stops all model processes. Model entries remain in `_models` with state `STOPPED
 
 Full teardown: stops all models, clears all runner and model entries, and resets the port allocator to `models-start-port`. For container runners, also sends `rm -f` on every stopped container. Use this for final cleanup (e.g. context manager exit, test teardown).
 
-#### `async ainvoke(model_name: str, prompt: str) -> str`
+#### `async ainvoke(model_name: str, prompt: str, backend: str | None = None) -> str`
 
 Sends a blocking completion request and returns the full response string. Retries up to 12 times on connection errors or 503 status (with 2.5s backoff). Raises `RunnerError` for 502/504 (upstream failures), connection unreachable, or max retries exceeded.
 
-#### `async astream(model_name: str, payload: Dict[str, Any]) -> AsyncIterator[Dict[str, Any]]`
+#### `async astream(model_name: str, payload: Dict[str, Any], backend: str | None = None) -> AsyncIterator[Dict[str, Any]]`
 
 Sends a streaming completion request and yields events for each SSE update. Returns an async generator — callers iterate with `async for`. The payload dict must contain `"prompt"` (string) or `"messages"` (list of message dicts).
 
@@ -279,6 +280,46 @@ Read-only property returning the names of all models currently in `"running"` st
 
 ---
 
+## Model Introspection — runtime state
+
+These three methods expose live model state tracked at runtime (port, backend, runner type, health). They operate on models that have been started — before any `start()` call the lists are empty.
+
+#### `_get_model_contexts() -> list[_ModelContext]`
+
+Internal aggregation: returns every tracked `_ModelContext` across all runners. Each context carries `name`, `port`, `state` (`RunnerState` enum), `backend_id`, `runner_type`, `restart_count`, and `last_error`. Callers who need detailed runtime info should use this.
+
+#### `get_model_list() -> list[str]`
+
+Convenience wrapper around `_get_model_contexts()` — returns just the model names as strings. Useful when you want a dynamic list of currently-tracked models (including stopped or errored ones) rather than static YAML config names.
+
+```python
+runner = ModelArkestra("config.yaml")
+await runner.start("qwen3-4b")
+print(runner.get_model_list())  # → ["qwen3-4b"]
+```
+
+#### `get_v1_models() -> dict`
+
+OpenAI-compatible `/v1/models` response. Returns a dict with `"object": "list"` and a `"data"` array — one entry per tracked model containing:
+
+| Field | Source |
+|---|---|
+| `id` | model name |
+| `object` | `"model"` |
+| `created` | Unix timestamp |
+| `owned_by` | from config (`model_cfg.get("owned_by")`, default `"local"`) |
+| `status` | lowercase state string (e.g. `"running"`, `"stopped"`, `"error"`) |
+| `port` | allocated port number |
+| `runner_type` | runner type string (`"process"`, `"podman"`, `"docker"`) |
+| `backend_id` | resolved backend id (e.g. `"rocm"`) |
+
+```python
+models = runner.get_v1_models()
+print(models)  # → {"object": "list", "data": [{"id": "qwen3-4b", "status": "running", ...}]}
+```
+
+---
+
 ## API Reference — `ProcessModelRunner`
 
 For direct use when you only need subprocess-based execution. Bound to a `ConfigManager` instance; does not launch any processes until `start()` is called.
@@ -291,9 +332,9 @@ For direct use when you only need subprocess-based execution. Bound to a `Config
 | `ready_poll_ms` | `float` | `100.0` | Milliseconds between consecutive health-check polls during startup. |
 | `warmup_delay` | `float` | `20.0` | Seconds to wait after `/health` returns OK before marking the model as `"running"`. |
 
-> The `restart_delay`, `restart_limit`, and `port_drain_timeout` parameters are available from `BaseModelRunner` but have no effect on `ProcessModelRunner` — automatic restart is not supported for direct subprocess execution. These are meaningful only for container-based runners (Podman/Docker).
+> `restart_delay` and `restart_limit` control automatic restart behavior inherited from `BaseModelRunner`: when a managed process or container exits unexpectedly, the runner polls and attempts up to `restart_limit` restarts spaced by `restart_delay` seconds. `port_drain_timeout` is used by container runners to wait for port listeners to drain; it has no effect on direct subprocess execution.
 
-Each backend runner manages exactly one model. Its `stop()` takes no arguments and shuts down that model; `stop_all()` delegates to `stop()`. The remaining methods (`start`, `ainvoke`, `astream`, `request`, `running_models`) follow the same contract as described in the `ModelArkestra` section above.
+Each runner manages exactly one model. Its `stop()` takes no arguments and shuts down that model; `stop_all()` delegates to `stop()`. The remaining methods (`start`, `ainvoke`, `astream`, `request`, `running_models`) follow the same contract as described in the `ModelArkestra` section above.
 
 ---
 
@@ -304,16 +345,18 @@ Each backend runner manages exactly one model. Its `stop()` takes no arguments a
   start(model) ─│           │──► /health OK + warmup delay ─► state = "running"
                 ▼           │
               "loading"     │
-                              │ process exits unexpectedly
-                              ▼
-                        watcher logs exit code, (no auto-restart for processes)
+                              │ process/container exits unexpectedly
+                              │ retry_count < restart_limit?
+                              ├─ Yes → sleep(restart_delay) → restart
+                              │         (reuses same port)
+                              └─ No  → state = "error"
 ```
 
 ### Crash detection by backend
 
 | Runner | Behavior |
 |---|---|
-| **Process** | Logs exit code when the subprocess dies. **No automatic restart** — call `start()` again explicitly. |
+| **Process** | Polls subprocess exit code via `process.wait()`. On unexpected exit (non-zero), automatically attempts up to `restart_limit` restarts spaced by `restart_delay`. The watcher task runs in the background. |
 | **Podman / Docker** | Polls container status every 2 seconds; on unexpected exit (`exited`, `dead`), automatically attempts up to `restart_limit` restarts spaced by `restart_delay`. The watcher task runs in the background. |
 
 ### Shutdown sequencing (`stop` / `stop_all`)
@@ -387,10 +430,9 @@ macros:
 
 ### `backends:` section — executable registry
 
-Each backend entry specifies an argument template and which runner type should handle it. Backend entries may also specify `binary_dir` (absolute path to a host directory containing the llama-server binary) or let the container runners resolve the binary via heuristics (`version`, image name substrings, default Vulkan/ROCm build directories).
+Each backend entry specifies an argument template and which runner type should handle it.
 
 ```yaml
-backend-registry: /path/to/backends   ← files here named 'vulkan-radv', 'rocm' become wrapper paths
 backends:
   vulkan-radv:
     args: ${llama-args}
@@ -485,9 +527,9 @@ The runner and its backends live in the `model_arkestra` package:
 from llm_config_manager.config_manager import ConfigManager    # data layer
 from model_arkestra.arkestra import ModelArkestra              # orchestration (recommended)
 from model_arkestra.base import BaseModelRunner                # abstract base class
-from model_arkestra.process import ProcessModelRunner          # process backend
-from model_arkestra.podman import PodmanModelRunner            # podman backend
-from model_arkestra.docker import DockerModelRunner            # docker backend
+from model_arkestra.process import ProcessModelRunner          # process runner
+from model_arkestra.podman import PodmanModelRunner            # podman runner
+from model_arkestra.docker import DockerModelRunner            # docker runner
 from model_arkestra.container_runner import ContainerModelRunner  # container base class
 from model_arkestra.http_client import ModelHttpClient         # lightweight HTTP client
 
