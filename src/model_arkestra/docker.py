@@ -79,7 +79,8 @@ def _build_docker_cmd(
         # HF cache mount (read-write)
         hf_cache = os.environ.get("HF_HUB_CACHE", "/home/lemonade/hub")
         if os.path.exists(hf_cache):
-            parts.extend(["-v", f"{hf_cache}:/home/lemonade/hub"])
+            parts.extend(["-v", f"{hf_cache}:/usr/local/hf_hub"])
+            container_env.setdefault("HF_HUB_CACHE", "/usr/local/hf_hub")
 
         # Mount host binary dir so the resolved binary is reachable inside container.
         if binary_path:
@@ -93,8 +94,8 @@ def _build_docker_cmd(
             env_vars={"PORT": str(ctx.port)},
             override_backend=ctx.backend_id,
         )
-        if result is not None and len(result[0]) > 1:
-            llama_arg_list = list(result[0][1:])
+        if result is not None:
+            llama_arg_list = list(result[0])
         else:
             llama_arg_list = []
 
@@ -130,7 +131,8 @@ def _build_docker_cmd(
 
     hf_cache = os.environ.get("HF_HUB_CACHE", "/home/lemonade/hub")
     if os.path.exists(hf_cache):
-        parts.extend(["-v", f"{hf_cache}:/home/lemonade/hub"])
+        parts.extend(["-v", f"{hf_cache}:/usr/local/hf_hub"])
+        parts.extend(["-e", "HF_HUB_CACHE=/usr/local/hf_hub"])
 
     # Legacy: model cmd already has resolved binary path.  Just pass it through.
     cmd_args = model_data.get("cmd", "") or ""

@@ -390,15 +390,15 @@ macros:
 Each backend entry specifies an argument template and which runner type should handle it. Backend entries may also specify `binary_dir` (absolute path to a host directory containing the llama-server binary) or let the container runners resolve the binary via heuristics (`version`, image name substrings, default Vulkan/ROCm build directories).
 
 ```yaml
-backend-registry: /path/to/backends   ← files here named 'radv', 'rocm' become wrapper paths
+backend-registry: /path/to/backends   ← files here named 'vulkan-radv', 'rocm' become wrapper paths
 backends:
-  radv:
+  vulkan-radv:
     args: ${llama-args}
     runner: process     ← maps this backend to ProcessModelRunner
   rocm:
     args: ${llama-args}
     runner: podman      ← maps this backend to PodmanModelRunner
-  default: radv         ← global default backend (also has runner: process)
+  default: vulkan-radv         ← global default backend (also has runner: process)
 ```
 
 When a model has `backend: rocm`, the routing chain resolves: `rocm` → `runner: podman` → `runners.podman` → `PodmanModelRunner`.

@@ -16,6 +16,8 @@ class ProcessModelRunner(BaseModelRunner):
 
         # Resolve backend for binary_dir, binary name, and env vars.
         be_id = ctx.backend_id or model_data.get("backend")
+        if not be_id:
+            be_id = self.cm.data.get("backends", {}).get("default")
         backend = self.cm.get_backend(be_id) if be_id else {}
 
         binary_dir = backend.get("binary_dir", "")

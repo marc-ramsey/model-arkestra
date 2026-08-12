@@ -167,18 +167,18 @@ class TestBackendResolution:
     def test_resolve_backend_with_override(self):
         """_resolve_backend_id uses the override param."""
         arkestra = _make_cm(
-            backend_cfg={"default": "radv", "radv": {"args": "-hf ${CHECKPOINT}"}}
+            backend_cfg={"default": "vulkan-radv", "vulkan-radv": {"args": "-hf ${CHECKPOINT}"}}
         )
-        result = arkestra._resolve_backend_id("test-model", {}, override="radv")
-        assert result == "radv"
+        result = arkestra._resolve_backend_id("test-model", {}, override="vulkan-radv")
+        assert result == "vulkan-radv"
 
     def test_resolve_backend_without_override_uses_default(self):
         """Without override, falls back to backends default."""
         arkestra = _make_cm(
-            backend_cfg={"default": "radv", "radv": {"args": "-hf ${CHECKPOINT}"}}
+            backend_cfg={"default": "vulkan-radv", "vulkan-radv": {"args": "-hf ${CHECKPOINT}"}}
         )
         result = arkestra._resolve_backend_id("test-model", {})
-        assert result == "radv"
+        assert result == "vulkan-radv"
 
 
 # ── Tests: Runner type resolution ─────────────────────────────────────────
@@ -188,7 +188,7 @@ class TestRunnerTypeResolution:
         """Backend with 'runner' key determines runner type."""
         arkestra = _make_cm(
             backend_cfg={
-                "default": "radv",
+                "default": "vulkan-radv",
                 "podman-vulkan": {"args": "-hf ${CHECKPOINT}", "runner": "podman"},
             }
         )
@@ -199,7 +199,7 @@ class TestRunnerTypeResolution:
     def test_default_runner_when_no_backend(self):
         """Without a specific backend, falls back to runners config default."""
         arkestra = _make_cm(
-            backend_cfg={"default": "radv", "radv": {"args": "-hf ${CHECKPOINT}", "runner": "process"}},
+            backend_cfg={"default": "vulkan-radv", "vulkan-radv": {"args": "-hf ${CHECKPOINT}", "runner": "process"}},
             runner_cfg={"default": "ProcessModelRunner"},
         )
         rtype = arkestra._resolve_runner_type("test-model", {})
@@ -209,7 +209,7 @@ class TestRunnerTypeResolution:
         """Explicit override_backend with runner in config returns that runner."""
         arkestra = _make_cm(
             backend_cfg={
-                "default": "radv",
+                "default": "vulkan-radv",
                 "podman-vulkan": {"args": "-hf ${CHECKPOINT}", "runner": "podman"},
             },
         )
@@ -232,7 +232,7 @@ class TestStartValidation:
     def test_unknown_backend_raises(self):
         """start() raises ValueError for a backend not in config."""
         arkestra = _make_cm(
-            backend_cfg={"default": "radv"},
+            backend_cfg={"default": "vulkan-radv"},
             runner_cfg={"default": "ProcessModelRunner"},
         )
         async def run():
@@ -321,8 +321,8 @@ class TestCmDelegation:
     def test_get_backend_delegates(self):
         """.get_backend() delegates to ConfigManager."""
         arkestra = _make_cm(
-            backend_cfg={"default": "radv", "radv": {"args": "-hf ${CHECKPOINT}"}},
+            backend_cfg={"default": "vulkan-radv", "vulkan-radv": {"args": "-hf ${CHECKPOINT}"}},
             runner_cfg={"default": "ProcessModelRunner"},
         )
-        be = arkestra.get_backend("radv")
+        be = arkestra.get_backend("vulkan-radv")
         assert be is not None

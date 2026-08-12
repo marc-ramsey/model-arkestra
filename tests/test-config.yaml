@@ -16,9 +16,10 @@ macros:
   ctx-size: 16384
 
 backends:
-  default: radv               # global default backend ID
-  radv:
+  default: vulkan-radv               # global default backend ID
+  vulkan-radv:
     binary_dir: /home/marc/local/llama.cpp/build-vulkan-radv/bin
+    image: llama-vulkan-driver:vulkan
     env_container:
       ROCBLAS_USE_HIPBLASLT: "1"
       GGML_CUDA_ENABLE_UNIFIED_MEMORY: "ON"

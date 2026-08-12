@@ -29,7 +29,7 @@ class TestResolveBackend:
         runner = MagicMock()
         runner.cm.get_backend.return_value = {"image": "img:v2"}
         ctx = _ModelContext("m", 18000)
-        model_data = {"backend": "radv"}
+        model_data = {"backend": "vulkan-radv"}
         result = _resolve_backend_for_podman(runner, ctx, model_data)
         assert result is not None
 
@@ -65,7 +65,7 @@ class TestBuildPodmanCmdNewArch:
     @pytest.fixture
     def ctx(self):
         c = _ModelContext("test-model", 18003)
-        c.backend_id = "radv"
+        c.backend_id = "vulkan-radv"
         return c
 
     @pytest.mark.asyncio
@@ -96,7 +96,7 @@ class TestBuildPodmanCmdNewArch:
 
     @pytest.mark.asyncio
     async def test_host_binding_appended(self, mock_config_manager, ctx):
-        assembled = "/tmp/test-wrappers/radv --port 18003 -fa on"
+        assembled = "/tmp/test-wrappers/vulkan-radv --port 18003 -fa on"
         mock_config_manager.assemble_command.return_value = assembled
         cmd_parts = _build_podman_cmd(mock_config_manager, ctx, {})
         cmd_str = " ".join(cmd_parts)
@@ -105,7 +105,7 @@ class TestBuildPodmanCmdNewArch:
     @pytest.mark.asyncio
     async def test_no_duplicated_host(self, mock_config_manager, ctx):
         """If assemble_command already has --host, it should not be added again."""
-        assembled = "/tmp/test-wrappers/radv --port 18003 --host 0.0.0.0 -fa on"
+        assembled = "/tmp/test-wrappers/vulkan-radv --port 18003 --host 0.0.0.0 -fa on"
         mock_config_manager.assemble_command.return_value = assembled
         cmd_parts = _build_podman_cmd(mock_config_manager, ctx, {})
         assert cmd_parts.count("--host") <= 1

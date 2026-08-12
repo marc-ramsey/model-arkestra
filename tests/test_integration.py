@@ -81,7 +81,7 @@ class TestPodmanIntegration:
         assert PodmanModelRunner is not None
 
     async def test_podman_gpu_detection(self, _skip_no_podman):
-        """Verify backend registry provides GPU devices for radv."""
+        """Verify backend registry provides GPU devices for vulkan-radv."""
         from model_arkestra.podman import PodmanModelRunner
         assert PodmanModelRunner is not None
 

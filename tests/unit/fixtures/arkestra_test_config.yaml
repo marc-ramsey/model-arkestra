@@ -6,8 +6,8 @@ macros:
   ctx-size: 16384
 
 backends:
-  default: radv
-  radv:
+  default: vulkan-radv
+  vulkan-radv:
     args: -hf ${CHECKPOINT}
 
 runners:

@@ -113,7 +113,8 @@ def _build_podman_cmd(
 
         hf_cache = os.environ.get("HF_HUB_CACHE", "/home/lemonade/hub")
         if os.path.exists(hf_cache):
-            parts.extend(["-v", f"{hf_cache}:/home/lemonade/hub"])
+            parts.extend(["-v", f"{hf_cache}:/usr/local/hf_hub"])
+            container_env.setdefault("HF_HUB_CACHE", "/usr/local/hf_hub")
 
         for dev in devices:
             parts.extend(["--device", str(dev)])
@@ -129,7 +130,7 @@ def _build_podman_cmd(
             override_backend=ctx.backend_id,
         )
         if result is not None:
-            llama_arg_list = result[0][1:] if len(result[0]) > 1 else []
+            llama_arg_list = list(result[0]) if result is not None else []
         else:
             llama_arg_list = []
 
@@ -179,7 +180,8 @@ def _build_podman_cmd(
 
     hf_cache = os.environ.get("HF_HUB_CACHE", "/home/lemonade/hub")
     if os.path.exists(hf_cache):
-        parts.extend(["-v", f"{hf_cache}:/home/lemonade/hub"])
+        parts.extend(["-v", f"{hf_cache}:/usr/local/hf_hub"])
+        parts.extend(["-e", "HF_HUB_CACHE=/usr/local/hf_hub"])
 
     cmd_args = model_data.get("cmd", "") or ""
     if "--host" not in cmd_args:

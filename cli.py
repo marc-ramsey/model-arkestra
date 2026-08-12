@@ -26,7 +26,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--backend", "-b",
         default=None,
-        help="Backend id override (e.g. rocm, radv)",
+        help="Backend id override (e.g. rocm, vulkan-radv)",
     )
     p.add_argument(
         "--runner", "-c",

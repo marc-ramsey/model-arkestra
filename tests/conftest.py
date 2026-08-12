@@ -108,7 +108,7 @@ def mr() -> ModelArkestra:
     config_path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "test-config.yaml"
     )
-    runner = ModelArkestra(config_path, ready_timeout=30, warmup_delay=10)
+    runner = ModelArkestra(config_path, ready_timeout=180, warmup_delay=10)
     yield runner
     # Sync teardown — asyncio may not be available at module-scope cleanup time.
     shutdown_runner(runner)

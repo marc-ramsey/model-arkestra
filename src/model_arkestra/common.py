@@ -53,6 +53,9 @@ def resolve_binary_from_backend(backend: Dict[str, Any]) -> Optional[tuple]:
     # 1. Explicit binary_dir takes priority over everything
     binary_dir = backend.get("binary_dir")
     if binary_dir and os.path.isdir(str(binary_dir)):
+        d = str(binary_dir).lower()
+        if "rocm" in d or "hip" in d or "vulkan" in d:
+            devices = ["/dev/dri/card1:rwm", "/dev/dri/renderD128:rwm"]
         return (str(binary_dir) + "/llama-server", devices)
 
     version = str(backend.get("version", ""))

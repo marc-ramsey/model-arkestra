@@ -33,7 +33,7 @@ class TestResolveBackendForDocker:
         runner = MagicMock()
         runner.cm.get_backend.return_value = {"image": "img:v2"}
         ctx = _ModelContext("m", 18000)
-        model_data = {"backend": "radv"}
+        model_data = {"backend": "vulkan-radv"}
         result = _resolve_backend_for_docker(runner, ctx, model_data)
         assert result is not None
 
@@ -70,7 +70,7 @@ class TestBuildDockerCmdNewArch:
     @pytest.fixture
     def ctx(self):
         c = _ModelContext("test-model", 18003)
-        c.backend_id = "radv"
+        c.backend_id = "vulkan-radv"
         return c
 
     @pytest.mark.asyncio
@@ -103,7 +103,7 @@ class TestBuildDockerCmdNewArch:
 
     @pytest.mark.asyncio
     async def test_host_binding_appended(self, mock_config_manager, ctx):
-        assembled = "/tmp/test-wrappers/radv --port 18003 -fa on"
+        assembled = "/tmp/test-wrappers/vulkan-radv --port 18003 -fa on"
         mock_config_manager.assemble_command.return_value = (["/bin/foo", "--port", "18003", "-fa", "on"], "")
         cmd_parts = _build_docker_cmd(mock_config_manager, ctx, {})
         assert "--host" in cmd_parts
@@ -144,12 +144,12 @@ class TestBuildDockerCmdNewArch:
     @pytest.mark.asyncio
     async def test_binary_dir_mounted(self, mock_config_manager, ctx):
         """Resolved binary directory is mounted read-only so the host binary is accessible inside container."""
-        assembled = ["/tmp/test-wrappers/radv --port 18003 -fa on"]
+        assembled = ["/tmp/test-wrappers/vulkan-radv --port 18003 -fa on"]
         inner = mock_config_manager.cm
         # Provide binary_dir so resolve_binary_from_backend returns a valid path via first branch
         inner.get_backend.return_value = {
             "image": "llama-strix-halo:vulkan",
-            "binary_dir": "/tmp/test-wrappers/radv",
+            "binary_dir": "/tmp/test-wrappers/vulkan-radv",
             "devices": [],
             "env_container": {},
         }
@@ -157,13 +157,13 @@ class TestBuildDockerCmdNewArch:
         cmd_parts = _build_docker_cmd(mock_config_manager, ctx, {})
         cmd_str = " ".join(cmd_parts)
         assert "-v" in cmd_parts
-        # The full binary_dir is mounted read-only (e.g. /tmp/test-wrappers/radv)
-        assert "/tmp/test-wrappers/radv:/tmp/test-wrappers/radv:ro" in cmd_str
+        # The full binary_dir is mounted read-only (e.g. /tmp/test-wrappers/vulkan-radv)
+        assert "/tmp/test-wrappers/vulkan-radv:/tmp/test-wrappers/vulkan-radv:ro" in cmd_str
 
     @pytest.mark.asyncio
     async def test_binary_path_replaces_llama_server(self, mock_config_manager, ctx):
         """When binary_path is resolved, it replaces 'llama-server' as the executable."""
-        assembled = ["/tmp/test-wrappers/radv --port 18003 -fa on"]
+        assembled = ["/tmp/test-wrappers/vulkan-radv --port 18003 -fa on"]
         cmd_parts = _build_docker_cmd(mock_config_manager, ctx, {})
         # llama-server should appear but be replaced by binary_path
         # (the last element before args is either "llama-server" or the resolved binary_path)
