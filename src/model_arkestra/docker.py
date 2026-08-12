@@ -59,7 +59,7 @@ def _build_docker_cmd(
         for k, v in (runner.cm.get_vector("env") or {}).items():
             container_env.setdefault(k, str(v))
 
-        parts: List[str] = ["docker", "run", "--rm", "-d"]
+        parts: List[str] = ["docker", "run", "-d"]
 
         # Device passthrough
         for dev in devices:
@@ -115,8 +115,9 @@ def _build_docker_cmd(
     image = model_data.get("image") or "llama-strix-halo:vulkan"
     devices = list(model_data.get("devices", []))
 
-    parts: List[str] = ["docker", "run", "--rm", "-d"]
+    parts: List[str] = ["docker", "run", "-d"]
 
+    # Device passthrough
     for dev in devices:
         parts.extend(["--device", str(dev)])
 
