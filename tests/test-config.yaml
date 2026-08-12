@@ -18,8 +18,15 @@ macros:
 backends:
   default: radv               # global default backend ID
   radv:
+    binary_dir: /home/marc/local/llama.cpp/build-vulkan-radv/bin
+    env_container:
+      ROCBLAS_USE_HIPBLASLT: "1"
+      GGML_CUDA_ENABLE_UNIFIED_MEMORY: "ON"
     args: -hf ${CHECKPOINT} --port ${PORT}
     runner: process
+  podman-vulkan:
+    args: -hf ${CHECKPOINT} --port ${PORT}
+    image: llama-vulkan-driver:vulkan
 
 runners:
   default: ProcessModelRunner

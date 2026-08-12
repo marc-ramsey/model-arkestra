@@ -1,0 +1,20 @@
+
+models-start-port: 18000
+model-ports: 4
+
+macros:
+  ctx-size: 16384
+
+backends:
+  default: radv
+  radv:
+    args: -hf ${CHECKPOINT}
+
+runners:
+  default: ProcessModelRunner
+
+
+models:
+  test-model:
+    checkpoint: dummy/dummy:Q4_K_M
+    args: --temp 0.7

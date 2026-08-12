@@ -16,37 +16,6 @@ from model_arkestra.types import (
 logger = logging.getLogger(__name__)
 
 
-def scan_backend_registry(data: Dict[str, Any]) -> None:
-    """Scan backend-registry directory and populate wrapper paths in backends.
-
-    Called by model-arkestra after loading ConfigManager — not part of config-manager itself.
-    """
-    registry_dir = data.get('backend-registry')
-    if not registry_dir:
-        return
-
-    backends = data.get('backends')
-    if not backends or not isinstance(backends, dict):
-        return
-
-    registry_path = os.path.abspath(str(registry_dir))
-    if not os.path.isdir(registry_path):
-        logger.warning("Backend registry directory does not exist: %s", registry_path)
-        return
-
-    for backend_key in backends:
-        be = backends[backend_key]
-        if isinstance(be, dict) and 'wrapper' in be:
-            continue  # already specified in YAML
-
-        script_path = os.path.join(registry_path, str(backend_key))
-        if not os.path.isfile(script_path):
-            logger.debug("No backend script found for '%s' at %s", backend_key, script_path)
-            continue
-
-        backends[backend_key]['wrapper'] = os.path.abspath(script_path)
-
-
 class BaseModelRunner(ABC):
     def __init__(self, config_manager: Any, restart_delay: float = 5.0,
                  restart_limit: int = 4, shutdown_timeout: float = 20.0,
@@ -67,17 +36,18 @@ class BaseModelRunner(ABC):
 
     async def _ensure_port_available(self, port: int) -> None:
         """Raise RuntimeError immediately if *port* is already in use."""
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            try:
-                await asyncio.get_event_loop().run_in_executor(
-                    None, s.connect, ("127.0.0.1", port)
-                )
-                # connect succeeded → port is taken
-                raise RunnerError(f"Port {port} is already in use")
-            except ConnectionRefusedError:
-                pass  # port free — nothing to do
-            finally:
-                s.close()
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(
+                None, lambda: socket.create_connection(("127.0.0.1", port), timeout=1)
+            )
+            raise RunnerError(f"Port {port} is already in use")
+        except ConnectionRefusedError:
+            pass  # port free — nothing to do
+        except OSError as e:
+            # Connection refused, unreachable, or timeout → port free
+            if "[Errno 111]" not in str(e) and "[Errno 61]" not in str(e):
+                pass  # non-refusal OS errors are also fine (port free)
 
     async def _release_port(self, port: int) -> None:
         """Subclasses may override to wait for the underlying listener to drain
@@ -329,22 +299,22 @@ class BaseModelRunner(ABC):
                             return
             except Exception:
                 pass
+        else:
+            eff_port = port if port is not None else int(
+                self.cm.data.get('models-start-port', 18000)
+            )
+            if not isinstance(eff_port, int) or eff_port < 1 or eff_port > 65535:
+                raise ValueError(f"Invalid port: {eff_port}")
+            model_data = self.cm.get_model(model_name, env_vars={"PORT": str(eff_port)})
+            if not model_data:
+                raise ModelNotStarted(model_name)
 
-        eff_port = port if port is not None else int(
-            self.cm.data.get('models-start-port', 18000)
-        )
-        if not isinstance(eff_port, int) or eff_port < 1 or eff_port > 65535:
-            raise ValueError(f"Invalid port: {eff_port}")
-        model_data = self.cm.get_model(model_name, env_vars={"PORT": str(eff_port)})
-        if not model_data:
-            raise ModelNotStarted(model_name)
+            effective_backend = backend or model_data.get("backend")
 
-        effective_backend = backend or model_data.get("backend")
-
-        ctx = _ModelContext(model_name, eff_port)
-        ctx.backend_id = effective_backend
-        self._models[model_name] = ctx
-        ctx.state = RunnerState.LOADING
+            ctx = _ModelContext(model_name, eff_port)
+            ctx.backend_id = effective_backend
+            self._models[model_name] = ctx
+            ctx.state = RunnerState.LOADING
 
         await self._ensure_port_available(eff_port)
 
@@ -415,9 +385,16 @@ class BaseModelRunner(ABC):
             await self._stop_single(key)
 
     async def shutdown(self) -> None:
-        """Stop all models and clear the store — full teardown."""
+        """Stop all models, cancel watchers, and clear the store — full teardown."""
         await self.stop_all()
+        for task in self._watchers.values():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         self._models.clear()
+        self._watchers.clear()
 
     async def _watch_process_or_container(self, model_name: str, ctx: _ModelContext) -> None:
         if ctx.process is not None:

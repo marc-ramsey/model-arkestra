@@ -48,14 +48,11 @@ class TestBuildPodmanCmdNewArch:
     def mock_config_manager(self):
         inner = MagicMock()
         inner.get_backend.return_value = {
-            "wrapper": "/tmp/test-wrappers/radv",
             "image": "llama-strix-halo:vulkan",
             "devices": ["/dev/dri/card0:rwm", "/dev/dri/renderD128:rwm"],
             "env_container": {"GGML_VK_VISIBLE_DEVICES": "0"},
         }
-        inner.assemble_command = MagicMock(
-            return_value="/tmp/test-wrappers/radv --port 18003 --hf my-model:Q4 -fa on -ngl 999 --reasoning-off"
-        )
+        inner.assemble_command = MagicMock(return_value=([], ""))
         runner = MagicMock()
         runner.cm = inner
         runner.INSIDE_PORT = 9091
@@ -96,13 +93,6 @@ class TestBuildPodmanCmdNewArch:
         cmd_parts = _build_podman_cmd(mock_config_manager, ctx, {})
         assert "--name" in cmd_parts
         assert "llm-test-model-18003" in cmd_parts
-
-    @pytest.mark.asyncio
-    async def test_wrapper_mounted_and_executed(self, mock_config_manager, ctx):
-        """Wrapper script is mounted and run as entrypoint."""
-        cmd_parts = _build_podman_cmd(mock_config_manager, ctx, {})
-        assert "llama-strix-halo:vulkan" in cmd_parts
-        assert "--entrypoint" in cmd_parts
 
     @pytest.mark.asyncio
     async def test_host_binding_appended(self, mock_config_manager, ctx):

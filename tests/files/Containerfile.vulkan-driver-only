@@ -1,0 +1,21 @@
+FROM registry.fedoraproject.org/fedora:44
+
+# Vulkan + CUDA compat drivers for AMD Strix Halo (gfx1151)
+RUN dnf install -y --setopt=install_weak_deps=False \
+        vulkan-loader mesa-vulkan-drivers libcurl libgomp spirv-headers-devel \
+    && dnf clean all
+
+ENV AMD_VULKAN_ICD=RADV
+ENV VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json
+ENV MESA_SHADER_CACHE_DIR=/tmp/mesa-shader-cache
+ENV LLAMA_CACHE=/home/lemonade/hub
+ENV ROCBLAS_USE_HIPBLASLT=1
+ENV GGML_CUDA_ENABLE_UNIFIED_MEMORY=ON
+
+# Launcher: first arg = binary path, rest = arguments. Sets LD_LIBRARY_PATH then execs.
+RUN printf '#!/bin/bash\nexport LD_LIBRARY_PATH=/usr/local/bin:$LD_LIBRARY_PATH\nexec "$@"\n' > /usr/local/bin/llama-launch.sh && chmod 755 /usr/local/bin/llama-launch.sh
+
+WORKDIR /root
+VOLUME ["/models"]
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/llama-launch.sh"]

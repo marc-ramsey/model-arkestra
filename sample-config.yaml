@@ -18,11 +18,22 @@ macros:
 backends:
   default: radv               # global default backend ID
   radv:
+    binary_dir: /home/marc/local/llama.cpp/build-vulkan-radv/bin
+    env_container:
+      ROCBLAS_USE_HIPBLASLT: "1"
+      GGML_CUDA_ENABLE_UNIFIED_MEMORY: "ON"
     args: -hf ${CHECKPOINT} --port ${PORT}
-    runner: process
+    runner: podman
+  rocm:
+    binary_dir: /home/marc/local/llama.cpp/build-rocm/bin
+    env_container:
+      ROCBLAS_USE_HIPBLASLT: "1"
+      GGML_CUDA_ENABLE_UNIFIED_MEMORY: "ON"
+    args: -hf ${CHECKPOINT} --port ${PORT}
+    runner: podman
 
 runners:
-  default: ProcessModelRunner
+  default: PodmanModelRunner
 
 models:
   # ── Qwen3.5-4B (text + image → text, multimodal) ──────────────────

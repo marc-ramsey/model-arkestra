@@ -49,7 +49,7 @@ class TestPodmanRunnerIntegration:
 
     async def test_qwen3_4b_podman_invoke(self, mr):
         """Start qwen3.5-4b in podman container → invoke → stop."""
-        await mr.start("qwen3.5-4b", container="podman")
+        await mr.start("qwen3.5-4b", runner="podman")
 
         response = await mr.ainvoke(
             "qwen3.5-4b",
@@ -61,7 +61,7 @@ class TestPodmanRunnerIntegration:
 
     async def test_qwen3_4b_podman_stream(self, mr):
         """Start gemma-4-e2b in podman container → stream tokens → stop."""
-        await mr.start("gemma-4-e2b", container="podman")
+        await mr.start("gemma-4-e2b", runner="podman")
 
         print("[*] Testing streaming (astream)...")
         full_content = ""

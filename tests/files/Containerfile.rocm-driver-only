@@ -1,0 +1,19 @@
+FROM registry.fedoraproject.org/fedora:44
+
+# Minimal ROCm runtime for AMD GPU support
+RUN dnf install -y --setopt=install_weak_deps=False \
+        rocm-core hip-runtime-rocm \
+    && dnf clean all
+
+ENV LLAMA_CACHE=/home/lemonade/hub
+ENV ROCBLAS_USE_HIPBLASLT=1
+ENV GGML_CUDA_ENABLE_UNIFIED_MEMORY=ON
+
+# Minimal launcher — sets LD_LIBRARY_PATH, then execs llama-server with all args
+RUN printf '#!/bin/bash\nexport LD_LIBRARY_PATH=/usr/local/bin:$LD_LIBRARY_PATH\nexec -- "$@"\n' > /usr/local/bin/llama-launch.sh && chmod 755 /usr/local/bin/llama-launch.sh
+
+# The binary is mounted from host at runtime (e.g. /home/marc/local/llama.cpp/build-rocm/bin)
+WORKDIR /root
+VOLUME ["/models"]
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/llama-launch.sh", "/home/marc/local/llama.cpp/build-rocm/bin/llama-server"]

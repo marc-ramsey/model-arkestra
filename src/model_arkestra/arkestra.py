@@ -17,9 +17,7 @@ class ModelArkestra:
 
     def __init__(self, config_path: str, start_port: int = 18000, **runner_kwargs: Any):
         self._cm = ConfigManager(config_path)
-        from model_arkestra.base import scan_backend_registry
-        scan_backend_registry(self._cm.data)
-        self._next_port: int = self._cm.data.get('models-start-port', start_port)
+        self._next_port = self._cm.data.get('models-start-port', start_port)
         self._runners: Dict[str, BaseModelRunner] = {}
         self._runner_kwargs = runner_kwargs
         self._build_runner_class_map()
@@ -153,12 +151,12 @@ class ModelArkestra:
         model_name: str,
         port: Optional[int] = None,
         backend: Optional[str] = None,
-        container: Optional[str] = None,
+        runner: Optional[str] = None,
     ) -> None:
         """Start a model.
 
         * ``backend`` — resolves from config.yaml (the backend_id to use).
-        * ``container`` — explicit override for which runner to use:
+        * ``runner`` — explicit override for which runner to use:
           ``None`` / ``"process"`` → ProcessModelRunner,
           ``"podman"`` → PodmanModelRunner, ``"docker"`` → DockerModelRunner.
         """
@@ -180,12 +178,12 @@ class ModelArkestra:
         if port is None:
             port = self._alloc()
 
-        # container= selects the transport layer (validated inside _get_runner_instance)
-        if container is not None:
-            runner = self._get_runner_instance(container, model_name)
-            await runner.start(model_name, port=port, backend=backend)
-            ctx = runner._models[model_name]
-            ctx.runner_type = container
+        # runner= selects the transport layer
+        if runner is not None:
+            inst = self._get_runner_instance(runner, model_name)
+            await inst.start(model_name, port=port, backend=backend)
+            ctx = inst._models[model_name]
+            ctx.runner_type = runner
             return
         else:
             be_id = self._resolve_backend_id(model_name, {}, backend)
@@ -217,15 +215,15 @@ class ModelArkestra:
         model_name: str,
         *,
         backend: Optional[str] = None,
-        container: Optional[str] = None,
+        runner: Optional[str] = None,
     ) -> None:
         """Stop a model and start a new instance on the same port.
 
-        Optional ``backend`` / ``container`` kwargs override the runner for
+        Optional ``backend`` / ``runner`` kwargs override the runner for
         the restarted instance; either, both, or neither may be supplied.
         """
         await self.stop(model_name)
-        await self.start(model_name, backend=backend, container=container)
+        await self.start(model_name, backend=backend, runner=runner)
 
     async def stop_all(self) -> None:
         """Stop all model processes across every runner, keeping entries alive."""

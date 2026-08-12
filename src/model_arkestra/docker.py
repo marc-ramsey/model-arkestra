@@ -8,10 +8,11 @@ import subprocess
 import time
 logger = logging.getLogger(__name__)
 from typing import Any, Dict, List, Optional
-from model_arkestra.base import BaseModelRunner
+from model_arkestra.container_runner import ContainerModelRunner
+from model_arkestra.common import (
+    resolve_binary_from_backend, safe_container_name, default_image_for_backend
+)
 from model_arkestra.types import _ModelContext
-
-INSPECT_RE = re.compile(r"^(exited|dead|paused|removing)\s*$", re.IGNORECASE)
 
 
 def _resolve_backend_for_docker(
@@ -19,16 +20,7 @@ def _resolve_backend_for_docker(
     ctx: _ModelContext,
     model_data: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
-    """Look up the effective backend dict for this model launch.
-
-    Resolution order:
-    1. *ctx.backend_id* (set by runtime ``backend=`` on ``start()``)
-    2. Model's ``backend`` YAML key
-    3. Registry default from ``backends.default``
-
-    Returns **None** when the backends architecture is not in use, in which
-    case the old ``model_data["image"]`` / fallback behaviour takes over.
-    """
+    """Look up the effective backend dict for this model launch."""
     backend_id = ctx.backend_id or model_data.get("backend")
     if not backend_id:
         backends = runner.cm.data.get("backends")
@@ -45,20 +37,24 @@ def _build_docker_cmd(
     ctx: _ModelContext,
     model_data: Dict[str, Any],
 ) -> List[str]:
-    """Build a complete docker run command.
-
-    Uses the backend registry when available (new architecture).  Falls back
-    to legacy heuristics / model-data keys when no backends are defined.
-    """
+    """Build a complete docker run command."""
     # ── Determine effective image, devices, env from backend ───────────
     backend = _resolve_backend_for_docker(runner, ctx, model_data)
 
     if backend is not None:
         # --- New backends architecture ----------------------------------
-        wrapper_path = backend.get("wrapper")
-        image = backend.get("image") or _default_image_for_backend(ctx.backend_id)
+        image = str(backend.get("image") or default_image_for_backend(ctx.backend_id))
         devices: List[str] = list(backend.get("devices", []))
         container_env: Dict[str, str] = dict(backend.get("env_container", {}))
+
+        # Resolve host binary dir and optional devices from backend.
+        binary_info = resolve_binary_from_backend(backend)
+        binary_path: Optional[str] = None
+        if binary_info is not None:
+            binary_path, extra_devs = binary_info
+            if not devices:
+                devices = extra_devs
+
         # Merge global env vars (LLAMA_CACHE, HF_HUB_CACHE, etc.) into container env
         for k, v in (runner.cm.get_vector("env") or {}).items():
             container_env.setdefault(k, str(v))
@@ -75,8 +71,7 @@ def _build_docker_cmd(
             parts.extend(["-e", f"{k}={v}"])
 
         # Container name
-        safe_name = ctx.name.replace("_", "-").replace(".", "-")
-        parts.extend(["--name", f"llm-{safe_name}-{ctx.port}"])
+        parts.extend(["--name", safe_container_name(ctx.name, ctx.port)])
 
         # Port mapping — same port inside and out.
         parts.extend(["-p", f"{ctx.port}:{ctx.port}"])
@@ -85,6 +80,12 @@ def _build_docker_cmd(
         hf_cache = os.environ.get("HF_HUB_CACHE", "/home/lemonade/hub")
         if os.path.exists(hf_cache):
             parts.extend(["-v", f"{hf_cache}:/home/lemonade/hub"])
+
+        # Mount host binary dir so the resolved binary is reachable inside container.
+        if binary_path:
+            binary_dir = os.path.dirname(binary_path)
+            if os.path.isdir(binary_dir):
+                parts.extend(["-v", f"{binary_dir}:{binary_dir}:ro"])
 
         # Resolve the llama-server args list from backend registry.
         result = runner.cm.assemble_command(
@@ -103,6 +104,9 @@ def _build_docker_cmd(
             llama_arg_list.append("0.0.0.0")
 
         parts.extend([image, "llama-server"])
+        if binary_path:
+            # Replace the image-bundled llama-server with the mounted host binary
+            parts[-1] = binary_path
         parts.extend(llama_arg_list)
 
         return parts
@@ -118,8 +122,7 @@ def _build_docker_cmd(
 
     parts.extend(["-e", f"PORT={ctx.port}"])
 
-    safe_name = ctx.name.replace("_", "-").replace(".", "-")
-    parts.extend(["--name", f"llm-{safe_name}-{ctx.port}"])
+    parts.extend(["--name", safe_container_name(ctx.name, ctx.port)])
 
     # Same port inside and out.
     parts.extend(["-p", f"{ctx.port}:{ctx.port}"])
@@ -139,30 +142,24 @@ def _build_docker_cmd(
     return parts
 
 
-def _default_image_for_backend(backend_id: Optional[str]) -> str:
-    """Derive a default image tag from the backend identifier."""
-    if not backend_id:
-        return "llama-strix-halo:vulkan"
-    b = backend_id.lower()
-    if any(k in b for k in ("rocm", "hip", "opencl")):
-        return "llama-strix-halo:rocm"
-    return "llama-strix-halo:vulkan"
+class DockerModelRunner(ContainerModelRunner):
 
+    def _container_cmd(self) -> str:
+        return "docker"
 
-class DockerModelRunner(BaseModelRunner):
-    INSIDE_PORT = 9090
-
-    async def _release_port(self, port: int) -> None:
-        """Wait up to ``port_drain_timeout`` seconds for a stopped container's listener to release the port."""
-        deadline = time.monotonic() + self.port_drain_timeout
-        while time.monotonic() < deadline:
-            result = subprocess.run(
-                ["lsof", "-ti:", str(port)],
-                capture_output=True, text=True,
-            )
-            if not result.stdout.strip():
-                return
-            await asyncio.sleep(0.2)
+    async def _remove_containers(self, cids: list) -> None:
+        for cid in cids:
+            if cid:
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        "docker", "rm", "-f", cid,
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.DEVNULL,
+                        env=os.environ,
+                    )
+                    await proc.wait()
+                except Exception:
+                    pass
 
     async def _start_model_process(
         self, ctx: _ModelContext, model_data: Dict[str, Any]
@@ -183,78 +180,3 @@ class DockerModelRunner(BaseModelRunner):
                 f"docker run failed for model '{ctx.name}': {err_msg}"
             )
         ctx.container_id = stdout.decode().strip()
-
-    async def _stop_model_process(self, ctx: _ModelContext) -> None:
-        """Stop a Docker container gracefully, falling back to force-kill."""
-        cid = getattr(ctx, "container_id", None)
-        if not cid:
-            return
-        try:
-            stop = await asyncio.create_subprocess_exec(
-                "docker", "stop", "--time", str(self.port_drain_timeout), cid,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=os.environ,
-            )
-            await stop.wait()
-        except Exception:
-            pass
-        ctx.container_id = None
-
-    async def _watch_container(self, model_name: str, ctx: _ModelContext) -> None:
-        """Poll Docker for container status and restart on unexpected exit."""
-        cid = getattr(ctx, "container_id", None)
-        if not cid:
-            return
-
-        while True:
-            await asyncio.sleep(2.0)  # poll interval
-
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    "docker", "inspect", cid, "--format", "{{.State.Status}}",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    env=os.environ,
-                )
-                stdout, _ = await proc.communicate()
-
-                # Container was removed (e.g. by --rm during stop) — nothing to do
-                if proc.returncode != 0:
-                    return
-
-                status = stdout.decode().strip().lower()
-
-                if INSPECT_RE.match(status):
-                    await self._handle_restart(model_name, ctx, exit_code=1)
-                    # After restart the old container is gone or replaced.
-                    return
-
-            except Exception as e:
-                logger.warning(
-                    f"Error inspecting docker container {cid}: {e}"
-                )
-                continue
-
-
-    async def _before_restart(self, ctx: _ModelContext) -> bool:
-        """Ensure stale container reference is cleared before restarting."""
-        ctx.container_id = None
-        return await super()._before_restart(ctx)
-
-    async def shutdown(self) -> None:
-        """Full teardown — stop models, force-remove containers, clear state."""
-        cids = [getattr(ctx, "container_id", None) for ctx in list(self._models.values())]
-        await super().shutdown()
-        for cid in cids:
-            if cid:
-                try:
-                    proc = await asyncio.create_subprocess_exec(
-                        "docker", "rm", "-f", cid,
-                        stdout=asyncio.subprocess.DEVNULL,
-                        stderr=asyncio.subprocess.DEVNULL,
-                        env=os.environ,
-                    )
-                    await proc.wait()
-                except Exception:
-                    pass

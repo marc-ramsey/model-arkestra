@@ -29,10 +29,10 @@ def parse_args() -> argparse.Namespace:
         help="Backend id override (e.g. rocm, radv)",
     )
     p.add_argument(
-        "--container", "-c",
+        "--runner", "-c",
         choices=["process", "podman", "docker"],
         default=None,
-        help="Runner type override",
+        help="Runner type override (e.g. process, podman, docker)",
     )
     p.add_argument(
         "--port",
@@ -124,7 +124,7 @@ async def main() -> None:
 
     extra_kwargs = parse_extra_kwargs(args.model_kwargs) if args.model_kwargs else {}
 
-    await arkestra.start(args.model, backend=args.backend, container=args.container, port=args.port)
+    await arkestra.start(args.model, backend=args.backend, runner=args.runner, port=args.port)
 
     try:
         if args.prompt is not None:
@@ -134,7 +134,7 @@ async def main() -> None:
             # Interactive REPL
             await repl(arkestra, args.model, extra_kwargs)
     finally:
-        await arkestra.stop_all()
+        await arkestra.shutdown()
 
 
 if __name__ == "__main__":

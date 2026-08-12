@@ -13,6 +13,20 @@ class ProcessModelRunner(BaseModelRunner):
         self, ctx: _ModelContext, model_data: Dict[str, Any]
     ) -> None:
         await self._ensure_port_available(ctx.port)
+
+        # Resolve backend for binary_dir, binary name, and env vars.
+        be_id = ctx.backend_id or model_data.get("backend")
+        backend = self.cm.get_backend(be_id) if be_id else {}
+
+        binary_dir = backend.get("binary_dir", "")
+        binary_name = backend.get("binary", "llama-server")
+        binary_path = os.path.join(binary_dir, binary_name)
+        if not os.path.isfile(binary_path):
+            raise RuntimeError(
+                f"Binary '{binary_path}' not found for backend '{be_id}'"
+            )
+
+        # Pure args — assemble_command no longer prepends wrapper.
         result = self.cm.assemble_command(
             ctx.name,
             env_vars={"PORT": str(ctx.port)},
@@ -22,14 +36,20 @@ class ProcessModelRunner(BaseModelRunner):
             raise RuntimeError(f"Model '{ctx.name}' has no backend configured")
 
         args_list, _cmd_str = result
-        # args_list[0] is the wrapper path; rest are the resolved arguments.
+
+        # Merge environment: process + global env + backend env_container.
         env = os.environ.copy()
-        if env_vars := self.cm.get_vector("env"):
-            env.update({k: str(v) for k, v in env_vars.items()})
+        for k, v in (self.cm.get_vector("env") or {}).items():
+            env[k] = str(v)
+        for k, v in (backend.get("env_container") or {}).items():
+            env[k] = str(v)
+
         ctx.process = await asyncio.create_subprocess_exec(
-            *args_list,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            env=env, preexec_fn=os.setsid
+            binary_path, *args_list,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+            preexec_fn=os.setsid
         )
 
     async def _stop_model_process(self, ctx: _ModelContext) -> None:

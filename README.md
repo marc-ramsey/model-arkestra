@@ -33,11 +33,11 @@ Runner type resolution follows a strict precedence: **explicit arguments take pr
 
 #### Explicit override (highest priority)
 
-When `container=` or `backend=` is supplied, that value is used directly:
+When `runner=` or `backend=` is supplied, that value is used directly:
 
 ```
-container="podman" → PodmanModelRunner   (verified against registry)
-backend="rocm"     → backends.rocm.runner → runner class
+runner="podman" → PodmanModelRunner   (verified against registry)
+backend="rocm"  → backends.rocm.runner → runner class
 ```
 
 #### Automatic resolution (config chain)
@@ -106,7 +106,7 @@ runner = ProcessModelRunner(cm, shutdown_timeout=20.0, ready_timeout=120.0)
 # Auto-assigns port and picks runner from config chain
 await runner.start("gpt-oss-20b")
 
-# Model with backend: rocm → automatic podman routing (no container= needed)
+# Model with backend: rocm → automatic podman routing (no runner= needed)
 await runner.start("qwen3-4b:rocm")
 
 # Explicit backend override (also routes correctly via config chain)
@@ -115,8 +115,8 @@ await runner.start("qwen3-4b", backend="rocm")
 # Explicit port assignment (caller responsibility to avoid conflicts)
 await runner.start("qwen3.6-35B-think", port=18005)
 
-# Explicit container= override forces a specific runner type directly
-await runner.start("qwen3-4b", container="podman")
+# Explicit runner= override forces a specific runner type directly
+await runner.start("qwen3-4b", runner="podman")
 
 # Multiple models can run concurrently, each on its own port
 print(runner.running_models)
@@ -137,7 +137,7 @@ await runner.restart("gpt-oss-20b")
 await runner.restart("qwen3-4b", backend="rocm")   # podman → process
 
 # Force a specific container runtime regardless of config
-await runner.restart("qwen3-4b", container="docker")
+await runner.restart("qwen3-4b", runner="docker")
 
 # Restart a stopped model via start() (same-port, same-backend)
 await runner.stop("gpt-oss-20b")
@@ -207,7 +207,7 @@ The properties `.process_runner`, `.podman_runner`, and `.docker_runner` still e
 #### `async start(model_name: str, port: int | None = None, backend: str | None = None, container: str | None = None) -> None`
 
 Starts the server process or container for *model_name*. Runner type is resolved automatically:
-- If `container=` is provided, that runner type is used directly.
+- If `runner=` is provided, that runner type is used directly.
 - Otherwise: `model.backend` → `backends.<id>.runner` → `runners.<type>` (falls back to `runners.default`, then `"process"`).
 
 Polls `/health` until ready or timeout. Raises `ServerReadyTimeout` on failure.
@@ -216,9 +216,9 @@ Polls `/health` until ready or timeout. Raises `ServerReadyTimeout` on failure.
 
 Stops the model matching *model_name*. Sends the appropriate shutdown signal (see [Lifecycle](#process-lifecycle)).
 
-#### `async restart(model_name: str, *, backend: str | None = None, container: str | None = None) -> None`
+#### `async restart(model_name: str, *, backend: str | None = None, runner: str | None = None) -> None`
 
-Stops the running instance and starts a new one on the **same port**.  Optional keyword args override backend or container for the restarted instance.
+Stops the running instance and starts a new one on the **same port**.  Optional keyword args override backend or runner for the restarted instance.
 
 #### `async stop_all() -> None`
 

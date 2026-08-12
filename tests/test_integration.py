@@ -126,7 +126,7 @@ class TestDockerIntegration:
     @pytest.mark.slow
     async def test_ainvoke(self, mr):
         """Start qwen3.5-4b via docker → call ainvoke → stop."""
-        await mr.start("qwen3.5-4b", container="docker")
+        await mr.start("qwen3.5-4b", runner="docker")
         result = await mr.ainvoke("qwen3.5-4b", "say hi")
         assert isinstance(result, str)
         assert len(result) > 0
