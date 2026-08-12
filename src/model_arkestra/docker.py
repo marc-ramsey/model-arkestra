@@ -166,6 +166,18 @@ class DockerModelRunner(ContainerModelRunner):
         self, ctx: _ModelContext, model_data: Dict[str, Any]
     ) -> None:
         await self._ensure_port_available(ctx.port)
+        # Remove stale container so docker run can reuse the name.
+        cname = safe_container_name(ctx.name, ctx.port)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "docker", "rm", "-f", cname,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+                env=os.environ,
+            )
+            await proc.wait()
+        except Exception:
+            pass
         cmd_parts = _build_docker_cmd(self, ctx, model_data)
 
         proc = await asyncio.create_subprocess_shell(

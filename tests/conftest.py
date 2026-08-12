@@ -121,7 +121,7 @@ def mr() -> ModelArkestra:
 async def _cleanup_after_test(mr: ModelArkestra) -> None:
     """Guarantee that models are stopped after each test, regardless of outcome.
 
-    Calls ``mr.stop_all()`` which resets ``_models``, clears watchers, and resets
+    Calls ``mr.shutdown()`` which resets ``_models``, clears watchers, and resets
     the port counter — giving every test method a fresh slate.  A ``RuntimeError``
     guard handles the rare case where the event loop is already closed during
     teardown.
@@ -130,6 +130,19 @@ async def _cleanup_after_test(mr: ModelArkestra) -> None:
     if mr._runners:  # only bother if something was actually started
         try:
             await mr.shutdown()  # clears _models, _runners, resets port counter
+            # shutdown() stops models but does not remove containers — clean up any leftovers.
+            for cid in (subprocess.run(
+                ["podman", "ps", "-a", "--filter", "name=llm-",
+                 "--format", "{{.ID}}"],
+                capture_output=True, text=True,
+            ).stdout.strip().split() + subprocess.run(
+                ["docker", "ps", "-a", "--filter", "name=llm-",
+                 "--format", "{{.ID}}"],
+                capture_output=True, text=True,
+            ).stdout.strip().split()):
+                if cid:
+                    subprocess.run(["podman", "rm", "-f", cid], capture_output=True, timeout=5)
+                    subprocess.run(["docker", "rm", "-f", cid], capture_output=True, timeout=5)
         except RuntimeError:
             pass  # event loop may be closed — nothing we can do
 

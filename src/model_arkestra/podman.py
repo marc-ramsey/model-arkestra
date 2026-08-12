@@ -99,7 +99,7 @@ def _build_podman_cmd(
             binary_dir = os.path.dirname(binary_path)
 
         # Port inside the container matches the --port arg.
-        parts: List[str] = ["podman", "run", "-d"]
+        parts: List[str] = ["podman", "run", "--replace", "-d"]
         parts.extend(["-e", f"PORT={ctx.port}"])
         for k, v in container_env.items():
             parts.extend(["-e", f"{k}={v}"])
@@ -159,7 +159,7 @@ def _build_podman_cmd(
     image = model_data.get("image", "llama-vulkan-driver:vulkan")
     devices = list(model_data.get("devices", []))
 
-    parts: List[str] = ["podman", "run", "-d"]
+    parts: List[str] = ["podman", "run", "--replace", "-d"]
 
     for dev in devices:
         parts.extend(["--device", str(dev)])

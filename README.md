@@ -1,9 +1,10 @@
 # Model Runner Documentation
 
-The `model_arkestra` package manages the full lifecycle of local LLM inference servers. It has two layers:
+The `model_arkestra` package manages the full lifecycle of local LLM inference servers. It has three layers:
 
 - **ModelArkestra** — centralized entry point that manages port allocation, resolves backends via configuration, and delegates to backend-specific runners.
-- **Backend Runners** — concrete implementations that handle subprocess or container lifecycle per model.
+- **ContainerModelRunner** (intermediate base) — shared container logic for Podman and Docker (port drain wait, health watching, restart handling, force-remove on teardown).
+- **Backend Runners** — concrete implementations: `ProcessModelRunner` (direct subprocess), `PodmanModelRunner`, and `DockerModelRunner`.
 
 Models are addressed by **model name** alone. Callers interact purely by model name — the runner automatically picks the correct backend from config. Each model runs on exactly one backend at a time.
 
@@ -18,13 +19,16 @@ Models are addressed by **model name** alone. Callers interact purely by model n
 ├───────────────────────────────────────────────────┤
 │    _build_runner_class_map() → config-driven       │
 │    runners: section maps type → class              │
-│    _get_runner_instance(type) → lazy single factory│
-├──────────────┬──────────────────┬─────────────────┤
-│ ProcessModel │ PodmanModel      │ DockerModel     │
-│ Runner       │ Runner           │ Runner          │
-│              │                  │                 │
-│ subprocesses │ containers (pod) │ containers(dkr) │
-└──────────────┴──────────────────┴─────────────────┘
+│    _get_runner_instance(type, model) → lazy factory│
+├──────────────────────┬────────────────────────────┤
+│     ProcessModel     │  ContainerModelRunner      │
+│         Runner       │   (abstract base)          │
+│                      ├──────────────┬─────────────┤
+│    subprocesses      │  PodmanModel │ DockerModel │
+│                      │    Runner    │   Runner    │
+│                      │              │             │
+│                      │  containers  │ containers  │
+└──────────────────────┴──────────────┴─────────────┘
 ```
 
 ### Runner routing — explicit args override config
@@ -33,11 +37,11 @@ Runner type resolution follows a strict precedence: **explicit arguments take pr
 
 #### Explicit override (highest priority)
 
-When `runner=` or `backend=` is supplied, that value is used directly:
+When `runner=` is supplied, that value is used directly:
 
 ```
 runner="podman" → PodmanModelRunner   (verified against registry)
-backend="rocm"  → backends.rocm.runner → runner class
+runner="process" → ProcessModelRunner  (verified against registry)
 ```
 
 #### Automatic resolution (config chain)
@@ -45,10 +49,10 @@ backend="rocm"  → backends.rocm.runner → runner class
 When no explicit argument is given, the runner type is resolved through config:
 
 ```
-model.backend (e.g. "rocm")
-  → backends.rocm.runner (e.g. "podman")
-  → runners.podman / built-in fallback ("podman")
-  → runners.default / built-in fallback ("process")
+backends section exists?
+  └─> model.backend → backends.<id>.runner → runners:<type> (or "process")
+backends section absent?
+  └─> runners:<default> (or "process")
 ```
 
 ### Port allocation — a global counter controlled by `ModelArkestra`. The starting port and range are driven entirely by config:
@@ -58,22 +62,23 @@ model.backend (e.g. "rocm")
 | `models-start-port` | First port in the range (default 18000) |
 | `model-ports` | Size of the pool — valid ports are `start_port` through `start_port + model-ports - 1` |
 
-When `ModelArkestra.start()` is called without an explicit `port`, it allocates the next available number from this range. Once all ports in the pool are exhausted, `RuntimeError("Port range exceeded: …")` is raised immediately.
+When `ModelArkestra.start()` is called without an explicit `port`, it allocates the next available number from this range sequentially. Once all ports in the pool are exhausted, `RuntimeError("Port range exceeded: …")` is raised immediately.
 
-Stopped models **retain their port assignments**. Calling `start()` again on a stopped model restarts it on the same port (in-place). New models are assigned the next unused port from the pool.
+A **direct** runner instance (e.g., `ProcessModelRunner(cm)`) does **not** use a global counter — it picks `models-start-port` as the default for its first model, and subsequent calls reuse existing ports via `_dispatch()` / in-place restart.
+
+Stopped models **retain their port assignments** in both the orchestrator and direct runner instances. Calling `start()` again on a stopped model restarts it on the same port (in-place). New models are assigned the next unused port from the pool when using `ModelArkestra`.
 
 ```
 Config: start_port=18000, model-ports=32  →  valid range 18000–18031
 
 Model started      Port assigned
 ─────────────────  ───────────
-"alpha"            18000
-"beta"             18001
+"alpha"            18000    ← auto-allocated from pool
+"beta"             18001    ← next in pool
 "gamma" (port=9000) 9000   ← explicit override, bypasses pool
-"delta"            18002
-"alpha" stopped → start("alpha")   18000    ← restart-in-place, same port
+"delta"            18002    ← next in pool
+"alpha" stopped → start("alpha")  18000  ← restart-in-place, same port
 "epsilon"          18003    ← next free port in pool
-"alpha" again (restart) 18000  ← explicit restart also uses same port
 ```
 
 Explicit ports bypass the pool entirely — no range validation is performed. The caller bears that responsibility.
@@ -93,7 +98,7 @@ runner = ModelArkestra("config.yaml", ready_timeout=120.0)
 async with runner:
     ...
 
-# Backend-specific runners are available for direct use
+# Direct backend runners for standalone use
 from model_arkestra.process import ProcessModelRunner
 
 cm = ConfigManager("config.yaml")  # optional: pass ConfigManager directly
@@ -125,9 +130,9 @@ print(runner.running_models)
 
 ### Restarting a Model
 
-Stops the running instance and starts a fresh one on the **same port**. Optional keyword args override backend or container for the new instance.
+Stops the running instance and starts a fresh one on the **same port**. Optional keyword args override backend or runner for the new instance.
 
-A stopped model can also be restarted in-place by calling `start()` again — it reuses the same port automatically without needing an explicit `restart()` call.
+Calling `start()` again on a stopped model restarts it in-place on the same port (no need to call `stop()` first). Calling `start()` on an already-running model is idempotent — it checks `/health` and returns immediately if the server responds with 200.
 
 ```python
 # Identical restart — same config, same port
@@ -142,6 +147,10 @@ await runner.restart("qwen3-4b", runner="docker")
 # Restart a stopped model via start() (same-port, same-backend)
 await runner.stop("gpt-oss-20b")
 await runner.start("gpt-oss-20b")  # reuses the original port
+
+# Calling start() on an already-running model is idempotent
+await runner.start("qwen3-4b")  # checks /health, returns if alive
+```
 
 ### Sending a Prompt (Blocking)
 
@@ -172,11 +181,12 @@ async for event in runner.astream("gpt-oss-20b", {"prompt": "Write a haiku"}):
 # Stop a single model
 await runner.stop("gemma-4-26b-instruct")
 
-# Stop all running models — processes are killed but model entries remain
+# Stop all running models — processes/containers are killed but model entries remain
 # in STOPPED state so start() can restart them in-place on the same port.
 await runner.stop_all()
 
 # Full teardown — stops all models, clears internal state, resets port allocator
+# For container runners, also force-removes all stopped containers.
 await runner.shutdown()
 
 # Or use the context manager (auto-calls shutdown() on exit)
@@ -204,13 +214,13 @@ The properties `.process_runner`, `.podman_runner`, and `.docker_runner` still e
 
 ### Methods
 
-#### `async start(model_name: str, port: int | None = None, backend: str | None = None, container: str | None = None) -> None`
+#### `async start(model_name: str, port: int | None = None, backend: str | None = None, runner: str | None = None) -> None`
 
 Starts the server process or container for *model_name*. Runner type is resolved automatically:
 - If `runner=` is provided, that runner type is used directly.
-- Otherwise: `model.backend` → `backends.<id>.runner` → `runners.<type>` (falls back to `runners.default`, then `"process"`).
+- Otherwise: `backends.<id>.runner` (from config) → `runners:<type>` in config → falls back to `"process"`.
 
-Polls `/health` until ready or timeout. Raises `ServerReadyTimeout` on failure.
+If the model already exists and is in a STOPPED state, it restarts in-place on the same port. If it is already RUNNING, `/health` is polled — 200 returns immediately, anything else continues startup. Polls `/health` until ready or timeout. Raises `ServerReadyTimeout` on health-check failure (not on intermediate 502/504; those raise `RunnerError`).
 
 #### `async stop(model_name: str) -> None`
 
@@ -222,19 +232,19 @@ Stops the running instance and starts a new one on the **same port**.  Optional 
 
 #### `async stop_all() -> None`
 
-Stops all model processes. Model entries remain in `_models` with state ``STOPPED`` — calling `start()` again on a stopped model restarts it in-place on the same port.
+Stops all model processes. Model entries remain in `_models` with state `STOPPED` — calling `start()` again on a stopped model restarts it in-place on the same port. For container runners, containers are **not** removed (only force-removed during `shutdown()`).
 
 #### `async shutdown() -> None`
 
-Full teardown: stops all models, clears all runner and model entries, and resets the port allocator to ``models-start-port``. Use this for final cleanup (e.g. context manager exit, test teardown).
+Full teardown: stops all models, clears all runner and model entries, and resets the port allocator to `models-start-port`. For container runners, also sends `rm -f` on every stopped container. Use this for final cleanup (e.g. context manager exit, test teardown).
 
 #### `async ainvoke(model_name: str, prompt: str) -> str`
 
-Sends a blocking completion request and returns the full response string.
+Sends a blocking completion request and returns the full response string. Retries up to 12 times on connection errors or 503 status (with 2.5s backoff). Raises `RunnerError` for 502/504 (upstream failures), connection unreachable, or max retries exceeded.
 
 #### `async astream(model_name: str, payload: Dict[str, Any]) -> AsyncIterator[Dict[str, Any]]`
 
-Sends a streaming completion request and yields events for each SSE update. Returns an async generator — callers iterate with `async for`. Requires `{"prompt": "..."}` as the payload dict.
+Sends a streaming completion request and yields events for each SSE update. Returns an async generator — callers iterate with `async for`. The payload dict must contain `"prompt"` (string) or `"messages"` (list of message dicts).
 
 Each yielded dict is one of two forms:
 
@@ -261,11 +271,11 @@ Token chunks may be partial — e.g., the first event might be `"token": "Hell"`
 
 #### `async request(model_name: str, path: str, **kwargs) -> dict | bytes`
 
-Low-level HTTP forwarder for custom server endpoints not covered by `ainvoke()` or `astream()`. Forwards *kwargs* as the request payload and returns the parsed JSON response (or raw bytes if the endpoint does not return JSON).
+Low-level HTTP forwarder for custom server endpoints not covered by `ainvoke()` or `astream()`. Forwards *kwargs* as the request payload and returns the parsed JSON response (or raw bytes if the endpoint does not return JSON). Only sends POST requests with 15s timeout. Raises `RunnerError` on non-2xx responses.
 
 #### `running_models: set[str]`
 
-Read-only property returning the names of all models currently in `"running"` state.
+Read-only property returning the names of all models currently in `"running"` state, aggregated across all runner instances.
 
 ---
 
@@ -279,10 +289,9 @@ For direct use when you only need subprocess-based execution. Bound to a `Config
 | `shutdown_timeout` | `float` | `20.0` | Seconds to wait after SIGHUP before escalating to SIGKILL during shutdown. |
 | `ready_timeout` | `float` | `120.0` | Maximum seconds to wait for the server's `/health` endpoint to respond after starting. |
 | `ready_poll_ms` | `float` | `100.0` | Milliseconds between consecutive health-check polls during startup. |
-| `restart_delay` | `float` | `5.0` | Seconds to wait before attempting an automatic restart after a crash (podman/docker only). |
-| `restart_limit` | `int` | `4` | Maximum number of automatic restart attempts (podman/docker only). |
 | `warmup_delay` | `float` | `20.0` | Seconds to wait after `/health` returns OK before marking the model as `"running"`. |
-| `port_drain_timeout` | `float` | `20.0` | Seconds to wait for a stopped container's port listener to release (podman/docker only). |
+
+> The `restart_delay`, `restart_limit`, and `port_drain_timeout` parameters are available from `BaseModelRunner` but have no effect on `ProcessModelRunner` — automatic restart is not supported for direct subprocess execution. These are meaningful only for container-based runners (Podman/Docker).
 
 Each backend runner manages exactly one model. Its `stop()` takes no arguments and shuts down that model; `stop_all()` delegates to `stop()`. The remaining methods (`start`, `ainvoke`, `astream`, `request`, `running_models`) follow the same contract as described in the `ModelArkestra` section above.
 
@@ -297,23 +306,30 @@ Each backend runner manages exactly one model. Its `stop()` takes no arguments a
               "loading"     │
                               │ process exits unexpectedly
                               ▼
-                        watcher logs exit code, attempts restart (podman/docker)
+                        watcher logs exit code, (no auto-restart for processes)
 ```
 
 ### Crash detection by backend
 
 | Runner | Behavior |
 |---|---|
-| **Process** | Logs exit code when the subprocess dies. No automatic restart — call `start()` again explicitly. |
-| **Podman / Docker** | Polls container status; on unexpected exit, automatically attempts up to `restart_limit` restarts spaced by `restart_delay`. |
+| **Process** | Logs exit code when the subprocess dies. **No automatic restart** — call `start()` again explicitly. |
+| **Podman / Docker** | Polls container status every 2 seconds; on unexpected exit (`exited`, `dead`), automatically attempts up to `restart_limit` restarts spaced by `restart_delay`. The watcher task runs in the background. |
 
 ### Shutdown sequencing (`stop` / `stop_all`)
 
 1. State transitions to **STOPPING** immediately — prevents any watcher from attempting a restart.
 2. Signal is sent:
    - **Process**: SIGHUP to process group → waits up to `shutdown_timeout` (default 20s) → escalates to SIGKILL if still running.
-   - **Podman / Docker**: Container stop signal (`podman/dockers stop --time <port_drain_timeout>`) with graceful shutdown timeout.
-3. After termination, watcher tasks are cancelled and state transitions to **STOPPED**. Port is released (with `port_drain_timeout` wait for container runners).
+   - **Podman / Docker**: Container stop signal (`podman stop --time <port_drain_timeout>` or `docker stop --time <port_drain_timeout>`) with graceful shutdown timeout (`port_drain_timeout` default 20s).
+3. After termination, watcher tasks are cancelled and state transitions to **STOPPED**. Port is released (with `port_drain_timeout` wait for container runners to let the port listener drain).
+
+### Full teardown (`shutdown`)
+
+Identical to stop sequencing with two additions:
+1. All watcher tasks are cancelled and awaited.
+2. `_models` and `_watchers` dictionaries are cleared — models cannot be restarted after shutdown.
+3. **For container runners**: After stopping all containers, force-removes them via `podman rm -f` / `docker rm -f`.
 
 ---
 
@@ -330,11 +346,11 @@ except RunnerError as e:
 
 | Exception | When raised |
 |---|---|
-| `ServerReadyTimeout` | The server did not become ready (health check) within `ready_timeout`. |
-| `ModelNotStarted` | A request was made for a model name that doesn't exist in the config, or the model hasn't been started yet (`start()` not called). |
-| `ModelShutdown` | A request was made to a model that has been explicitly stopped via `stop()` or `stop_all()`. |
-| `MaxRestartsExceeded` | Podman/Docker: process has crashed too many times (after `restart_limit` attempts). |
-| `RunnerError` | Generic base class for all runner failures, including HTTP errors (502, 503, 504) from the server. |
+| `ServerReadyTimeout` | The server did not become ready (health check returned no 200 within `ready_timeout`). Raised only on total health-check exhaustion. |
+| `ModelNotStarted` | A request was made for a model name that doesn't exist in the config, or the model hasn't been started yet (`start()` not called). Also raised during `_start_model_process()` when `get_model()` returns `None`. |
+| `ModelShutdown` | A request was made to a model that has been explicitly stopped via `stop()` or `stop_all()` (state is STOPPED or STOPPING). |
+| `MaxRestartsExceeded` | Podman/Docker: process has crashed too many times (after `restart_limit` attempts). Container state transitions to ERROR. |
+| `RunnerError` | Generic base class for all runner failures, including HTTP errors (502, 503, 504) from the server, connection failures, and general request errors. |
 
 ---
 
@@ -371,7 +387,7 @@ macros:
 
 ### `backends:` section — executable registry
 
-Each backend entry specifies an argument template and which runner type should handle it. The actual executable path (`wrapper`) is resolved automatically from the `backend-registry` directory — no need to specify it in YAML.
+Each backend entry specifies an argument template and which runner type should handle it. Backend entries may also specify `binary_dir` (absolute path to a host directory containing the llama-server binary) or let the container runners resolve the binary via heuristics (`version`, image name substrings, default Vulkan/ROCm build directories).
 
 ```yaml
 backend-registry: /path/to/backends   ← files here named 'radv', 'rocm' become wrapper paths
@@ -386,6 +402,19 @@ backends:
 ```
 
 When a model has `backend: rocm`, the routing chain resolves: `rocm` → `runner: podman` → `runners.podman` → `PodmanModelRunner`.
+
+**Backend configuration keys:**
+
+| Key | Type | Description |
+|---|---|---|
+| `args` | str | Argument template for the llama-server. May reference macros via `${name}`. |
+| `runner` | str | Runner type string (e.g. `"process"`, `"podman"`, `"docker"`). Resolved against `runners:` config or built-in registry. |
+| `binary_dir` | str | Absolute path to host directory containing the llama-server binary. Only used by direct-process runners; container runners use this for volume mounts. |
+| `binary` | str | Binary name (default: `"llama-server"`). Used with `binary_dir` to form the full path. |
+| `image` | str | Container image tag for Podman/Docker runners. |
+| `devices` | list[str] | Device passthrough entries for container runs (e.g. `"/dev/dri/card1:rwm"`). |
+| `env_container` | dict | Environment variables passed into the container. Merged on top of global `env:`. |
+| `version` | str | ROCm/Vulkan version string — used to resolve binary dir from known build directory map (`_ROCM_BUILD_MAP`). |
 
 ### `runners:` section — runner class registry
 
@@ -422,16 +451,47 @@ models:
 
 ---
 
+## HTTP Client (`http_client.py`)
+
+The package ships a lightweight `ModelHttpClient` class in `model_arkestra.http_client` that encapsulates aiohttp usage patterns:
+
+| Method | Description |
+|---|---|
+| `get_json(url)` | GET and return parsed JSON body. |
+| `post_json(url, json_body)` | POST with JSON body and return parsed response. |
+| `post_raw(url, json_body)` | POST and return an async context manager for raw response streaming (SSE, large binaries). |
+| `stream_sse(url, json_body)` | Iterate SSE `data:` lines from a POST endpoint — yields raw strings without the `data:` prefix. |
+
+Sessions are scoped to each call; no manual session management needed.
+
+```python
+from model_arkestra.http_client import ModelHttpClient
+
+async with ModelHttpClient(timeout=60) as client:
+    data = await client.get_json("http://127.0.0.1:8080/health")
+    async for line in client.stream_sse(url, {"prompt": "hi"}):
+        print(line)
+```
+
+> **Note:** `ModelHttpClient` is a standalone utility — the runner classes use aiohttp directly internally and do not depend on this wrapper. It exists primarily for testing and external integrations.
+
+---
+
 ## Import Path
 
 The runner and its backends live in the `model_arkestra` package:
 
 ```python
 from llm_config_manager.config_manager import ConfigManager    # data layer
-from model_arkestra.arkestra import ModelArkestra          # orchestration (recommended)
-from model_arkestra.process import ProcessModelRunner        # process backend
-from model_arkestra.podman import PodmanModelRunner          # podman backend
-from model_arkestra.docker import DockerModelRunner          # docker backend
-```
+from model_arkestra.arkestra import ModelArkestra              # orchestration (recommended)
+from model_arkestra.base import BaseModelRunner                # abstract base class
+from model_arkestra.process import ProcessModelRunner          # process backend
+from model_arkestra.podman import PodmanModelRunner            # podman backend
+from model_arkestra.docker import DockerModelRunner            # docker backend
+from model_arkestra.container_runner import ContainerModelRunner  # container base class
+from model_arkestra.http_client import ModelHttpClient         # lightweight HTTP client
 
-No changes are made to `config_manager.__init__.py` exports — each runner must be imported explicitly. This avoids circular imports and signals that process management is an optional, higher-level concern.
+# Convenience re-exports from __init__.py:
+from model_arkestra import RunnerState, RunnerError, ServerReadyTimeout
+from model_arkestra import ModelNotStarted, MaxRestartsExceeded, ModelShutdown
+```
