@@ -291,11 +291,18 @@ class ModelArkestra:
         return result
 
     # ── request API ────────────────────────────────────────────────────
-    async def ainvoke(self, model_name: str, prompt: str, backend: Optional[str] = None) -> str:
+    async def ainvoke(self, model_name: str, prompt: str = "", backend: Optional[str] = None, messages: Optional[list] = None) -> str:
         runner = self._get_runner(model_name, {}, backend)
+        if messages is not None:
+            return await runner.ainvoke(model_name, "", messages=messages)
         return await runner.ainvoke(model_name, prompt)
 
     async def astream(self, model_name: str, payload: Dict[str, Any], backend: Optional[str] = None) -> AsyncIterator[Dict[str, Any]]:
+        runner = self._get_runner(model_name, {}, backend)
+        if "messages" not in payload and "prompt" in payload:
+            # Keep prompt-based flow (backward compat)
+            pass
+        # If messages are already in payload (list of dicts), they go through as-is
         runner = self._get_runner(model_name, {}, backend)
         async for chunk in runner.astream(model_name, payload):
             yield chunk

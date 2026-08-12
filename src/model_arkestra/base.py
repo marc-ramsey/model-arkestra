@@ -213,15 +213,20 @@ class BaseModelRunner(ABC):
 
     async def astream(self, model_name: str, payload: Dict[str, Any]) -> AsyncIterator[Dict[str, Any]]:
         payload = dict(payload)
-        prompt = payload.pop("prompt", None)
-        if not prompt and "messages" in payload:
-            prompt = payload["messages"][-1]["content"] if payload["messages"] else ""
-        elif not prompt:
-            raise ValueError("Payload must contain 'prompt' or 'messages'")
+
+        # Build messages array — accept full "messages" list or fall back to single prompt
+        messages = None
+        if "messages" in payload and isinstance(payload["messages"], (list, tuple)):
+            messages = list(payload["messages"])
+        else:
+            prompt = payload.pop("prompt", None)
+            if not prompt:
+                raise ValueError("Payload must contain 'prompt' or 'messages'")
+            messages = [{"role": "user", "content": prompt}]
 
         stream_payload: Dict[str, Any] = {
             "model": model_name,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "stream": True,
         }
         stream_payload.update({k: v for k, v in payload.items() if v is not None})
@@ -233,7 +238,15 @@ class BaseModelRunner(ABC):
         ctx = next((v for k, v in self._models.items() if k == model_name), None)
         port = ctx.port
         url = f"http://127.0.0.1:{port}/v1/chat/completions"
-        payload = {"model": model_name, "messages": [{"role": "user", "content": prompt}], **kwargs}
+        payload: Dict[str, Any] = {"model": model_name}
+
+        # Support full messages list (for LangChain) or single prompt (legacy)
+        if "messages" in kwargs and isinstance(kwargs["messages"], (list, tuple)):
+            payload["messages"] = list(kwargs.pop("messages"))
+        else:
+            payload["messages"] = [{"role": "user", "content": prompt}]
+
+        payload.update({k: v for k, v in kwargs.items() if v is not None})
 
         async with aiohttp.ClientSession() as session:
             for attempt in range(12):

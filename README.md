@@ -272,7 +272,7 @@ Token chunks may be partial — e.g., the first event might be `"token": "Hell"`
 
 #### `async request(model_name: str, path: str, **kwargs) -> dict | bytes`
 
-Low-level HTTP forwarder for custom server endpoints not covered by `ainvoke()` or `astream()`. Forwards *kwargs* as the request payload and returns the parsed JSON response (or raw bytes if the endpoint does not return JSON). Only sends POST requests with 15s timeout. Raises `RunnerError` on non-2xx responses.
+Low-level HTTP forwarder for custom server endpoints not covered by `ainvoke()` or `astream()`. Forwards *kwargs* as the request payload and returns the parsed JSON response (or raw bytes if the endpoint does not return JSON). Only sends POST requests with 15s timeout. Raises `RunnerError` on responses with status ≥ 400.
 
 #### `running_models: set[str]`
 
@@ -451,7 +451,7 @@ When a model has `backend: rocm`, the routing chain resolves: `rocm` → `runner
 |---|---|---|
 | `args` | str | Argument template for the llama-server. May reference macros via `${name}`. |
 | `runner` | str | Runner type string (e.g. `"process"`, `"podman"`, `"docker"`). Resolved against `runners:` config or built-in registry. |
-| `binary_dir` | str | Absolute path to host directory containing the llama-server binary. Only used by direct-process runners; container runners use this for volume mounts. |
+| `binary_dir` | str | Absolute path to host directory containing the llama-server binary. Direct-process runners use it directly; container runners resolve it indirectly via `resolve_binary_from_backend()` in `common.py` (which also checks `version` and image name heuristics). |
 | `binary` | str | Binary name (default: `"llama-server"`). Used with `binary_dir` to form the full path. |
 | `image` | str | Container image tag for Podman/Docker runners. |
 | `devices` | list[str] | Device passthrough entries for container runs (e.g. `"/dev/dri/card1:rwm"`). |
