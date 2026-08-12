@@ -11,6 +11,11 @@ ModelArkestra handles port allocation and backend→runner routing.
 <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%">
 <tr><td style="width:100%;padding:0">ModelArkestra — port allocation, backend→runner routing</td></tr>
 <tr><td style="width:100%;padding:0"><table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%">
+<tr><td style="padding:0">_build_runner_class_map() → config-driven</td></tr>
+<tr><td style="padding:0">runners: section maps type → class</td></tr>
+<tr><td style="padding:0">_get_runner_instance(type, model) → lazy factory</td></tr>
+</table></td></tr>
+<tr><td style="width:100%;padding:0"><table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%">
 <tr><td style="width:34%;padding-right:8px;padding:0"><b>ProcessModelRunner</b></td><td style="width:66%;padding:0"><b>ContainerModelRunner<br>(abstract base)</b></td></tr>
 </table></td></tr>
 <tr><td style="width:100%;padding:0"><table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%">
