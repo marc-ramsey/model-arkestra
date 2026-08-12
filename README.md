@@ -51,9 +51,9 @@ backends section absent?
 
 ### Port allocation — a global counter controlled by `ModelArkestra`. The starting port and range are driven entirely by config:
 
-| Config key | Purpose |
+| Config key | Purpose                                                                                |
 |---|---|
-| `models-start-port` | First port in the range (default 18000) |
+| `models-start-port` | First port in the range (default 18000)                                                |
 | `model-ports` | Size of the pool — valid ports are `start_port` through `start_port + model-ports - 1` |
 
 When `ModelArkestra.start()` is called without an explicit `port`, it allocates the next available number from this range sequentially. Once all ports in the pool are exhausted, `RuntimeError("Port range exceeded: …")` is raised immediately.
@@ -211,11 +211,11 @@ async with ModelArkestra("config.yaml") as runner:
 
 The centralized entry point. Does not launch any processes at this point — models must be started explicitly via `start()`.
 
-| Parameter | Type | Default | Description |
+| Parameter | Type | Default | Description                                                                                                                                          |
 |---|---|---|---|
-| `config_path` | `str` | *(required)* | Path to the YAML config file. |
+| `config_path` | `str` | *(required)* | Path to the YAML config file.                                                                                                                        |
 | `start_port` | `int` | `18000` | Fallback starting port — only used when `models-start-port` is absent from config. Port allocation reads the actual values from config at init time. |
-| `**runner_kwargs` | — | — | Passed through to each runner instance (e.g. `ready_timeout`, `warmup_delay`). |
+| `**runner_kwargs` | — | — | Passed through to each runner instance (e.g. `ready_timeout`, `warmup_delay`).                                                                       |
 
 ### Backward-compat shims
 
@@ -336,16 +336,16 @@ print(runner.get_model_list())  # → ["qwen3-4b"]
 
 OpenAI-compatible `/v1/models` response. Returns a dict with `"object": "list"` and a `"data"` array — one entry per tracked model containing:
 
-| Field | Source |
+| Field | Source                                                            |
 |---|---|
-| `id` | model name |
-| `object` | `"model"` |
-| `created` | Unix timestamp |
-| `owned_by` | from config (`model_cfg.get("owned_by")`, default `"local"`) |
+| `id` | model name                                                        |
+| `object` | `"model"`                                                         |
+| `created` | Unix timestamp                                                    |
+| `owned_by` | from config (`model_cfg.get("owned_by")`, default `"local"`)      |
 | `status` | lowercase state string (e.g. `"running"`, `"stopped"`, `"error"`) |
-| `port` | allocated port number |
-| `runner_type` | runner type string (`"process"`, `"podman"`, `"docker"`) |
-| `backend_id` | resolved backend id (e.g. `"rocm"`) |
+| `port` | allocated port number                                             |
+| `runner_type` | runner type string (`"process"`, `"podman"`, `"docker"`)          |
+| `backend_id` | resolved backend id (e.g. `"rocm"`)                               |
 
 ```python
 models = runner.get_v1_models()
@@ -388,13 +388,13 @@ async with ModelArkestra("config.yaml") as runner:
 
 The adapter accepts all LangChain `LanguageModelInput` variants:
 
-| Input type | Example |
+| Input type | Example                                                                                |
 |---|---|
-| `str` | `"Hello world"` |
-| OpenAI-style dicts | `{"role": "user", "content": "Hi"}` |
+| `str` | `"Hello world"`                                                                        |
+| OpenAI-style dicts | `{"role": "user", "content": "Hi"}`                                                    |
 | List of dicts | `[{"role": "system", "content": "Be nice"}, {"role": "user", "content": "Say hello"}]` |
-| LangChain `BaseMessage` list | `[HumanMessage(content="Hi"), AIMessage(content="Hello!")]` |
-| `PromptValue` | A LangChain prompt template's `.invoke()` output |
+| LangChain `BaseMessage` list | `[HumanMessage(content="Hi"), AIMessage(content="Hello!")]`                            |
+| `PromptValue` | A LangChain prompt template's `.invoke()` output                                       |
 
 The adapter normalizes all inputs to the OpenAI-compatible message format (`[{"role": "...", "content": "..."}, ...]`) and passes the full conversation history to the underlying runner.
 
@@ -402,11 +402,11 @@ The adapter normalizes all inputs to the OpenAI-compatible message format (`[{"r
 
 Both `ainvoke` and `astream` accept:
 
-| Parameter | Type | Description |
+| Parameter | Type | Description                                                                               |
 |---|---|---|
-| `input` | `LanguageModelInput` | User input (see above) |
-| `config` | `RunnableConfig` | LangChain runnable config (passed through, reserved for future use) |
-| `stop` | `list[str]` | Stop sequences sent to the server |
+| `input` | `LanguageModelInput` | User input (see above)                                                                    |
+| `config` | `RunnableConfig` | LangChain runnable config (passed through, reserved for future use)                       |
+| `stop` | `list[str]` | Stop sequences sent to the server                                                         |
 | `**kwargs` | — | Additional parameters forwarded to the model (e.g., `temperature`, `max_tokens`, `top_p`) |
 
 ### With LangChain Expression Language / LangGraph
@@ -431,13 +431,13 @@ result = await chain.ainvoke({"messages": [("user", "What's the weather?")]})
 
 For direct use when you only need subprocess-based execution. Bound to a `ConfigManager` instance; does not launch any processes until `start()` is called.
 
-| Parameter | Type | Default | Description |
+| Parameter | Type | Default | Description                                                                            |
 |---|---|---|---|
-| `config_manager` | `ConfigManager` | *(required)* | The configuration source for model definitions and global settings. |
-| `shutdown_timeout` | `float` | `20.0` | Seconds to wait after SIGHUP before escalating to SIGKILL during shutdown. |
+| `config_manager` | `ConfigManager` | *(required)* | The configuration source for model definitions and global settings.                    |
+| `shutdown_timeout` | `float` | `20.0` | Seconds to wait after SIGHUP before escalating to SIGKILL during shutdown.             |
 | `ready_timeout` | `float` | `120.0` | Maximum seconds to wait for the server's `/health` endpoint to respond after starting. |
-| `ready_poll_ms` | `float` | `100.0` | Milliseconds between consecutive health-check polls during startup. |
-| `warmup_delay` | `float` | `20.0` | Seconds to wait after `/health` returns OK before marking the model as `"running"`. |
+| `ready_poll_ms` | `float` | `100.0` | Milliseconds between consecutive health-check polls during startup.                    |
+| `warmup_delay` | `float` | `20.0` | Seconds to wait after `/health` returns OK before marking the model as `"running"`.    |
 
 > `restart_delay` and `restart_limit` control automatic restart behavior inherited from `BaseModelRunner`: when a managed process or container exits unexpectedly, the runner polls and attempts up to `restart_limit` restarts spaced by `restart_delay` seconds. `port_drain_timeout` is used by container runners to wait for port listeners to drain; it has no effect on direct subprocess execution.
 
@@ -461,10 +461,10 @@ Each runner manages exactly one model. Its `stop()` takes no arguments and shuts
 
 ### Crash detection by backend
 
-| Runner | Behavior |
+| Runner | Behavior                                                                                                                                                                                                  |
 |---|---|
 | **Process** | Polls subprocess exit code via `process.wait()`. On unexpected exit (non-zero), automatically attempts up to `restart_limit` restarts spaced by `restart_delay`. The watcher task runs in the background. |
-| **Podman / Docker** | Polls container status every 2 seconds; on unexpected exit (`exited`, `dead`), automatically attempts up to `restart_limit` restarts spaced by `restart_delay`. The watcher task runs in the background. |
+| **Podman / Docker** | Polls container status every 2 seconds; on unexpected exit (`exited`, `dead`), automatically attempts up to `restart_limit` restarts spaced by `restart_delay`. The watcher task runs in the background.  |
 
 ### Shutdown sequencing (`stop` / `stop_all`)
 
@@ -494,13 +494,13 @@ except RunnerError as e:
     logger.error(f"Runner failed: {e}")
 ```
 
-| Exception | When raised |
+| Exception | When raised                                                                                                                                                                                                                                                   |
 |---|---|
-| `ServerReadyTimeout` | The server did not become ready (health check returned no 200 within `ready_timeout`). Raised only on total health-check exhaustion. |
+| `ServerReadyTimeout` | The server did not become ready (health check returned no 200 within `ready_timeout`). Raised only on total health-check exhaustion.                                                                                                                          |
 | `ModelNotStarted` | A request was made for a model name that doesn't exist in the config, or the model hasn't been started yet (`start()` not called). Raised by `_dispatch` when no tracked context exists, and during `BaseModelRunner.start()` when model config lookup fails. |
-| `ModelShutdown` | A request was made to a model that has been explicitly stopped via `stop()` or `stop_all()` (state is STOPPED or STOPPING). Raised by `_dispatch`. |
-| `MaxRestartsExceeded` | The runner crashed and exhausted all automatic restart attempts (`restart_limit`). State transitions to ERROR; raised by `_dispatch` on any subsequent request. |
-| `RunnerError` | Generic base class for all runner failures, including HTTP errors (502, 503, 504) from the server, connection failures, and general request errors. |
+| `ModelShutdown` | A request was made to a model that has been explicitly stopped via `stop()` or `stop_all()` (state is STOPPED or STOPPING). Raised by `_dispatch`.                                                                                                            |
+| `MaxRestartsExceeded` | The runner crashed and exhausted all automatic restart attempts (`restart_limit`). State transitions to ERROR; raised by `_dispatch` on any subsequent request.                                                                                               |
+| `RunnerError` | Generic base class for all runner failures, including HTTP errors (502, 503, 504) from the server, connection failures, and general request errors.                                                                                                           |
 
 ---
 
@@ -510,9 +510,9 @@ The runner reads from the same YAML configuration used by `ConfigManager`. Three
 
 ### Top-level settings
 
-| Key | Type | Default | Description |
+| Key | Type | Default | Description                                                                                                                                                                              |
 |---|---|---|---|
-| `models-start-port` | `int` | `18000` | First port in the auto-allocated range. |
+| `models-start-port` | `int` | `18000` | First port in the auto-allocated range.                                                                                                                                                  |
 | `model-ports` | `int` | `32` | Number of ports available — valid range is `models-start-port` through `models-start-port + model-ports - 1`. Allocation raises `RuntimeError("Port range exceeded: …")` when exhausted. |
 
 ### `env:` section — process environment variables
@@ -556,16 +556,16 @@ When a model has `backend: rocm`, the routing chain resolves: `rocm` → `runner
 
 **Backend configuration keys:**
 
-| Key | Type | Description |
+| Key | Type | Description                                                                                                                                                                                                                                                     |
 |---|---|---|
-| `args` | str | Argument template for the llama-server. May reference macros via `${name}`. |
-| `runner` | str | Runner type string (e.g. `"process"`, `"podman"`, `"docker"`). Resolved against `runners:` config or built-in registry. |
+| `args` | str | Argument template for the llama-server. May reference macros via `${name}`.                                                                                                                                                                                     |
+| `runner` | str | Runner type string (e.g. `"process"`, `"podman"`, `"docker"`). Resolved against `runners:` config or built-in registry.                                                                                                                                         |
 | `binary_dir` | str | Absolute path to host directory containing the llama-server binary. Direct-process runners use it directly; container runners resolve it indirectly via `resolve_binary_from_backend()` in `common.py` (which also checks `version` and image name heuristics). |
-| `binary` | str | Binary name (default: `"llama-server"`). Used with `binary_dir` to form the full path. |
-| `image` | str | Container image tag for Podman/Docker runners. |
-| `devices` | list[str] | Device passthrough entries for container runs (e.g. `"/dev/dri/card1:rwm"`). |
-| `env_container` | dict | Environment variables passed into the container. Merged on top of global `env:`. |
-| `version` | str | ROCm/Vulkan version string — used to resolve binary dir from known build directory map (`_ROCM_BUILD_MAP`). |
+| `binary` | str | Binary name (default: `"llama-server"`). Used with `binary_dir` to form the full path.                                                                                                                                                                          |
+| `image` | str | Container image tag for Podman/Docker runners.                                                                                                                                                                                                                  |
+| `devices` | list[str] | Device passthrough entries for container runs (e.g. `"/dev/dri/card1:rwm"`).                                                                                                                                                                                    |
+| `env_container` | dict | Environment variables passed into the container. Merged on top of global `env:`.                                                                                                                                                                                |
+| `version` | str | ROCm/Vulkan version string — used to resolve binary dir from known build directory map (`_ROCM_BUILD_MAP`).                                                                                                                                                     |
 
 ### `runners:` section — runner class registry
 
@@ -606,11 +606,11 @@ models:
 
 The package ships a lightweight `ModelHttpClient` class in `model_arkestra.http_client` that encapsulates aiohttp usage patterns:
 
-| Method | Description |
+| Method | Description                                                                                     |
 |---|---|
-| `get_json(url)` | GET and return parsed JSON body. |
-| `post_json(url, json_body)` | POST with JSON body and return parsed response. |
-| `post_raw(url, json_body)` | POST and return an async context manager for raw response streaming (SSE, large binaries). |
+| `get_json(url)` | GET and return parsed JSON body.                                                                |
+| `post_json(url, json_body)` | POST with JSON body and return parsed response.                                                 |
+| `post_raw(url, json_body)` | POST and return an async context manager for raw response streaming (SSE, large binaries).      |
 | `stream_sse(url, json_body)` | Iterate SSE `data:` lines from a POST endpoint — yields raw strings without the `data:` prefix. |
 
 Sessions are scoped to each call; no manual session management needed.
@@ -643,12 +643,12 @@ python -m pytest -v --tb=short -m slow
 
 **Fixture summary:**
 
-| Fixture | Scope | Purpose |
+| Fixture | Scope | Purpose                                                                                        |
 |---|---|---|
 | `mr` | module | Shared `ModelArkestra` instance — port allocation and runner maps are shared across the module |
-| `_cleanup_after_test` | function (autouse) | Stops all models after each test so every method sees a clean slate |
-| `_cleanup_ports` | module (autouse) | Safety net that kills any lingering processes on configured ports before/after each module |
-| `podman_cleanup` | function | Tracks podman containers/tasks/ports with guaranteed teardown — opt-in per-test fixture |
+| `_cleanup_after_test` | function (autouse) | Stops all models after each test so every method sees a clean slate                            |
+| `_cleanup_ports` | module (autouse) | Safety net that kills any lingering processes on configured ports before/after each module     |
+| `podman_cleanup` | function | Tracks podman containers/tasks/ports with guaranteed teardown — opt-in per-test fixture        |
 
 ---
 
