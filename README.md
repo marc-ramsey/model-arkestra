@@ -155,10 +155,24 @@ await runner.start("qwen3-4b")  # checks /health, returns if alive
 
 ### Sending a Prompt (Blocking)
 
+Single prompt:
 ```python
 result = await runner.ainvoke("gpt-oss-20b", "Explain quantum entanglement")
 print(result)
 # → "Quantum entanglement is a phenomenon in which..."
+```
+
+Full conversation history (multi-turn):
+```python
+result = await runner.ainvoke(
+    "gpt-oss-20b",
+    messages=[
+        {"role": "system", "content": "You are a physics tutor."},
+        {"role": "user", "content": "What is quantum entanglement?"},
+        {"role": "assistant", "content": "It's when particles become correlated..."},
+        {"role": "user", "content": "Can you explain it simply?"},
+    ],
+)
 ```
 
 ### Streaming Response (Token-by-Token)
@@ -239,9 +253,29 @@ Stops all model processes. Model entries remain in `_models` with state `STOPPED
 
 Full teardown: stops all models, clears all runner and model entries, and resets the port allocator to `models-start-port`. For container runners, also sends `rm -f` on every stopped container. Use this for final cleanup (e.g. context manager exit, test teardown).
 
-#### `async ainvoke(model_name: str, prompt: str, backend: str | None = None) -> str`
+#### `async ainvoke(model_name: str, prompt: str = "", backend: str | None = None, messages: list[dict[str, Any]] | None = None) -> str`
 
 Sends a blocking completion request and returns the full response string. Retries up to 12 times on connection errors or 503 status (with 2.5s backoff). Raises `RunnerError` for 502/504 (upstream failures), connection unreachable, or max retries exceeded.
+
+Accepts either a single `prompt` string **or** a full `messages` list (OpenAI-compatible format) for multi-turn conversations:
+
+```python
+# Single prompt (legacy)
+result = await runner.ainvoke("qwen3-4b", prompt="Hello")
+
+# Full conversation history — includes system message, user turns, assistant response
+result = await runner.ainvoke(
+    "qwen3-4b",
+    messages=[
+        {"role": "system", "content": "You are a helpful math tutor."},
+        {"role": "user", "content": "What is 2+2?"},
+        {"role": "assistant", "content": "2 + 2 = 4"},
+        {"role": "user", "content": "And 3 times that?"},
+    ],
+)
+```
+
+When both `prompt` and `messages` are provided, `messages` takes precedence.
 
 #### `async astream(model_name: str, payload: Dict[str, Any], backend: str | None = None) -> AsyncIterator[Dict[str, Any]]`
 
@@ -316,6 +350,79 @@ OpenAI-compatible `/v1/models` response. Returns a dict with `"object": "list"` 
 ```python
 models = runner.get_v1_models()
 print(models)  # → {"object": "list", "data": [{"id": "qwen3-4b", "status": "running", ...}]}
+```
+
+---
+
+## LangChain LCEL Integration
+
+ModelArkestra ships with a LangChain adapter that wraps any started model to implement the standard LangChain chat model interface. This enables drop-in compatibility with LangGraph, LangServe, and other LangChain ecosystem tools.
+
+```python
+from model_arkestra.arkestra import ModelArkestra
+from model_arkestra.langchain_adapter import LangChainModelAdapter
+
+async with ModelArkestra("config.yaml") as runner:
+    await runner.start("qwen3-4b")
+
+    adapter = LangChainModelAdapter(runner, "qwen3-4b")
+
+    # ── Blocking invocation ──────────────────────────────
+    result = await adapter.ainvoke("What is quantum entanglement?")
+    print(result.content)  # → "Quantum entanglement is a phenomenon..."
+
+    # ── Token-by-token streaming ─────────────────────────
+    async for chunk in adapter.astream("Write a haiku about code"):
+        print(chunk.content, end="", flush=True)
+    # → partial tokens accumulating (Hello World!)
+
+    # ── Typed event stream (LangGraph-compatible) ────────
+    async for event in adapter.astream_events("Explain photosynthesis"):
+        if event["event"] == "on_chat_model_stream":
+            print(event["data"]["chunk"].content, end="", flush=True)
+        elif event["event"] == "on_chat_model_end":
+            print("\n[done]")
+```
+
+### Input types
+
+The adapter accepts all LangChain `LanguageModelInput` variants:
+
+| Input type | Example |
+|---|---|
+| `str` | `"Hello world"` |
+| OpenAI-style dicts | `{"role": "user", "content": "Hi"}` |
+| List of dicts | `[{"role": "system", "content": "Be nice"}, {"role": "user", "content": "Say hello"}]` |
+| LangChain `BaseMessage` list | `[HumanMessage(content="Hi"), AIMessage(content="Hello!")]` |
+| `PromptValue` | A LangChain prompt template's `.invoke()` output |
+
+The adapter normalizes all inputs to the OpenAI-compatible message format (`[{"role": "...", "content": "..."}, ...]`) and passes the full conversation history to the underlying runner.
+
+### Supported parameters
+
+Both `ainvoke` and `astream` accept:
+
+| Parameter | Type | Description |
+|---|---|---|
+| `input` | `LanguageModelInput` | User input (see above) |
+| `config` | `RunnableConfig` | LangChain runnable config (passed through, reserved for future use) |
+| `stop` | `list[str]` | Stop sequences sent to the server |
+| `**kwargs` | — | Additional parameters forwarded to the model (e.g., `temperature`, `max_tokens`, `top_p`) |
+
+### With LangChain Expression Language / LangGraph
+
+```python
+from langchain_core.prompts import ChatPromptTemplate
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a helpful assistant."),
+    ("placeholder", "{messages}"),
+])
+
+# The adapter works as an LCEL runnable:
+chain = prompt | adapter  # or use .bind(stop=["\n"])
+
+result = await chain.ainvoke({"messages": [("user", "What's the weather?")]})
 ```
 
 ---
@@ -532,6 +639,7 @@ from model_arkestra.podman import PodmanModelRunner            # podman runner
 from model_arkestra.docker import DockerModelRunner            # docker runner
 from model_arkestra.container_runner import ContainerModelRunner  # container base class
 from model_arkestra.http_client import ModelHttpClient         # lightweight HTTP client
+from model_arkestra.langchain_adapter import LangChainModelAdapter  # LangChain LCEL wrapper
 
 # Convenience re-exports from __init__.py:
 from model_arkestra import RunnerState, RunnerError, ServerReadyTimeout
