@@ -1,10 +1,10 @@
-"""OpenAI v1-compatible proxy server backed by ModelArkestra runners.
+"""OpenAI v1-compatible server backed by ModelArkestra runners.
 
 Usage as module entry point:
-    python -m model_arkestra.proxy --config config.yaml --port 8080
+    python -m model_arkestra.server --config config.yaml --port 8080
 
 Or embed into your own FastAPI app:
-    from model_arkestra.proxy import ArkestraServer
+    from model_arkestra.server import ArkestraServer
 
     proxy = ArkestraServer("config.yaml", port=8080)
     app = proxy.get_app()  # returns the FastAPI instance
@@ -22,7 +22,7 @@ try:
     from fastapi.responses import StreamingResponse
 except ImportError:
     raise RuntimeError(
-        "model_arkestra.proxy requires fastapi+uvicorn. "
+        "model_arkestra.server requires fastapi+uvicorn. "
         "Install with: pip install \"model-arkestra[proxy]\""
     )
 
@@ -30,7 +30,7 @@ try:
     import uvicorn  # optional dependency (pulled in by fastapi)
 except ImportError:
     raise RuntimeError(
-        "model_arkestra.proxy requires uvicorn. "
+        "model_arkestra.server requires uvicorn. "
         'Install with: pip install "model-arkestra[proxy]"'
     )
 
@@ -404,7 +404,7 @@ class ArkestraServer:
 # ── CLI entry point ────────────────────────────────────────────────
 
 def main() -> None:
-    """Entry point for: python -m model_arkestra.proxy
+    """Entry point for: python -m model_arkestra.server
 
     Runs a FastAPI server backed by ModelArkestra, exposing an OpenAI-compatible
     /v1/chat/completions endpoint.  All parameters have sensible defaults so you
@@ -414,7 +414,7 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(
         prog="model-arkestra-proxy",
-        description="ModelArkestra OpenAI-compatible proxy server",
+        description="ModelArkestra OpenAI-compatible server",
     )
     parser.add_argument(
         "--config", "-c",
@@ -523,7 +523,7 @@ def main() -> None:
 
     # ── Startup banner ────────────────────────────────────────────────
     scheme = "https" if args.ssl_certfile else "http"
-    print(f"ModelArkestra OpenAI Proxy")
+    print(f"ModelArkestra OpenAI Server")
     print(f"  URL       → {scheme}://{args.host}:{args.port}")
     print(f"  API docs  → {scheme}://{args.host}:{args.port}/docs")
     if aliases:

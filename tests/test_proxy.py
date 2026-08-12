@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 from fastapi import HTTPException
 
-from model_arkestra.proxy import (
+from model_arkestra.server import (
     ArkestraServer,
     ChatCompletionRequest,
     Message,
@@ -71,7 +71,7 @@ def _build_app(mock_arkestra, aliases=None):
                 }.items() if v is not None},
             )
 
-            from model_arkestra.proxy import (
+            from model_arkestra.server import (
                 ChatCompletionResponseChoice, ChoiceDelta,
             )
             return {
@@ -99,7 +99,7 @@ def _build_app(mock_arkestra, aliases=None):
             raise HTTPException(status_code=503, detail=str(e))
 
         # Apply the same field mapping that ArkestraServer does
-        from model_arkestra.proxy import ModelInfo
+        from model_arkestra.server import ModelInfo
         data = []
         for entry in v1_data.get("data", []):
             data.append(ModelInfo(
@@ -595,11 +595,11 @@ class TestImports:
     """Verify all expected exports are available."""
 
     def test_arkestra_server_import(self):
-        from model_arkestra.proxy import ArkestraServer
+        from model_arkestra.server import ArkestraServer
         assert ArkestraServer is not None
 
-    def test_proxy_module_exports(self):
-        from model_arkestra import proxy as p
+    def test_server_module_exports(self):
+        from model_arkestra import server as s
 
         expected = {
             "ArkestraServer",
@@ -617,10 +617,10 @@ class TestImports:
         }
 
         for name in expected:
-            assert hasattr(p, name), f"Missing export: {name}"
+            assert hasattr(s, name), f"Missing export: {name}"
 
     def test_arkestra_server_has_expected_methods(self):
-        from model_arkestra.proxy import ArkestraServer
+        from model_arkestra.server import ArkestraServer
 
         methods = ["get_app", "start_background", "shutdown", "_resolve_model",
                     "_complete_chat", "_stream_chat"]
@@ -628,7 +628,7 @@ class TestImports:
             assert hasattr(ArkestraServer, method), f"Missing method: {method}"
 
     def test_pydantic_models_serializable(self):
-        from model_arkestra.proxy import (
+        from model_arkestra.server import (
             ChatCompletionRequest, Message,
             ChatCompletionResponse, ChoiceDelta, ChatCompletionResponseChoice,
             ChatCompletionStreamResponse, ChatCompletionStreamChoice,

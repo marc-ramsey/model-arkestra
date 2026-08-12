@@ -22,7 +22,7 @@ import httpx
 import pytest
 import uvicorn
 
-from model_arkestra.proxy import ArkestraServer
+from model_arkestra.server import ArkestraServer
 
 
 # ── Fixtures ───────────────────────────────────────────────────────────────
