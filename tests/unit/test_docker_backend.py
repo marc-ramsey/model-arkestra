@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 
 from model_arkestra.docker import _build_docker_cmd, _resolve_backend_for_docker
 from model_arkestra.process import ProcessModelRunner
-from model_arkestra.types import RunnerState, _ModelContext, ModelNotStarted, ModelShutdown
+from model_arkestra.types import RunnerState, _ModelContext, ModelNotStarted, ModelShutdown, MaxRestartsExceeded
 
 
 # ── Backend resolution (mirrors Podman tests) ─────────────────────────────
@@ -236,6 +236,15 @@ class TestDispatch:
         runner._models["stopping"] = ctx
         with pytest.raises(ModelShutdown, match="was stopped"):
             asyncio.run(runner._dispatch("stopping"))
+
+    def test_dispatch_error_raises_max_restarts(self):
+        runner = ProcessModelRunner(MagicMock())
+        ctx = _ModelContext("errored", 18002)
+        ctx.state = RunnerState.ERROR
+        ctx.restart_count = 4
+        runner._models["errored"] = ctx
+        with pytest.raises(MaxRestartsExceeded, match="exceeded restart limit"):
+            asyncio.run(runner._dispatch("errored"))
 
     def test_dispatch_running_succeeds(self):
         runner = ProcessModelRunner(MagicMock())

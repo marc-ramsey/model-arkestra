@@ -72,6 +72,10 @@ class BaseModelRunner(ABC):
             raise ModelNotStarted(model_name)
         if ctx.state in (RunnerState.STOPPED, RunnerState.STOPPING):
             raise ModelShutdown(f"Model '{model_name}' was stopped.")
+        if ctx.state == RunnerState.ERROR:
+            raise MaxRestartsExceeded(
+                f"Model '{model_name}' exceeded restart limit after {ctx.restart_count} attempts"
+            )
 
     async def _watch_process(self, model_name: str, ctx: _ModelContext) -> None:
         """Background task to monitor process lifecycle and restart on unexpected exit."""
