@@ -6,6 +6,7 @@ from typing import Any, AsyncIterator, Dict, Optional, Set
 
 from llm_config_manager.config_manager import ConfigManager
 from model_arkestra.base import BaseModelRunner
+from model_arkestra.common import _resolve_backend
 from model_arkestra.docker import DockerModelRunner
 from model_arkestra.podman import PodmanModelRunner
 from model_arkestra.process import ProcessModelRunner
@@ -150,7 +151,7 @@ class ModelArkestra:
     # ── backend resolution ─────────────────────────────────────────────
     def _resolve_backend_id(self, model_name: str, env_vars: Dict[str, Any], override: Optional[str] = None) -> str:
         model = self.get_model(model_name) or {}
-        return self._cm._resolve_backend_for_model(model, model_name, env_vars, override)
+        return _resolve_backend(self._cm, model, model_name, override)
 
     def _get_runner(self, model_name: str, env_vars: Dict[str, Any], backend: Optional[str] = None) -> BaseModelRunner:
         # Find the runner that has this model
@@ -163,8 +164,8 @@ class ModelArkestra:
     def _resolve_runner_type(self, model_name: str, env_vars: Dict[str, Any], override_backend: Optional[str] = None) -> str:
         backends = self._cm.data.get("backends", {})
         if isinstance(backends, dict):
-            backend_id = self._cm._resolve_backend_for_model(
-                self.get_model(model_name) or {}, model_name, env_vars, override_backend
+            backend_id = self._resolve_backend_id(
+                model_name, env_vars, override_backend
             )
             be = backends.get(backend_id, {})
             if isinstance(be, dict) and "runner" in be:

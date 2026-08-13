@@ -9,7 +9,7 @@ import asyncio
 import os
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from model_arkestra.docker import _build_docker_cmd, _resolve_backend_for_docker
 from model_arkestra.process import ProcessModelRunner
@@ -56,7 +56,6 @@ class TestBuildDockerCmdNewArch:
             "devices": ["/dev/dri/card0:rwm", "/dev/dri/renderD128:rwm"],
             "env_container": {"GGML_VK_VISIBLE_DEVICES": "0"},
         }
-        inner.assemble_command = MagicMock(return_value=([], ""))
         inner.get_vector = MagicMock(return_value=None)
         runner = MagicMock()
         runner.cm = inner
@@ -104,19 +103,19 @@ class TestBuildDockerCmdNewArch:
 
     @pytest.mark.asyncio
     async def test_host_binding_appended(self, mock_config_manager, ctx):
-        assembled = "/tmp/test-wrappers/vulkan-radv --port 18003 -fa on"
-        mock_config_manager.assemble_command.return_value = (["/bin/foo", "--port", "18003", "-fa", "on"], "")
-        cmd_parts = _build_docker_cmd(mock_config_manager, ctx, {})
-        assert "--host" in cmd_parts
-        assert "0.0.0.0" in cmd_parts
+        assembled = ["/bin/foo", "--port", "18003", "-fa", "on"]
+        with patch("model_arkestra.docker.build_model_args", return_value=(assembled, "")):
+            cmd_parts = _build_docker_cmd(mock_config_manager, ctx, {})
+            assert "--host" in cmd_parts
+            assert "0.0.0.0" in cmd_parts
 
     @pytest.mark.asyncio
     async def test_no_duplicated_host(self, mock_config_manager, ctx):
         """If assemble_command already has --host, it should not be added again."""
         assembled = ["/bin/foo", "--port", "18003", "--host", "0.0.0.0", "-fa", "on"]
-        mock_config_manager.assemble_command.return_value = (assembled, "")
-        cmd_parts = _build_docker_cmd(mock_config_manager, ctx, {})
-        assert cmd_parts.count("--host") <= 1
+        with patch("model_arkestra.docker.build_model_args", return_value=(assembled, "")):
+            cmd_parts = _build_docker_cmd(mock_config_manager, ctx, {})
+            assert cmd_parts.count("--host") <= 1
 
     @pytest.mark.asyncio
     async def test_global_env_merged_via_setdefault(self, mock_config_manager, ctx):
@@ -154,12 +153,12 @@ class TestBuildDockerCmdNewArch:
             "devices": [],
             "env_container": {},
         }
-        inner.assemble_command = MagicMock(return_value=(assembled, ""))
-        cmd_parts = _build_docker_cmd(mock_config_manager, ctx, {})
-        cmd_str = " ".join(cmd_parts)
-        assert "-v" in cmd_parts
-        # The full binary_dir is mounted read-only (e.g. /tmp/test-wrappers/vulkan-radv)
-        assert "/tmp/test-wrappers/vulkan-radv:/tmp/test-wrappers/vulkan-radv:ro" in cmd_str
+        with patch("model_arkestra.docker.build_model_args", return_value=(assembled, "")):
+            cmd_parts = _build_docker_cmd(mock_config_manager, ctx, {})
+            cmd_str = " ".join(cmd_parts)
+            assert "-v" in cmd_parts
+            # The full binary_dir is mounted read-only (e.g. /tmp/test-wrappers/vulkan-radv)
+            assert "/tmp/test-wrappers/vulkan-radv:/tmp/test-wrappers/vulkan-radv:ro" in cmd_str
 
     @pytest.mark.asyncio
     async def test_binary_path_replaces_llama_server(self, mock_config_manager, ctx):

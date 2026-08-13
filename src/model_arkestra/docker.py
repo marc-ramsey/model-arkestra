@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 from typing import Any, Dict, List, Optional
 from model_arkestra.container_runner import ContainerModelRunner
 from model_arkestra.common import (
-    resolve_binary_from_backend, safe_container_name, default_image_for_backend
+    build_model_args, resolve_binary_from_backend, safe_container_name, default_image_for_backend
 )
 from model_arkestra.types import _ModelContext
 
@@ -89,7 +89,8 @@ def _build_docker_cmd(
                 parts.extend(["-v", f"{binary_dir}:{binary_dir}:ro"])
 
         # Resolve the llama-server args list from backend registry.
-        result = runner.cm.assemble_command(
+        result = build_model_args(
+            runner.cm,
             ctx.name,
             env_vars={"PORT": str(ctx.port)},
             override_backend=ctx.backend_id,

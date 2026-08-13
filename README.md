@@ -836,6 +836,17 @@ async with ModelHttpClient(timeout=60) as client:
 
 > **Note:** `ModelHttpClient` is a standalone utility — the runner classes use aiohttp directly internally and do not depend on this wrapper. It exists primarily for testing and external integrations.
 
+## Shared Utilities (`common.py`)
+
+Functions used by the runner classes to build commands from configuration data:
+
+| Function | Description |
+|---|---|
+| `build_model_args(cm, model_name, env_vars=None, override_backend=None) → (list[str], str)` | Builds command arguments for a model using its backend config — resolves the effective backend, fills `${PORT}` and `${CHECKPOINT}` placeholders in the backend args template, and concatenates backend args with model-specific args. Returns `(arg_list, cmd_str)`. |
+| `_resolve_backend(cm, model, model_name, override_backend) → str` | Determines which backend ID to use for a model. Resolution order: `override_backend` → `model["backend"]` → `backends.default`. Used internally by `build_model_args`. |
+
+These replace the former `ConfigManager.assemble_command()` and `ConfigManager._resolve_backend_for_model()` methods, keeping command assembly logic inside arkestra where it belongs.
+
 ## Running Tests
 
 The project uses `pytest` with a modular fixture system (`tests/conftest.py`) that provides shared model runners, port cleanup, and per-test isolation. All tests are collected from `tests/`, `tests/unit/`, and any module-scoped test files.

@@ -45,18 +45,18 @@ class TestResolveBackend:
 
 class TestBuildPodmanCmdNewArch:
     @pytest.fixture
-    def mock_config_manager(self):
+    def mock_config_manager(self, monkeypatch):
         inner = MagicMock()
         inner.get_backend.return_value = {
             "image": "llama-strix-halo:vulkan",
             "devices": ["/dev/dri/card0:rwm", "/dev/dri/renderD128:rwm"],
             "env_container": {"GGML_VK_VISIBLE_DEVICES": "0"},
         }
-        inner.assemble_command = MagicMock(return_value=([], ""))
         runner = MagicMock()
         runner.cm = inner
         runner.broadcast_addr = "0.0.0.0"
         runner.INSIDE_PORT = 9091
+        monkeypatch.setattr("model_arkestra.podman.build_model_args", MagicMock(return_value=([], "")))
         return runner
 
     @pytest.fixture(autouse=True)
@@ -97,19 +97,17 @@ class TestBuildPodmanCmdNewArch:
 
     @pytest.mark.asyncio
     async def test_host_binding_appended(self, mock_config_manager, ctx):
-        assembled = "/tmp/test-wrappers/vulkan-radv --port 18003 -fa on"
-        mock_config_manager.assemble_command.return_value = assembled
-        cmd_parts = _build_podman_cmd(mock_config_manager, ctx, {})
-        cmd_str = " ".join(cmd_parts)
-        assert "--host 0.0.0.0" in cmd_str
+        with patch("model_arkestra.podman.build_model_args", return_value=("/tmp/test-wrappers/vulkan-radv --port 18003 -fa on", "")):
+            cmd_parts = _build_podman_cmd(mock_config_manager, ctx, {})
+            cmd_str = " ".join(cmd_parts)
+            assert "--host 0.0.0.0" in cmd_str
 
     @pytest.mark.asyncio
     async def test_no_duplicated_host(self, mock_config_manager, ctx):
         """If assemble_command already has --host, it should not be added again."""
-        assembled = "/tmp/test-wrappers/vulkan-radv --port 18003 --host 0.0.0.0 -fa on"
-        mock_config_manager.assemble_command.return_value = assembled
-        cmd_parts = _build_podman_cmd(mock_config_manager, ctx, {})
-        assert cmd_parts.count("--host") <= 1
+        with patch("model_arkestra.podman.build_model_args", return_value=("/tmp/test-wrappers/vulkan-radv --port 18003 --host 0.0.0.0 -fa on", "")):
+            cmd_parts = _build_podman_cmd(mock_config_manager, ctx, {})
+            assert cmd_parts.count("--host") <= 1
 
     @pytest.mark.asyncio
     async def test_custom_container_port(self, mock_config_manager, ctx):

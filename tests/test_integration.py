@@ -98,7 +98,7 @@ class TestPodmanIntegration:
             "devices": [],
             "env_container": {},
         }
-        inner.assemble_command = MagicMock(return_value="")
+        inner.build_model_args = MagicMock(return_value=("", ""))
         runner_mock = MagicMock()
         runner_mock.cm = inner
         runner_mock.INSIDE_PORT = 9090

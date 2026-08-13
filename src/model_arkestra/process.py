@@ -4,6 +4,7 @@ import os
 import signal
 from typing import Any, Dict
 from model_arkestra.base import BaseModelRunner
+from model_arkestra.common import build_model_args
 from model_arkestra.types import _ModelContext
 
 
@@ -28,9 +29,9 @@ class ProcessModelRunner(BaseModelRunner):
                 f"Binary '{binary_path}' not found for backend '{be_id}'"
             )
 
-        # Pure args — assemble_command no longer prepends wrapper.
-        result = self.cm.assemble_command(
-            ctx.name,
+        # Build args from config backend + model sections.
+        result = build_model_args(
+            self.cm, ctx.name,
             env_vars={"PORT": str(ctx.port)},
             override_backend=ctx.backend_id,
         )
