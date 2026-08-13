@@ -61,32 +61,25 @@ class ModelArkestra:
             contexts.extend(r._models.values())  # noqa: SLF001
         return contexts
 
-    def get_model_list(self) -> list[str]:
-        """List of model names tracked at runtime (may include stopped/errored models)."""
-        return [ctx.name for ctx in self._get_model_contexts()]
-
     def get_v1_models(self) -> Dict[str, Any]:
         """OpenAI-compatible ``/v1/models`` response."""
         from time import time
 
+        contexts_by_name = {ctx.name: ctx for ctx in self._get_model_contexts()}
         data = []
-        for ctx in self._get_model_contexts():
-            model_cfg = self.get_model(ctx.name) or {}
-            backend_id = ctx.backend_id or model_cfg.get("backend")
+        for model_name in self.get_models():
+            ctx = contexts_by_name.get(model_name)
+            model_cfg = self.get_model(model_name) or {}
             owned_by = str(model_cfg.get("owned_by", "local")) if isinstance(model_cfg, dict) else "local"
-            state_label = str(ctx.state).lower().replace("runnerstate.", "")
+            state_label = str(ctx.state).lower().replace("runnerstate.", "") if ctx else "stopped"
 
-            entry: Dict[str, Any] = {
-                "id": ctx.name,
+            data.append({
+                "id": model_name,
                 "object": "model",
                 "created": int(time()),
                 "owned_by": owned_by,
                 "status": state_label,
-                "port": ctx.port,
-                "runner_type": ctx.runner_type,
-                "backend_id": backend_id,
-            }
-            data.append(entry)
+            })
 
         return {"object": "list", "data": data}
 

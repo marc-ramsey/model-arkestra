@@ -388,8 +388,6 @@ class TestListModels:
         assert qwen["object"] == "model"
         assert qwen["owned_by"] == "local"
         assert qwen["status"] == "running"
-        assert qwen["port"] == 18000
-        assert qwen["runner_type"] == "process"
 
     def test_list_models_stopped_model(self, mock_arkestra):
         """Stopped models are listed with correct status."""
@@ -400,8 +398,6 @@ class TestListModels:
 
         gemma = next(m for m in data if m["id"] == "gemma-4-e2b")
         assert gemma["status"] == "stopped"
-        assert gemma["port"] == 18001
-        assert gemma["backend_id"] == "rocm"
 
 
 # ═══════════════════════════════════════════════════════════════

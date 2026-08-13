@@ -112,9 +112,6 @@ class ModelInfo(BaseModel):
     created: int = Field(default_factory=lambda: int(time.time()))
     owned_by: str = "local"
     status: str = "running"
-    port: Optional[int] = None
-    runner_type: Optional[str] = None
-    backend_id: Optional[str] = None
 
 
 class ListModelsResponse(BaseModel):
@@ -236,9 +233,6 @@ class ArkestraServer:
                     id=entry.get("id", "unknown"),
                     owned_by=entry.get("owned_by", "local"),
                     status=entry.get("status", "stopped"),
-                    port=entry.get("port"),
-                    runner_type=entry.get("runner_type"),
-                    backend_id=entry.get("backend_id"),
                 ))
 
             return ListModelsResponse(data=models).model_dump()
@@ -258,6 +252,12 @@ class ArkestraServer:
         @app.get("/v1/health")
         async def health_v1():
             return await health()
+
+        # ── Admin subcomponent ───────────────────────────────────
+        from model_arkestra.admin import ArkestraAdmin
+        admin_key = self._arkestra.cm.data.get("env", {}).get("ADMIN_KEY")
+        self._admin = ArkestraAdmin(self, admin_key=admin_key, app=app)
+        self._admin.install()
 
         self._app = app
         return app

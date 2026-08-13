@@ -12,6 +12,7 @@ class RunnerState(Enum):
     RUNNING = auto()
     ERROR = auto()
     STOPPING = auto()  # stop() called — do not restart
+    UNCACHED = auto()  # checkpoint not yet downloaded
 
 class RunnerError(Exception): """Base exception for all ProcessModelRunner failures."""
 class ServerReadyTimeout(RunnerError): """Server did not become ready within timeout."""

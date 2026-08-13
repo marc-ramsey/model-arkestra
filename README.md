@@ -342,19 +342,9 @@ These three methods expose live model state tracked at runtime (port, backend, r
 
 Internal aggregation: returns every tracked `_ModelContext` across all runners. Each context carries `name`, `port`, `state` (`RunnerState` enum), `backend_id`, `runner_type`, `restart_count`, and `last_error`. Callers who need detailed runtime info should use this.
 
-#### `get_model_list() -> list[str]`
-
-Convenience wrapper around `_get_model_contexts()` — returns just the model names as strings. Useful when you want a dynamic list of currently-tracked models (including stopped or errored ones) rather than static YAML config names.
-
-```python
-runner = ModelArkestra("config.yaml")
-await runner.start("qwen3-4b")
-print(runner.get_model_list())  # → ["qwen3-4b"]
-```
-
 #### `get_v1_models() -> dict`
 
-OpenAI-compatible `/v1/models` response. Returns a dict with `"object": "list"` and a `"data"` array — one entry per tracked model containing:
+OpenAI-compatible `/v1/models` response. Returns a dict with `"object": "list"` and a `"data"` array — one entry per configured model containing:
 
 | Field | Source                                                            |
 |---|---|
@@ -362,10 +352,7 @@ OpenAI-compatible `/v1/models` response. Returns a dict with `"object": "list"` 
 | `object` | `"model"`                                                         |
 | `created` | Unix timestamp                                                    |
 | `owned_by` | from config (`model_cfg.get("owned_by")`, default `"local"`)      |
-| `status` | lowercase state string (e.g. `"running"`, `"stopped"`, `"error"`) |
-| `port` | allocated port number                                             |
-| `runner_type` | runner type string (`"process"`, `"podman"`, `"docker"`)          |
-| `backend_id` | resolved backend id (e.g. `"rocm"`)                               |
+| `status` | lowercase state string (e.g. `"running"`, `"stopped"`, `"uncached"`) |
 
 ```python
 models = runner.get_v1_models()
@@ -583,7 +570,7 @@ data: [DONE]
 
 #### GET /v1/models
 
-Returns all tracked models in OpenAI format:
+Returns all configured models in OpenAI-compatible format:
 
 ```json
 {
@@ -592,15 +579,159 @@ Returns all tracked models in OpenAI format:
     {
       "id": "qwen3.5-4b",
       "object": "model",
+      "created": 1700000000,
       "owned_by": "local",
+      "status": "running"
+    }
+  ]
+}
+```
+
+| Field | Source |
+|---|---|
+| `id` | Model name |
+| `object` | Always `"model"` |
+| `created` | Unix timestamp |
+| `owned_by` | From config (default `"local"`) |
+| `status` | Lowercase state string: `running`, `stopped`, `uncached`, `error`, etc. |
+
+### Model Resolution — Aliases
+
+The `openai_aliases` parameter maps OpenAI-style model IDs to your internal model names:
+
+```python
+server = ArkestraServer(
+    "config.yaml",
+    openai_aliases={"gpt-4": "qwen3.5-4b", "claude-3-opus": "llama3-70b"},
+)
+```
+
+A request with `model: "gpt-4"` resolves to `"qwen3.5-4b"` automatically. If no alias matches, the model ID is passed through as-is (the runner uses it as the model name).
+
+---
+
+## Admin API (`admin.py`)
+
+ModelArkestra ships an administrative panel that integrates into the same FastAPI app via `ArkestraServer`. It provides endpoints for monitoring and managing models, with optional API-key authentication on all admin paths.
+
+### Initialization
+
+Admin routes are installed automatically when calling `server.get_app()` — pass the `admin_key` argument to enable:
+
+```python
+server = ArkestraServer(
+    "config.yaml",
+    port=8080,
+    admin_key="your-secret-key",  # gates all /admin/* paths
+)
+app = server.get_app()
+```
+
+When `admin_key` is provided, every request to `/admin/*` must include the header:
+
+```http
+X-Admin-Key: your-secret-key
+```
+
+Missing or incorrect keys return `401 Unauthorized`. Public paths (`/`, `/index.html`) are unaffected.
+
+### Endpoints
+
+| Method | Path | Auth Required | Description |
+|---|---|---|---|
+| `GET` | `/` | No | Serves the admin dashboard HTML page |
+| `GET` | `/index.html` | No | Same as `/` (explicit route) |
+| `GET` | `/admin/models` | Yes | Full context listing for all configured models |
+| `POST` | `/admin/stop/{model}` | Yes | Stop a running model |
+| `POST` | `/admin/update/{model}` | Yes | Update model config + restart |
+| `POST` | `/admin/eject/{model}` | Yes | Remove model from cache, clear contexts (no config change) |
+
+#### GET /admin/models
+
+Returns a list of all configured models with their full runtime context. Models that have been started get their real state from the runner context; unstarted models get a constructed entry:
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "qwen3.5-4b",
       "status": "running",
       "port": 18000,
       "runner_type": "process",
+      "backend_id": "rocm"
+    },
+    {
+      "id": "gemma-4-e2b",
+      "status": "uncached",
+      "port": null,
+      "runner_type": null,
       "backend_id": null
     }
   ]
 }
 ```
+
+| Field | Source |
+|---|---|
+| `id` | Model name from config |
+| `status` | One of: `running`, `loading`, `error`, `stopping`, `stopped`, or `uncached` |
+| `port` | Allocated port (null if not running) |
+| `runner_type` | Runner type string (null if not running) |
+| `backend_id` | Resolved backend (from context or config fallback) |
+
+**Status values:**
+- `running`, `loading`, `error`, `stopping` — real states from active runner contexts
+- `stopped` — model was previously started but is now stopped; its checkpoint **is** in the HF cache
+- `uncached` — model exists in config but has never been downloaded (checkpoint not found in `HF_HUB_CACHE`)
+
+Environment variable resolution follows priority: method argument > config.yaml `env:` section > OS environment.
+
+#### POST /admin/stop/{model}
+
+Stops the named model. Returns `202 Accepted` if the model is already stopped/stopping (no-op), or `200 OK` after a successful stop.
+
+```json
+// 200 — model was running, now stopped
+{"ok": true, "model": "qwen3.5-4b", "previous_state": "running"}
+
+// 202 — already stopped (no-op)
+{"ok": true, "model": "qwen3.5-4b", "previous_state": "stopped"}
+```
+
+Returns `404` if the model is not found in any runner context.
+
+#### POST /admin/update/{model}
+
+Updates a model's configuration and restarts it. Any query parameter except `name` and `port` is treated as an override to merge into the model entry in config.yaml, which is then written to disk before calling `restart()`.
+
+Example — switch backend from process to podman:
+```bash
+curl -X POST 'http://localhost:8080/admin/update/qwen3.5-4b?backend=rocm' \
+     -H 'X-Admin-Key: your-secret-key'
+```
+
+| Field | Behavior |
+|---|---|
+| `name` | Excluded from overrides (must be unique in config). If provided and differs, renames the model entry. Returns `409 Conflict` if the new name collides with an existing entry. |
+| `port` | Always ignored — port is fixed for restarts |
+| All others | Merged into the model config entry on disk |
+
+**Atomicity:** The update writes config, calls `restart()`, and rolls back both the config change and any name change if `restart()` fails (restoring the original snapshot). Returns `500 Internal Server Error` on restart failure with the error detail.
+
+#### POST /admin/eject/{model}
+
+Removes a model from cache without modifying config. Stops the model first (if running), deletes its checkpoint files from the HF cache directory, and clears all runner context entries.
+
+```json
+{"ok": true, "model": "qwen3.5-4b"}
+```
+
+The cache path is computed from `config.yaml`'s `env.HF_HUB_CACHE` (or `LLAMA_CACHE` fallback) using the standard HF Hub layout: `<cache>/models--{checkpoint.replace('/', '--')>`.
+
+Always returns `200 OK`. Returns `404` if the model doesn't exist in config. If a context has already been cleared by eject, subsequent `stop()` calls will return `404`.
+
+---
 
 ### Model Resolution — Aliases
 
