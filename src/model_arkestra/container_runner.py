@@ -9,7 +9,7 @@ import os
 import subprocess
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from model_arkestra.base import BaseModelRunner
 from model_arkestra.common import INSPECT_RE
@@ -21,6 +21,33 @@ class ContainerModelRunner(BaseModelRunner, ABC):
 
     def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
+
+    async def get_logs(self, model_name: str, lines: int = 100) -> List[str]:
+        """Return the last N log lines for a model via container runtime."""
+        ctx = self._models.get(model_name)
+        if not ctx:
+            return []
+        cid = getattr(ctx, "container_id", None)
+        name = getattr(ctx, "name", model_name)
+        cmd_parts = [self._container_cmd(), "logs"]
+        if lines:
+            cmd_parts.extend(["--tail", str(lines)])
+        if not cid:
+            # Container may still be starting — try by name
+            cmd_parts.append(name)
+        else:
+            cmd_parts.append(cid)
+        proc = await asyncio.create_subprocess_exec(
+            *cmd_parts,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=os.environ,
+        )
+        stdout, _stderr = await proc.communicate()
+        if proc.returncode != 0:
+            return []
+        text = stdout.decode("utf-8", errors="replace")
+        return [line for line in text.splitlines() if line]
 
     async def _release_port(self, port: int) -> None:
         """Wait up to ``port_drain_timeout`` seconds for a stopped container's listener to release the port."""

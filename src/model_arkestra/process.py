@@ -2,13 +2,21 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
-from typing import Any, Dict
+from typing import Any, Dict, List
 from model_arkestra.base import BaseModelRunner
 from model_arkestra.common import build_model_args
 from model_arkestra.types import _ModelContext
 
 
 class ProcessModelRunner(BaseModelRunner):
+
+    async def get_logs(self, model_name: str, lines: int = 100) -> List[str]:
+        """Return the last N log lines for a model."""
+        ctx = self._models.get(model_name)
+        if not ctx:
+            return []
+        buffer = list(ctx._log_buffer)
+        return buffer[-lines:] if len(buffer) >= lines else buffer
 
     async def _start_model_process(
         self, ctx: _ModelContext, model_data: Dict[str, Any]
@@ -54,6 +62,32 @@ class ProcessModelRunner(BaseModelRunner):
             env=env,
             preexec_fn=os.setsid
         )
+
+        # Start log capture: feed stdout/stderr lines into ctx._log_buffer ring buffer
+        async def _capture_logs(name: str, process: asyncio.subprocess.Process) -> None:
+            """Read stdout/stderr and append each line to the model's log buffer."""
+            for stream in (process.stdout, process.stderr):
+                if stream is None:
+                    continue
+                while True:
+                    try:
+                        raw = await stream.readline()
+                        if not raw:
+                            break
+                        ctx = self._models.get(name)
+                        if ctx and len(raw) > 0:
+                            line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+                            if line:
+                                ctx._log_buffer.append(line)
+                    except asyncio.CancelledError:
+                        return
+                    except Exception:
+                        break
+
+        log_task = asyncio.create_task(_capture_logs(ctx.name, ctx.process))
+        if not hasattr(self, '_log_tasks'):
+            self._log_tasks = {}
+        self._log_tasks[ctx.name] = log_task
 
     async def _stop_model_process(self, ctx: _ModelContext) -> None:
         """Kill model process group using mandated strategy: SIGHUP → wait 20s → SIGKILL."""

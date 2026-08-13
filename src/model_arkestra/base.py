@@ -301,7 +301,9 @@ class BaseModelRunner(ABC):
                 else:
                     raise RunnerError(f"Request failed with status {resp.status}")
 
-    async def start(self, model_name: str, port: Optional[int] = None, backend: Optional[str] = None) -> None:
+    async def start(self, model_name: str, port: Optional[int] = None, backend: Optional[str] = None,
+                    overrides: Optional[Dict[str, Any]] = None) -> None:
+        effective_backend: Optional[str] = backend
         if backend is not None:
             ctx = self._models.get(model_name)
         else:
@@ -310,7 +312,17 @@ class BaseModelRunner(ABC):
             # Restart in place — reuse existing ctx.port
             await self._before_restart(ctx)
             eff_port = port if port is not None else ctx.port
-        elif ctx and ctx.state == RunnerState.RUNNING:
+            # Replace log buffer if size changed via overrides
+            new_size = overrides.get("max_log_lines") if overrides else None
+            if new_size is None:
+                new_size = self.cm.data.get('log-buffer-size', 500)
+            if len(ctx._log_buffer) > 0 and ctx._log_buffer.maxlen != new_size:
+                from collections import deque
+                ctx._log_buffer = deque(maxlen=new_size)
+        elif ctx is not None and ctx.state == RunnerState.RUNNING:
+            # Already running — check health (idempotent start shortcut).
+            # Overrides are handled by the caller (admin endpoint) which
+            # stops the model first before calling start() again.
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(
@@ -332,13 +344,29 @@ class BaseModelRunner(ABC):
 
             effective_backend = backend or model_data.get("backend")
 
-            ctx = _ModelContext(model_name, eff_port)
+            log_size = overrides.get("max_log_lines") if overrides else None
+            if log_size is None:
+                log_size = self.cm.data.get('log-buffer-size', 500)
+
+            ctx = _ModelContext(model_name, eff_port, max_log_lines=log_size)
             ctx.backend_id = effective_backend
             ctx.broadcast_addr = self.broadcast_addr
             self._models[model_name] = ctx
             ctx.state = RunnerState.LOADING
 
         await self._ensure_port_available(eff_port)
+
+        if not model_data:
+            model_data = self.cm.get_model(model_name, env_vars={"PORT": str(eff_port)})
+
+        # Apply transient overrides (args, checkpoint, backend from dashboard)
+        if overrides:
+            for key in ('args', 'checkpoint'):
+                if key in overrides and overrides[key] is not None:
+                    model_data[key] = overrides[key]
+            if overrides.get('backend') is not None:
+                effective_backend = overrides['backend']
+                ctx.backend_id = effective_backend
 
         await self._start_model_process(ctx, model_data)
 

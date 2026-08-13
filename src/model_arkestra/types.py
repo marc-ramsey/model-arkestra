@@ -1,8 +1,9 @@
 from __future__ import annotations
 import asyncio
 import logging
+from collections import deque
 from enum import Enum, auto
-from typing import Any, Dict, Optional
+from typing import Any, Deque, Dict, Optional, List
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ class MaxRestartsExceeded(RunnerError): """Process has crashed too many times.""
 class ModelShutdown(RunnerError): """Request made after the model was stopped."""
 
 class _ModelContext:
-    def __init__(self, name: str, port: int):
+    def __init__(self, name: str, port: int, max_log_lines: int = 500):
         self.name = name
         self.port = port
         self.runner_type: Optional[str] = None
@@ -32,6 +33,7 @@ class _ModelContext:
         self.restart_count = 0
         self.last_error: Optional[str] = None
         self.broadcast_addr: str = "0.0.0.0"
+        self._log_buffer: Deque[str] = deque(maxlen=max_log_lines)
 
     def __repr__(self) -> str:
         return f"<{self.name} port={self.port} state={self.state.name}>"

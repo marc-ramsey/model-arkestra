@@ -642,9 +642,14 @@ Missing or incorrect keys return `401 Unauthorized`. Public paths (`/`, `/index.
 | `GET` | `/` | No | Serves the admin dashboard HTML page |
 | `GET` | `/index.html` | No | Same as `/` (explicit route) |
 | `GET` | `/admin/models` | Yes | Full context listing for all configured models |
+| `GET` | `/admin/config` | Yes | List model names in config |
+| `POST` | `/admin/config` | Yes | Create a new model entry |
+| `GET` | `/admin/config/{model}` | Yes | Retrieve a single model's configuration |
+| `PUT` | `/admin/config/{model}` | Yes | Update an existing model's configuration (no restart) |
+| `POST` | `/admin/start/{model}` | Yes | Start or restart a model (with optional transient overrides) |
 | `POST` | `/admin/stop/{model}` | Yes | Stop a running model |
-| `POST` | `/admin/update/{model}` | Yes | Update model config + restart |
 | `POST` | `/admin/eject/{model}` | Yes | Remove model from cache, clear contexts (no config change) |
+| `GET` | `/admin/log/{model}?lines=N&follow=true` | Yes | Log snapshot or SSE stream |
 
 #### GET /admin/models
 
@@ -652,23 +657,30 @@ Returns a list of all configured models with their full runtime context. Models 
 
 ```json
 {
-  "object": "list",
-  "data": [
+  "models": [
     {
       "id": "qwen3.5-4b",
       "status": "running",
       "port": 18000,
       "runner_type": "process",
-      "backend_id": "rocm"
+      "backend_id": "rocm",
+      "args": "--temp 0.7 --top-k 20 --ctx-size 131072",
+      "checkpoint": "unsloth/Qwen3-4B-GGUF:Q4_K_M",
+      "capabilities": ["chat"]
     },
     {
       "id": "gemma-4-e2b",
       "status": "uncached",
       "port": null,
       "runner_type": null,
-      "backend_id": null
+      "backend_id": "vulkan-radv",
+      "args": "--temp 0.7 --top-p 0.95 --ctx-size 131072",
+      "checkpoint": "unsloth/gemma-4-E2B-it-GGUF:Q4_K_M",
+      "capabilities": []
     }
-  ]
+  ],
+  "backends": {"vulkan-radv": {...}, "rocm": {...}},
+  "runner_types": ["process", "podman", "docker"]
 }
 ```
 
@@ -679,13 +691,111 @@ Returns a list of all configured models with their full runtime context. Models 
 | `port` | Allocated port (null if not running) |
 | `runner_type` | Runner type string (null if not running) |
 | `backend_id` | Resolved backend (from context or config fallback) |
+| `args` | Model args from config |
+| `checkpoint` | Model checkpoint reference |
+| `capabilities` | Capability tags (default `["chat"]` if none specified) |
 
 **Status values:**
 - `running`, `loading`, `error`, `stopping` — real states from active runner contexts
 - `stopped` — model was previously started but is now stopped; its checkpoint **is** in the HF cache
 - `uncached` — model exists in config but has never been downloaded (checkpoint not found in `HF_HUB_CACHE`)
 
+Top-level metadata (`backends`, `runner_types`) is static for the lifetime of the server.
+
 Environment variable resolution follows priority: method argument > config.yaml `env:` section > OS environment.
+
+#### POST /admin/config
+
+Create a new model entry in config. Returns `201 Created` on success.
+
+```bash
+curl -X POST 'http://localhost:8080/admin/config' \
+     -H 'Content-Type: application/json' \
+     -H 'X-Admin-Key: your-secret-key' \
+     -d '{
+       "name": "my-new-model",
+       "checkpoint": "unsloth/my-model-GGUF:Q4_K_M",
+       "backend": "vulkan-radv",
+       "args": "--temp 0.7 --ctx-size 131072"
+     }'
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `name` | No | Model name in config. Defaults to the last segment of checkpoint (before `:` and `/`). |
+| `checkpoint` | **Yes** | HuggingFace checkpoint reference. |
+| `args` | No | Command-line arguments for the model. |
+| `backend` | No | Backend ID from config (e.g., `vulkan-radv`, `rocm`). |
+| `capabilities` | No | Capability tags (default `["chat"]` if empty). |
+| `tags` | No | Free-form tags. |
+
+Returns `400 Bad Request` if `checkpoint` is missing. Returns `409 Conflict` if the model name already exists.
+
+#### GET /admin/config/{model}
+
+Retrieve a single model's configuration:
+
+```bash
+curl 'http://localhost:8080/admin/config/qwen3.5-4b' \
+     -H 'X-Admin-Key: your-secret-key'
+```
+
+Returns:
+```json
+{
+  "ok": true,
+  "model": "qwen3.5-4b",
+  "config": {
+    "checkpoint": "unsloth/Qwen3-4B-GGUF:Q4_K_M",
+    "args": "--temp 0.7 --top-k 20 --ctx-size 131072",
+    "backend": "rocm"
+  }
+}
+```
+
+Returns `404` if the model is not found.
+
+#### PUT /admin/config/{model}
+
+Update an existing model's configuration and write it to disk. **Does not restart** the model — use `POST /admin/start/{model}` separately.
+
+```bash
+curl -X PUT 'http://localhost:8080/admin/config/qwen3.5-4b' \
+     -H 'Content-Type: application/json' \
+     -H 'X-Admin-Key: your-secret-key' \
+     -d '{"args": "--temp 1.0 --ctx-size 32768", "capabilities": ["chat"]}'
+```
+
+Valid fields: `args`, `checkpoint`, `backend`, `capabilities`, `runner`, `tags`.
+
+Returns `404` if the model does not exist. Returns `500` on write failure (config is rolled back).
+
+#### POST /admin/start/{model}
+
+Start or restart a model. Returns the port assigned.
+
+For an already-running model with transient overrides, this will stop and restart the model:
+
+```bash
+# Start a stopped model
+curl -X POST 'http://localhost:8080/admin/start/qwen3.5-4b' \
+     -H 'X-Admin-Key: your-secret-key'
+
+# Restart with transient overrides (no config change)
+curl -X POST 'http://localhost:8080/admin/start/qwen3.5-4b' \
+     -H 'Content-Type: application/json' \
+     -H 'X-Admin-Key: your-secret-key' \
+     -d '{"backend": "docker", "checkpoint": "unsloth/Qwen3.5-4B-GGUF:Q5_K_M"}'
+```
+
+Transient overrides are **not** persisted to disk. They apply only to this invocation:
+- `args` — command-line arguments override
+- `checkpoint` — model checkpoint reference override
+- `backend` — backend ID override (runner resolves from config chain)
+- `runner` — explicit runner type (`process`, `podman`, `docker`)
+- `max_log_lines` — per-invocation log buffer size
+
+Returns `503` if the model fails to start within `ready_timeout`.
 
 #### POST /admin/stop/{model}
 
@@ -701,24 +811,6 @@ Stops the named model. Returns `202 Accepted` if the model is already stopped/st
 
 Returns `404` if the model is not found in any runner context.
 
-#### POST /admin/update/{model}
-
-Updates a model's configuration and restarts it. Any query parameter except `name` and `port` is treated as an override to merge into the model entry in config.yaml, which is then written to disk before calling `restart()`.
-
-Example — switch backend from process to podman:
-```bash
-curl -X POST 'http://localhost:8080/admin/update/qwen3.5-4b?backend=rocm' \
-     -H 'X-Admin-Key: your-secret-key'
-```
-
-| Field | Behavior |
-|---|---|
-| `name` | Excluded from overrides (must be unique in config). If provided and differs, renames the model entry. Returns `409 Conflict` if the new name collides with an existing entry. |
-| `port` | Always ignored — port is fixed for restarts |
-| All others | Merged into the model config entry on disk |
-
-**Atomicity:** The update writes config, calls `restart()`, and rolls back both the config change and any name change if `restart()` fails (restoring the original snapshot). Returns `500 Internal Server Error` on restart failure with the error detail.
-
 #### POST /admin/eject/{model}
 
 Removes a model from cache without modifying config. Stops the model first (if running), deletes its checkpoint files from the HF cache directory, and clears all runner context entries.
@@ -731,20 +823,27 @@ The cache path is computed from `config.yaml`'s `env.HF_HUB_CACHE` (or `LLAMA_CA
 
 Always returns `200 OK`. Returns `404` if the model doesn't exist in config. If a context has already been cleared by eject, subsequent `stop()` calls will return `404`.
 
----
+#### GET /admin/log/{model}?lines=N&follow=true
 
-### Model Resolution — Aliases
+Return log lines for a running model. Without `follow`, returns a JSON snapshot. With `follow=true`, switches to an SSE stream.
 
-The `openai_aliases` parameter maps OpenAI-style model IDs to your internal model names:
-
-```python
-server = ArkestraServer(
-    "config.yaml",
-    openai_aliases={"gpt-4": "qwen3.5-4b", "claude-3-opus": "llama3-70b"},
-)
+**Snapshot mode:**
+```json
+{"object": "log", "data": ["[INFO] Loading model...", "[INFO] Ready"]}
 ```
 
-A request with `model: "gpt-4"` resolves to `"qwen3.5-4b"` automatically. If no alias matches, the model ID is passed through as-is (the runner uses it as the model name).
+**SSE mode** — streams new lines as they are produced:
+```
+data: {"type":"snapshot","lines":["line1","line2"]}
+
+data: {"type":"line","lines":["new line 3"]}
+
+data: [DONE]
+```
+
+Returns `404` if the model is not found in config. Uses the log buffer populated by the process watcher task.
+
+---
 
 ### Request & Response Models
 

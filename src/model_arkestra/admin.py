@@ -30,9 +30,11 @@ class ArkestraAdmin:
         self._add_root_route()
         self._add_auth_middleware()
         self._add_models_route()
+        self._add_config_routes()
         self._add_stop_route()
-        self._add_update_route()
+        self._add_start_route()
         self._add_eject_route()
+        self._add_log_route()
         self._installed = True
         return self
 
@@ -101,6 +103,9 @@ class ArkestraAdmin:
                             "port": ctx.port,
                             "runner_type": ctx.runner_type,
                             "backend_id": ctx.backend_id or model_cfg.get("backend"),
+                            "args": model_cfg.get("args", ""),
+                            "checkpoint": model_cfg.get("checkpoint", ""),
+                            "capabilities": model_cfg.get("capabilities", []),
                         }
                     else:
                         checkpoint = model_cfg.get("checkpoint", "")
@@ -114,10 +119,21 @@ class ArkestraAdmin:
                             "port": None,
                             "runner_type": None,
                             "backend_id": model_cfg.get("backend"),
+                            "args": model_cfg.get("args", ""),
+                            "checkpoint": checkpoint,
+                            "capabilities": model_cfg.get("capabilities", []),
                         }
                     data.append(entry)
 
-                return {"object": "list", "data": data}
+                # Top-level metadata for dropdown options (static per-server)
+                backends = self.server._arkestra.cm.data.get("backends") or {}
+                runner_types = list(self.server._arkestra._runner_classes.keys()) if hasattr(self.server._arkestra, "_runner_classes") else []
+
+                return {
+                    "models": data,
+                    "backends": backends,
+                    "runner_types": runner_types,
+                }
             except Exception as e:
                 raise HTTPException(status_code=503, detail=str(e))
 
@@ -146,61 +162,180 @@ class ArkestraAdmin:
                 "previous_state": str(prev_state),
             }
 
-    def _add_update_route(self) -> None:
+    def _add_config_routes(self) -> None:
         import copy
-        from fastapi.responses import JSONResponse
 
-        @self._app.post("/admin/update/{model}")
-        async def admin_update(
-            model: str,
-            request: Request,
-        ):
-            # Collect all query params except 'name' and 'port'
-            raw_params = dict(request.query_params)
-            override_params = {k: v for k, v in raw_params.items() if k not in ("name", "port")}
+        KNOWN_KEYS = {"args", "checkpoint", "backend", "capabilities", "runner", "tags"}
 
-            # Check model exists in config
+        @self._app.get("/admin/config")
+        async def admin_config_list():
+            """Return list of model names in config."""
+            cfg = self.server._arkestra.cm.data.get("models") or {}
+            return {"models": list(cfg.keys())}
+
+        @self._app.post("/admin/config")
+        async def admin_config_create(body: Dict[str, Any]):
+            """Create a new model entry in config. Requires at least 'checkpoint'."""
+            cfg = self.server._arkestra.cm.data.get("models") or {}
+
+            # Validate required fields
+            if not body.get("checkpoint"):
+                raise HTTPException(
+                    status_code=400, detail="'checkpoint' is required to create a model"
+                )
+
+            name = body.get("name") or (body.get("checkpoint", "").split(":")[0].rsplit("/", 1)[-1] if body.get("checkpoint") else "")
+            if not name:
+                raise HTTPException(
+                    status_code=400, detail="Could not determine model name from checkpoint"
+                )
+
+            if name in cfg:
+                raise HTTPException(
+                    status_code=409, detail=f"Model '{name}' already exists in config"
+                )
+
+            # Build new model entry from body fields (with safe defaults)
+            new_model: Dict[str, Any] = {
+                "checkpoint": str(body["checkpoint"]),
+            }
+            for key in ("args", "backend", "capabilities", "runner", "tags"):
+                if key in body and body[key] is not None:
+                    new_model[key] = body[key]
+
+            cfg[name] = new_model
+            self.server._arkestra.cm.export(self.server._arkestra.cm.config_path)
+            return JSONResponse(
+                status_code=201,
+                content={"ok": True, "model": name},
+            )
+
+        @self._app.get("/admin/config/{model}")
+        async def admin_config_get(model: str):
+            """Return a single model's configuration."""
+            cfg = self.server._arkestra.cm.data.get("models") or {}
+            if model not in cfg:
+                raise HTTPException(
+                    status_code=404, detail=f"Model '{model}' not in config"
+                )
+            return {"ok": True, "model": model, "config": copy.deepcopy(cfg[model])}
+
+        @self._app.put("/admin/config/{model}")
+        async def admin_config_update(model: str, body: Dict[str, Any]):
+            """Update an existing model's configuration."""
+            cfg = self.server._arkestra.cm.data.get("models") or {}
+            if model not in cfg:
+                raise HTTPException(
+                    status_code=404, detail=f"Model '{model}' not in config"
+                )
+
+            # Snapshot for rollback
+            snapshot = copy.deepcopy(cfg[model])
+
+            try:
+                for key, value in body.items():
+                    if key in KNOWN_KEYS or key == "max_log_lines":
+                        cfg[model][key] = value
+                self.server._arkestra.cm.export(self.server._arkestra.cm.config_path)
+                return {"ok": True, "model": model}
+            except Exception as exc:
+                cfg[model].update(snapshot)
+                raise HTTPException(status_code=500, detail=f"Save failed: {exc}")
+
+    def _add_start_route(self) -> None:
+        from model_arkestra.types import RunnerState
+
+        @self._app.post("/admin/start/{model}")
+        async def admin_start(model: str, body: Dict[str, Any] | None = None):
             cfg = self.server._arkestra.cm.data.get("models") or {}
             if model not in cfg:
                 raise HTTPException(status_code=404, detail=f"Model '{model}' not in config")
 
-            # Snapshot current entry for atomic rollback
-            old_key = model
-            snapshot = copy.deepcopy(cfg[model])
+            overrides = {}
+            if body:
+                for key in ("args", "checkpoint", "backend", "runner"):
+                    if key in body and body[key] is not None:
+                        overrides[key] = str(body[key])
+                if "max_log_lines" in body and body["max_log_lines"] is not None:
+                    try:
+                        overrides["max_log_lines"] = int(body["max_log_lines"])
+                    except (ValueError, TypeError):
+                        pass
 
-            # Enforce name uniqueness (name is excluded from overrides but still checked)
-            new_name = raw_params.get("name", "")
-            if new_name and new_name != model and new_name in cfg:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Model name '{new_name}' already exists in config",
-                )
+            # If model is already running with overrides, stop first then start fresh
+            if overrides:
+                ctxs = [c for c in self.server._arkestra._get_model_contexts() if c.name == model]
+                if ctxs and ctxs[0].state == RunnerState.RUNNING:
+                    await self.server._arkestra.stop(model)
 
-            # Apply changes to config
-            if new_name and new_name != model:
-                cfg[new_name] = cfg.pop(model)
-                model = new_name
-            else:
-                for k, v in override_params.items():
-                    cfg[model][k] = v
-
-            # Write updated config back to disk
-            self.server._arkestra.cm.export(self.server._arkestra.cm.config_path)
-
-            # Restart the model with new backend/runner if provided
-            backend = override_params.get("backend")
-            runner = override_params.get("runner")
             try:
-                await self.server._arkestra.restart(model, backend=backend, runner=runner)
+                await self.server._arkestra.start(model, overrides=overrides)
+                ctxs = [c for c in self.server._arkestra._get_model_contexts() if c.name == model]
+                port = ctxs[0].port if ctxs else None
+                return {"ok": True, "model": model, "port": port}
             except Exception as exc:
-                # Rollback: restore snapshot under the old key
-                cfg[old_key] = snapshot
-                if new_name and new_name != old_key:
-                    del cfg[new_name]
-                self.server._arkestra.cm.export(self.server._arkestra.cm.config_path)
-                raise HTTPException(status_code=500, detail=f"Restart failed: {exc}")
+                raise HTTPException(status_code=503, detail=f"Start failed: {exc}")
 
-            return {"ok": True, "model": model}
+    def _add_log_route(self) -> None:
+        import json
+
+        @self._app.get("/admin/log/{model}")
+        async def admin_log(
+            model: str,
+            lines: int = 100,
+            follow: bool = False,
+        ):
+            # Validate model exists in config first
+            cfg = self.server._arkestra.cm.data.get("models") or {}
+            if model not in cfg:
+                raise HTTPException(status_code=404, detail=f"Model '{model}' not in config")
+
+            if follow:
+                from fastapi.responses import StreamingResponse
+
+                async def log_stream():
+                    """SSE stream of new log lines for a model."""
+                    ctxs = [c for c in self.server._arkestra._get_model_contexts() if c.name == model]
+                    if not ctxs:
+                        yield f"data: {json.dumps({'type': 'error', 'message': 'No context for this model'})}\n\n"
+                        return
+                    ctx = ctxs[0]
+                    known_runner = None
+                    buffer_size = ctx._log_buffer.maxlen if hasattr(ctx, '_log_buffer') else 500
+
+                    # Track position for new-line detection
+                    last_count = len(ctx._log_buffer)
+
+                    # Send current tail
+                    buf = list(ctx._log_buffer)
+                    yield f"data: {json.dumps({'type': 'snapshot', 'lines': buf[-lines:]})}\n\n"
+
+                    while True:
+                        await asyncio.sleep(0.1)
+                        new_buf = list(ctx._log_buffer)
+                        if len(new_buf) > last_count:
+                            new_lines = new_buf[last_count:]
+                            last_count = len(new_buf)
+                            yield f"data: {json.dumps({'type': 'line', 'lines': new_lines})}\n\n"
+                
+                return StreamingResponse(
+                    log_stream(),
+                    media_type="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+                )
+            else:
+                # Snapshot mode
+                lines_data = []
+                for runner in self.server._arkestra._runners.values():
+                    if hasattr(runner, 'get_logs'):
+                        try:
+                            result = await runner.get_logs(model, lines)
+                            if result:
+                                lines_data = result
+                                break
+                        except Exception:
+                            pass
+                return {"object": "log", "data": lines_data}
 
     def _add_eject_route(self) -> None:
         import os
