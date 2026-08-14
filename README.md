@@ -963,7 +963,7 @@ For direct use when you only need subprocess-based execution. Bound to a `Config
 | `shutdown_timeout` | `float` | `20.0` | Seconds to wait after SIGHUP before escalating to SIGKILL during shutdown.             |
 | `ready_timeout` | `float` | `120.0` | Maximum seconds to wait for the server's `/health` endpoint to respond after starting. |
 | `ready_poll_ms` | `float` | `100.0` | Milliseconds between consecutive health-check polls during startup.                    |
-| `warmup_delay` | `float` | `20.0` | Seconds to wait after `/health` returns OK before marking the model as `"running"`.    |
+| `warmup_delay` | `float` | *(see below)* | Seconds to wait after `/health` returns OK before marking the model as `"running"`. Read from config key `warmup-time` (default 10s); pass directly as keyword arg to override. |
 
 > `restart_delay` and `restart_limit` control automatic restart behavior inherited from `BaseModelRunner`: when a managed process or container exits unexpectedly, the runner polls and attempts up to `restart_limit` restarts spaced by `restart_delay` seconds. `port_drain_timeout` is used by container runners to wait for port listeners to drain; it has no effect on direct subprocess execution.
 
@@ -1040,6 +1040,7 @@ The runner reads from the same YAML configuration used by `ConfigManager`. Three
 |---|---|---|---|
 | `models-start-port` | `int` | `18000` | First port in the auto-allocated range.                                                                                                                                                  |
 | `model-ports` | `int` | `32` | Number of ports available — valid range is `models-start-port` through `models-start-port + model-ports - 1`. Allocation raises `RuntimeError("Port range exceeded: …")` when exhausted. |
+| `warmup-time` | `float` | `10.0` | Seconds to wait after `/health` returns OK before marking the model as `"running"`. Improves reliability of the first inference request by bridging the gap between HTTP readiness and weight loading completion. |
 
 ### `env:` section — process environment variables
 
