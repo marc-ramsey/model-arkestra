@@ -24,6 +24,7 @@ import asyncio
 import os
 import signal
 import subprocess
+import time
 from typing import Any, Dict, Optional
 
 import pytest
@@ -61,6 +62,26 @@ def _kill_port(port: int) -> None:
                 os.kill(int(pid), 9)
             except OSError:
                 pass
+
+
+def _wait_for_port_free(port: int, timeout: float = 10.0) -> bool:
+    """Block until no process is listening on *port*, or *timeout* seconds elapse."""
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        result = subprocess.run(
+            ["lsof", f"-ti:{port}"], capture_output=True, text=True
+        )
+        pids = [p for p in result.stdout.strip().split() if p]
+        if not pids:
+            return True
+        # Still alive — SIGKILL anyone who won't die
+        for pid in pids:
+            try:
+                os.kill(int(pid), 9)
+            except OSError:
+                pass
+        time.sleep(0.2)
+    return False
 
 
 def _kill_runner(runner: Any) -> None:
@@ -146,6 +167,11 @@ async def _cleanup_after_test(mr: ModelArkestra) -> None:
                 if cid:
                     subprocess.run(["podman", "rm", "-f", cid], capture_output=True, timeout=5)
                     subprocess.run(["docker", "rm", "-f", cid], capture_output=True, timeout=5)
+            # Wait until every port is actually free — prevents next test from hitting
+            # a stale listener that survived shutdown/kill (rootless pasta networking,
+            # slow process teardown, or leftover containers from other modules).
+            for port in list(_CLEANUP_PORTS) + list(_EXTRA_PORTS):
+                _wait_for_port_free(port, timeout=5.0)
         except RuntimeError:
             pass  # event loop may be closed — nothing we can do
 
@@ -160,7 +186,11 @@ def _cleanup_ports() -> None:
         _kill_port(port)
     for port in _EXTRA_PORTS:
         _kill_port(port)
+    # Wait so killed listeners release their file descriptors.
+    time.sleep(0.5)
     yield
+    # Kill again after module — some processes survive the first pass.
+    time.sleep(0.2)
     for port in _CLEANUP_PORTS:
         _kill_port(port)
     for port in _EXTRA_PORTS:
@@ -230,13 +260,7 @@ async def podman_cleanup() -> _PodmanCleanupTracker:
 
     # 3. Kill tracked ports
     for port in tracker._ports:
-        result = subprocess.run(
-            ["lsof", f"-ti:{port}"], capture_output=True, text=True
-        )
-        for pid in result.stdout.strip().split():
-            if pid:
-                try:
-                    os.kill(int(pid), 9)
-                except OSError:
-                    pass
+        _kill_port(port)
+    # Brief wait so listeners release their file descriptors.
+    time.sleep(0.2)
 

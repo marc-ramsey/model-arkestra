@@ -33,6 +33,9 @@ def _cleanup_zombies() -> None:
     for cid in result.stdout.strip().split():
         if cid:
             subprocess.run(["podman", "rm", "-f", cid], capture_output=True)
+    # Wait so pasta listeners release their ports.
+    import time as _time
+    _time.sleep(0.3)
 
 
 @pytest.mark.slow

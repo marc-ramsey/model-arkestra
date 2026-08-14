@@ -37,8 +37,9 @@ def _make_runner():
 
 def _kill_port(port: int) -> None:
     """Kill process on *port* and remove any containers mapped to it."""
+    import time as _time
     # Kill via lsof (most common)
-    result = subprocess.run(["lsof", "-ti:", str(port)], capture_output=True, text=True)
+    result = subprocess.run(["lsof", f"-ti:{port}"], capture_output=True, text=True)
     for pid in result.stdout.strip().split():
         if pid:
             try:
@@ -70,6 +71,8 @@ def _kill_port(port: int) -> None:
         ).stdout.strip()
         if f'"{port}/tcp"' in portmap or str(port) in portmap:
             subprocess.run(["podman", "rm", "-f", cid], capture_output=True, timeout=10)
+    # Wait for listeners to release the port
+    _time.sleep(0.5)
 
 
 # ── Module fixture: ensure alpine image is available ─────────────────────────
@@ -224,7 +227,8 @@ class TestFullLifecycle:
         _kill_port(port)
 
         runner = PodmanModelRunner(
-            MagicMock(get_model=lambda n, **kw: {"image": "alpine:latest", "container_port": 80}),
+            MagicMock(get_model=lambda n, **kw: {"image": "alpine:latest", "container_port": 80},
+                      data={'log-buffer-size': 500}),
             restart_delay=0.5,
         )
 
