@@ -215,11 +215,13 @@
             border-radius: 50%;
             margin-right: 7px;
             flex-shrink: 0;
+            background: var(--green);
         }
-        .status-dot.running { background: var(--green); }
+        .status-dot.running  { background: #4aad7d; }
+        .status-dot.stopped  { background: #2e5a42; }       /* cached but not running — ~20% dimmer */
         .status-dot.loading, .status-dot.stopping { background: var(--amber); animation: pulse 1.2s infinite; }
-        .status-dot.error { background: var(--red); }
-        .status-dot.stopped, .status-dot.uncached { background: var(--text-dim); }
+        .status-dot.error    { background: var(--red); }
+        .status-dot.uncached { background: #8a8580; }       /* no files — gray */
 
         @keyframes pulse {
             0%, 100% { opacity: 1; }
@@ -685,7 +687,7 @@
         }
 
         function populateFormFields(cfg) {
-            document.getElementById('edit-name')?.setValue(cfg.id || '');  // not settable
+            document.getElementById('edit-name').value = cfg.id || '';  // not settable
             const checkpoint = document.getElementById('edit-checkpoint');
             if (checkpoint) checkpoint.value = cfg.checkpoint || '';
             const backend = document.getElementById('edit-backend');
@@ -810,6 +812,9 @@
                 logStreamCtrl = null;
             }
             currentLogLines = [];
+            // Also update the checkbox state to unchecked
+            const checkEl = document.getElementById('chk-log-follow') || document.getElementById('right-log-follow');
+            if (checkEl) checkEl.checked = false;
         }
 
         async function loadLogSnapshot(modelName) {
@@ -922,9 +927,9 @@
             if (!selectedModel) return;
             const params = getChatParams()[selectedModel];
             if (!params) return;
-            document.getElementById('rcp-temp')?.setValue(String(params.temperature ?? 0.7));
-            document.getElementById('rcp-top-p')?.setValue(String(params.top_p ?? 0.95));
-            document.getElementById('rcp-max-tokens')?.setValue(String(params.max_tokens ?? 512));
+            document.getElementById('rcp-temp').value     = String(params.temperature ?? 0.7);
+            document.getElementById('rcp-top-p').value     = String(params.top_p ?? 0.95);
+            document.getElementById('rcp-max-tokens').value = String(params.max_tokens ?? 512);
         }
 
         // 6.3 Message bubble helpers
@@ -1140,7 +1145,7 @@
 
                 // 5.1: Load logs when right-logs pane is opened
                 if (id === 'sec-right-logs' && !wasCollapsed && selectedModel) {
-                    const followCb = document.getElementById('chk-log-follow');
+                    document.getElementById('chk-log-follow') || document.getElementById('right-log-follow');
                     if (followCb && followCb.checked) {
                         startLogFollow(selectedModel);
                     } else {
@@ -1222,8 +1227,8 @@
                 document.body.style.userSelect = '';
             });
 
-            // ── 5. Logs pane — stream + snapshot ──────────────────────
-            const logFollowCb = document.getElementById('chk-log-follow');
+        // ── 5. Logs pane — stream + snapshot ──────────────────────
+            const logFollowCb = document.getElementById('chk-log-follow') || document.getElementById('right-log-follow');
             if (logFollowCb) {
                 logFollowCb.addEventListener('change', () => {
                     if (!selectedModel || !document.getElementById('sec-right-logs').classList.contains('collapsed')) return;

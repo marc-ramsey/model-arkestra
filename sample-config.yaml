@@ -15,6 +15,9 @@ backends:
   vulkan-radv:
     args: -hf ${CHECKPOINT} --port ${PORT}
     binary_dir: /home/marc/local/llama.cpp/build-vulkan-radv/bin
+    devices:
+    - /dev/dri/card0:rwm
+    - /dev/dri/renderD128:rwm
     env_container:
       GGML_CUDA_ENABLE_UNIFIED_MEMORY: 'ON'
       ROCBLAS_USE_HIPBLASLT: '1'

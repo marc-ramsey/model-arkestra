@@ -109,8 +109,11 @@ class ArkestraAdmin:
                         }
                     else:
                         checkpoint = model_cfg.get("checkpoint", "")
+                        # Strip revision tag (e.g. :Q4_K_M) — HF Hub directories
+                        # store models under the base name only.
+                        base_checkpoint = checkpoint.split(":")[0] if ":" in checkpoint else checkpoint
                         hf_cache = self._resolve_env("HF_HUB_CACHE") or self._resolve_env("LLAMA_CACHE") or "~/.cache/huggingface/hub"
-                        cache_path = Path(hf_cache).expanduser() / f"models--{checkpoint.replace('/', '--')}" if checkpoint else None
+                        cache_path = Path(hf_cache).expanduser() / f"models--{base_checkpoint.replace('/', '--')}" if base_checkpoint else None
                         is_cached = cache_path.exists() if cache_path else False
 
                         entry = {
