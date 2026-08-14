@@ -1,0 +1,68 @@
+# Process Lifecycle
+
+This document covers the full lifecycle of models from startup through crash detection to shutdown — how state transitions work and what happens under the hood for each backend type.
+
+## State Machine
+
+```
+                ┌───────────┐
+  start(model) ─│           │──► /health OK + warmup delay ─► state = "running"
+                ▼           │
+              "loading"     │
+                              │ process/container exits unexpectedly
+                              │ retry_count < restart_limit?
+                              ├─ Yes → sleep(restart_delay) → restart
+                              │         (reuses same port)
+                              └─ No  → state = "error"
+```
+
+## Crash Detection by Backend
+
+| Runner | Behavior |
+|---|---|
+| **Process** | Polls subprocess exit code via `process.wait()`. On unexpected exit (non-zero), automatically attempts up to `restart_limit` restarts spaced by `restart_delay`. The watcher task runs in the background. |
+| **Podman / Docker** | Polls container status every 2 seconds; on unexpected exit (`exited`, `dead`), automatically attempts up to `restart_limit` restarts spaced by `restart_delay`. The watcher task runs in the background. |
+
+## Shutdown Sequencing (`stop` / `stop_all`)
+
+1. State transitions to **STOPPING** immediately — prevents any watcher from attempting a restart.
+2. Signal is sent:
+   - **Process**: SIGHUP to process group → waits up to `shutdown_timeout` (default 20s) → escalates to SIGKILL if still running.
+   - **Podman / Docker**: Container stop signal (`podman stop --time <port_drain_timeout>` or `docker stop --time <port_drain_timeout>`) with graceful shutdown timeout (`port_drain_timeout` default 20s).
+3. After termination, watcher tasks are cancelled and state transitions to **STOPPED**. Port is released (with `port_drain_timeout` wait for container runners to let the port listener drain).
+
+## Full Teardown (`shutdown`)
+
+Identical to stop sequencing with two additions:
+
+1. All watcher tasks are cancelled and awaited.
+2. `_models` and `_watchers` dictionaries are cleared — models cannot be restarted after shutdown.
+3. **For container runners**: After stopping all containers, force-removes them via `podman rm -f` / `docker rm -f`.
+
+## Stopped Models Are Restartable
+
+After `stop()` or `stop_all()`, models remain tracked with state `STOPPED`. Calling `start()` again on a stopped model restarts it in-place on the same port. This applies to both the orchestration layer and direct runners.
+
+Full teardown (`shutdown`) is the only operation that clears model entries entirely.
+
+## Error States
+
+When crash detection exhausts all restart attempts, the model transitions to ERROR state:
+
+```python
+await runner.start("unstable-model")  # crashes repeatedly
+# → state = "error" after restart_limit exceeded
+
+try:
+    await runner.ainvoke("unstable-model", prompt="hi")
+except MaxRestartsExceeded:
+    print("Model exhausted restart attempts — check logs or config")
+```
+
+See [Error Hierarchy](./errors.md) for the full exception reference.
+
+## Related Documentation
+
+- [Architecture](./architecture.md) — port allocation, runner routing
+- [API Reference — ModelArkestra](./api/model-arkestra.md) — `start()`, `stop()`, `shutdown()` signatures
+- [Configuration Format](./config.md) — `restart_delay`, `restart_limit` config keys

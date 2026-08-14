@@ -1,0 +1,63 @@
+# Contributing & Tests
+
+## Running Tests
+
+The project uses `pytest` with a modular fixture system (`tests/conftest.py`) that provides shared model runners, port cleanup, and per-test isolation. All tests are collected from `tests/`, `tests/unit/`, and any module-scoped test files.
+
+```bash
+# Run all tests (fast + slow)
+python -m pytest -v --tb=short
+
+# Run only fast tests (skips models that download/run LLMs)
+python -m pytest -v --tb=short -m "not slow"
+
+# Run only slow integration tests (requires a working GPU/backend or container runtime)
+python -m pytest -v --tb=short -m slow
+```
+
+### Fixture Summary
+
+| Fixture | Scope | Purpose |
+|---|---|---|
+| `mr` | module | Shared `ModelArkestra` instance — port allocation and runner maps are shared across the module |
+| `_cleanup_after_test` | function (autouse) | Stops all models after each test so every method sees a clean slate |
+| `_cleanup_ports` | module (autouse) | Safety net that kills any lingering processes on configured ports before/after each module |
+| `podman_cleanup` | function | Tracks podman containers/tasks/ports with guaranteed teardown — opt-in per-test fixture |
+
+## Import Path
+
+The runner and its backends live in the `model_arkestra` package:
+
+```python
+from llm_config_manager.config_manager import ConfigManager    # data layer
+from model_arkestra.arkestra import ModelArkestra              # orchestration (recommended)
+from model_arkestra.base import BaseModelRunner                # abstract base class
+from model_arkestra.process import ProcessModelRunner          # process runner
+from model_arkestra.podman import PodmanModelRunner            # podman runner
+from model_arkestra.docker import DockerModelRunner            # docker runner
+from model_arkestra.container_runner import ContainerModelRunner  # container base class
+from model_arkestra.http_client import ModelHttpClient         # lightweight HTTP client
+from model_arkestra.langchain_adapter import LangChainModelAdapter  # LangChain LCEL wrapper
+from model_arkestra.server import ArkestraServer             # OpenAI v1-compatible API server
+
+# Convenience re-exports from __init__.py:
+from model_arkestra import RunnerState, RunnerError, ServerReadyTimeout
+from model_arkestra import ModelNotStarted, MaxRestartsExceeded, ModelShutdown
+```
+
+## Shared Utilities (`common.py`)
+
+Functions used by the runner classes to build commands from configuration data:
+
+| Function | Description |
+|---|---|
+| `build_model_args(cm, model_name, env_vars=None, override_backend=None) → (list[str], str)` | Builds command arguments for a model using its backend config — resolves the effective backend, fills `${PORT}` and `${CHECKPOINT}` placeholders in the backend args template, and concatenates backend args with model-specific args. Returns `(arg_list, cmd_str)`. |
+| `_resolve_backend(cm, model, model_name, override_backend) → str` | Determines which backend ID to use for a model. Resolution order: `override_backend` → `model["backend"]` → `backends.default`. Used internally by `build_model_args`. |
+
+These replace the former `ConfigManager.assemble_command()` and `ConfigManager._resolve_backend_for_model()` methods, keeping command assembly logic inside arkestra where it belongs.
+
+## Related Documentation
+
+- [Configuration Format](./config.md) — YAML structure that configures tests
+- [API Reference — ModelArkestra](./api/model-arkestra.md) — classes being tested
+- [Lifecycle](./lifecycle.md) — behavior tested by integration tests
