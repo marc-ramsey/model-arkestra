@@ -10,13 +10,30 @@ This is **not** a replacement for [Lemonade](https://github.com/ollama/lemonade)
 
 | If you want to… | Go here |
 |---|---|
+| Install Model Arkestra on your machine | See [Installation](#installation) below |
 | Start using Model Arkestra in Python code | [Usage Guide](./docs/usage.md) |
 | Run the OpenAI-compatible API server | [Server Documentation](./docs/server.md) |
 | Manage models via web UI / Admin panel | [Admin API & Dashboard](./docs/admin.md) |
 | Understand how routing, ports, and runners work | [Architecture](./docs/architecture.md) |
 | Write or modify `config.yaml` | [Configuration Format](./docs/config.md) |
 
-## Quick Start — Python API
+## Installation
+
+```bash
+cd model-arkestra
+scripts/setup.sh        # creates venv, pip install -e ".[proxy]", auto-wraps entry points
+```
+
+`setup.sh` is idempotent — safe to re-run. After setup you can use:
+
+| Shortcut | Equivalent |
+|---|---|
+| `arkestra-server --config config.yaml --port 8080` | `python -m model_arkestra.server …` |
+| `arkestra-cli list` | (CLI entry point) |
+
+The scripts auto-activate the venv on first invocation, so they work from any directory without sourcing `venv/bin/activate`. Use `scripts/post_install.sh` separately if you need to re-wrap the entry points after a fresh clone.
+
+### Quick Start — Python API
 
 ```python
 from model_arkestra.arkestra import ModelArkestra
@@ -31,10 +48,12 @@ async with ModelArkestra("config.yaml") as runner:
             print(chunk["token"], end="", flush=True)      # streaming tokens
 ```
 
-## Quick Start — Server
+### Quick Start — Server
 
 ```bash
 python -m model_arkestra.server --config config.yaml --port 8080
+# or equivalently:
+arkestra-server --config config.yaml --port 8080
 ```
 
 Then hit `POST /v1/chat/completions` with any OpenAI-compatible client, or visit the admin dashboard at `http://localhost:8080/`.
