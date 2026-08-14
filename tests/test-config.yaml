@@ -1,6 +1,7 @@
 # ── Test configuration ────────────────────────────────────────────
 # Uses ${VAR} macros — values defined in the `macros:` section.
 
+warmup-time: 10
 models-start-port: 18000
 model-ports: 2
 

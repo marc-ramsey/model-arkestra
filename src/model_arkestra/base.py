@@ -20,7 +20,7 @@ class BaseModelRunner(ABC):
     def __init__(self, config_manager: Any, restart_delay: float = 5.0,
                  restart_limit: int = 4, shutdown_timeout: float = 20.0,
                  ready_timeout: float = 120.0, ready_poll_ms: float = 100.0,
-                 warmup_delay: float = 20.0, port_drain_timeout: float = 20.0,
+                 warmup_delay: Optional[float] = None, port_drain_timeout: float = 20.0,
                  broadcast_addr: str = "0.0.0.0"):
         self.cm = config_manager
         self.restart_delay = restart_delay
@@ -28,7 +28,7 @@ class BaseModelRunner(ABC):
         self.shutdown_timeout = shutdown_timeout
         self.ready_timeout = ready_timeout
         self.ready_poll_ms = ready_poll_ms
-        self.warmup_delay = warmup_delay
+        self.warmup_delay = warmup_delay if warmup_delay is not None else config_manager.data.get("warmup-time", 10.0)
         self.port_drain_timeout = port_drain_timeout
         # Resolve broadcast_addr: explicit param > config fallback > global default
         cfg_br = (self.cm.data.get("runners") or {}).get("broadcast_addr")

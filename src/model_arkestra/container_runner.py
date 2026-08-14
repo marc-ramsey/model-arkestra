@@ -7,7 +7,6 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
-import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List
 
@@ -50,14 +49,19 @@ class ContainerModelRunner(BaseModelRunner, ABC):
         return [line for line in text.splitlines() if line]
 
     async def _release_port(self, port: int) -> None:
-        """Wait up to ``port_drain_timeout`` seconds for a stopped container's listener to release the port."""
-        deadline = time.monotonic() + self.port_drain_timeout
-        while time.monotonic() < deadline:
-            result = subprocess.run(
-                ["lsof", "-ti:", str(port)],
-                capture_output=True, text=True,
+        """Wait up to ``port_drain_timeout`` seconds for a stopped container's
+        listener to release the port.  Uses non-blocking subprocess calls so the
+        event loop can be cancelled if shutdown proceeds.
+        """
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + self.port_drain_timeout
+        while loop.time() < deadline:
+            proc = await asyncio.create_subprocess_exec(
+                "lsof", f"-ti:{port}",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
             )
-            if not result.stdout.strip():
+            stdout, _ = await proc.communicate()
+            if not stdout.strip():
                 return
             await asyncio.sleep(0.2)
 
