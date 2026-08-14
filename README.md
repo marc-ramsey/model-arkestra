@@ -845,6 +845,92 @@ Returns `404` if the model is not found in config. Uses the log buffer populated
 
 ---
 
+### Admin Dashboard (`static/index.html`)
+
+ModelArkestra ships a single-file, zero-dependency admin dashboard — a vanilla JavaScript application served at `/` that provides a web UI for the Admin API. It requires no build step, no frameworks, and runs entirely in the browser.
+
+#### Deployment
+
+Place `static/index.html` anywhere the server serves static files. The dashboard is served automatically when the admin routes are mounted:
+
+```python
+server = ArkestraServer(
+    "config.yaml",
+    port=8080,
+    admin_key="my-secret",   # gates /admin/* endpoints
+)
+```
+
+With `admin_key` set, visiting the server root (e.g., `http://localhost:8080/`) serves the dashboard HTML page.
+
+#### Configuration
+
+At the very top of the script block is a single configurable constant:
+
+```js
+const ADMIN_KEY = 'whatever';   // must match admin_key in ArkestraServer
+```
+
+This is the only thing you need to change before deploying. The dashboard automatically attaches it as the `X-Admin-Key` header on every API call.
+
+#### Layout
+
+The dashboard uses a **two-column resizable layout** starting at 40% / 60%:
+
+| Column | Content |
+|---|---|
+| **Left** (default 40%) | **Models** accordion — searchable model list with status indicators. **Edit** accordion — form for viewing/modifying config (opens on model selection). |
+| **Right** (default 60%) | Unified **accordion widget** containing two panes: **Logs** (terminal-style log viewer) and **Chat** (conversational inference UI). Open panes split available height evenly. |
+
+- Drag the divider between columns to resize (20–80% range); preference persists in `localStorage`.
+- Click any accordion header to toggle collapse/expand. The top header bar toggles all sections simultaneously.
+- Model list search filters client-side from cached data — instant, no server round-trip.
+
+#### Features
+
+**Models list** — Displays every configured model with:
+- Status dot: 🟢 running, 🟡 loading/uncached/stopped, 🔴 error
+- Backend ID and runner type as metadata
+- Click a model to select it (highlights in accent color)
+- Text filter input at top for quick lookup
+
+**Edit form** — Opens automatically on model selection. Contains fields for:
+- Checkpoint path, backend, runner type, args string
+- Log buffer size (max log lines ring buffer)
+- Capability chips (`chat`, `tts`) — click to toggle; default is `[chat]` for all models unless explicitly overridden with non-chat tags (opt-out model)
+
+State management:
+| Button | Behavior |
+|---|---|
+| **Reset** | Re-fetches config from server, repopulates form, clears dirty state |
+| **Save ·** | Writes current values to disk via `PUT /admin/config/{model}`. Starts disabled; enables when form differs from cached snapshot. The trailing dot animates on hover as visual feedback. |
+| **Cancel** | Closes the Edit accordion. Form values stay in memory (not reverted) so you can reopen later with edits intact. |
+| **Start / Restart** | Sends `POST /admin/start/{model}` with current transient draft values as overrides — no save-to-disk step first. |
+
+**Logs pane** — Terminal-style log viewer for a selected model:
+- Snapshot mode (default): loads last 200 lines via `GET /admin/log/{model}?lines=200`
+- Follow mode: toggle "Follow" checkbox to enable SSE streaming — new lines appear in real-time
+- Smart auto-scroll: scrolls to bottom during streaming *unless* you've scrolled up to read older logs (then it follows only when you return)
+- Clear button empties the pane content
+- Stream is automatically aborted on model change or accordion close
+
+**Chat pane** — Conversational inference UI that talks directly to the model's port:
+- Parameter panel: Temperature, Top P, Max Tokens — persisted per-model in `localStorage`
+- Full conversation history maintained in-memory across turns (OpenAI-compatible message format)
+- Token-by-token SSE streaming with animated cursor during generation
+- Markdown rendering via `marked.js` from CDN — code blocks, bold, lists, inline code all rendered
+- Send button disabled while a response is streaming; concurrent messages prevented
+
+#### Technical details
+
+- **File size**: ~60KB served, ~1400 lines of HTML/CSS/JS (as of v0.3)
+- **Zero dependencies**: No build step, no frameworks. Only `marked.js` loaded from CDN for markdown rendering.
+- **All data via fetch/SSE**: Model list refreshes automatically on page load; subsequent interactions use the same Admin API documented above.
+- **Layout persistence**: Column width ratio saved to `localStorage('arkestra-col-width')`
+- **Chat params**: Per-model chat parameters saved to `localStorage('arkestra-chat-params')`
+
+---
+
 ### Request & Response Models
 
 All Pydantic models are available for direct import:

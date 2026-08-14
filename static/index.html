@@ -3,14 +3,1385 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Arkestra</title>
+    <title>ArkestraAdmin</title>
+    <link rel="stylesheet" href="data:text/css,">
+
     <style>
-        body { font-family: system-ui; max-width: 640px; margin: 3rem auto; padding: 0 1rem; }
-        h1 { font-size: 1.5rem; }
-        .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; background: #e8e8e8; font-size: 0.8rem; margin-left: 0.5rem; }
+        /* ── Reset & Custom Properties ─────────────────────────────── */
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --bg:             #f5f3f0;
+            --surface:        #ffffff;
+            --surface-alt:    #faf9f7;
+            --border:         #e2dfd8;
+            --text:           #3a3632;
+            --text-dim:       #8a8580;
+            --accent:         #7b9cb5;
+            --accent-hover:   #6a8da6;
+            --accent-light:   #e8f1f7;
+            --green:          #7ab89c;
+            --green-bg:       #e4f3ea;
+            --amber:          #d4a053;
+            --amber-bg:       #fdf3e6;
+            --red:            #c96b6b;
+            --red-bg:         #fceaeaea;
+            --radius:         8px;
+            --radius-sm:      5px;
+            --padding:        6px;
+            --font:           -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            --col-width:      40%;
+        }
+
+        html { font-size: 13px; }
+        body {
+            font-family: var(--font);
+            background: var(--bg);
+            color: var(--text);
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* ── Header Bar ────────────────────────────────────────────── */
+        .header-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px var(--padding);
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            font-size: 15px;
+            font-weight: 600;
+            letter-spacing: -0.3px;
+            user-select: none;
+            flex-shrink: 0;
+        }
+        .header-bar .title { display: flex; align-items: center; gap: 8px; }
+        .header-bar .model-count {
+            font-size: 12px;
+            font-weight: 400;
+            color: var(--text-dim);
+        }
+
+        /* ── Layout ────────────────────────────────────────────────── */
+        .layout {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+
+        .col-left {
+            width: var(--col-width);
+            min-width: 250px;
+            max-width: 80%;
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+            overflow: hidden;
+            border-right: none;
+        }
+
+        .col-right {
+            flex: 1;
+            min-width: 300px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+        }
+
+        .divider {
+            width: 5px;
+            cursor: col-resize;
+            background: var(--border);
+            transition: background 0.15s;
+            flex-shrink: 0;
+            position: relative;
+        }
+        .divider:hover, .divider.active {
+            background: var(--accent);
+        }
+
+        /* ── Accordion (shared) ────────────────────────────────────── */
+        .accordion, .accordion-item {
+            flex-shrink: 0;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface);
+            overflow: hidden;
+        }
+        .accordion:last-child,
+        .col-right > .accordion-item:last-child {
+            flex: 1;
+            min-height: 0;
+            border-bottom: none;
+        }
+
+        .accordion h3, .accordion-item h3 {
+            padding: var(--padding) 8px;
+            font-size: 12.5px;
+            font-weight: 600;
+            color: var(--text);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            user-select: none;
+            background: var(--surface-alt);
+            border-bottom: 1px solid var(--border);
+        }
+        .accordion h3:hover, .accordion-item h3:hover {
+            background: var(--accent-light);
+            color: var(--accent-hover);
+        }
+
+        .accordion h3::after, .accordion-item h3::after {
+            content: '';
+            display: inline-block;
+            width: 6px; height: 6px;
+            border-right: 1.5px solid currentColor;
+            border-bottom: 1.5px solid currentColor;
+            transform: rotate(-45deg);
+            transition: transform 0.2s;
+            flex-shrink: 0;
+        }
+        .accordion.collapsed h3::after,
+        .accordion-item.collapsed h3::after {
+            transform: rotate(45deg);
+        }
+
+        .accordion-body, .accordion-item .acc-body {
+            padding: var(--padding) 8px;
+            overflow-y: auto;
+            display: block;
+        }
+        .accordion.collapsed > .accordion-body,
+        .accordion-item.collapsed > .acc-body {
+            display: none;
+        }
+
+        /* ── Right column accordion — panes split height ───────────── */
+        #right-accordion {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+        #right-accordion .accordion-item {
+            flex: 1 1 auto;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        #right-accordion .accordion-item.collapsed {
+            flex: 0 !important;
+            min-height: 0;
+        }
+
+        /* ── Model List ─────────────────────────────────────────────── */
+        #model-search {
+            width: 100%;
+            padding: 5px 8px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            font-size: 12px;
+            font-family: var(--font);
+            background: var(--surface-alt);
+            outline: none;
+        }
+        #model-search:focus { border-color: var(--accent); }
+
+        #model-list {
+            list-style: none;
+            margin-top: 6px;
+            max-height: calc(100vh * 0.45);
+            overflow-y: auto;
+        }
+        .model-item {
+            display: flex;
+            align-items: center;
+            padding: 5px 6px;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            font-size: 12.5px;
+            transition: background 0.1s;
+        }
+        .model-item:hover { background: var(--surface-alt); }
+        .model-item.selected { background: var(--accent-light); }
+
+        .status-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            margin-right: 7px;
+            flex-shrink: 0;
+        }
+        .status-dot.running { background: var(--green); }
+        .status-dot.loading, .status-dot.stopping { background: var(--amber); animation: pulse 1.2s infinite; }
+        .status-dot.error { background: var(--red); }
+        .status-dot.stopped, .status-dot.uncached { background: var(--text-dim); }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .model-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .model-meta { font-size: 10.5px; color: var(--text-dim); margin-left: 6px; flex-shrink: 0; }
+
+        /* ── Edit Form ─────────────────────────────────────────────── */
+        .edit-form-grid {
+            display: grid;
+            gap: 8px;
+        }
+        .edit-field label {
+            display: block;
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            margin-bottom: 3px;
+        }
+        .edit-field input[type="text"],
+        .edit-field select,
+        .edit-field textarea {
+            width: 100%;
+            padding: 5px 8px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            font-size: 12px;
+            font-family: var(--font);
+            background: var(--surface-alt);
+            color: var(--text);
+            outline: none;
+        }
+        .edit-field input:focus,
+        .edit-field select:focus,
+        .edit-field textarea:focus {
+            border-color: var(--accent);
+        }
+        .edit-field textarea { resize: vertical; min-height: 50px; max-height: 120px; }
+
+        .capabilities-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+        }
+        .capability-chip {
+            padding: 3px 8px;
+            border-radius: 99px;
+            font-size: 11px;
+            background: var(--surface-alt);
+            border: 1px solid var(--border);
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .capability-chip.active {
+            background: var(--accent-light);
+            border-color: var(--accent);
+            color: var(--accent-hover);
+        }
+
+        .form-actions {
+            display: flex;
+            gap: 4px;
+            margin-top: 6px;
+            padding-top: 8px;
+            border-top: 1px solid var(--border);
+        }
+        .form-actions button {
+            flex: 1;
+            padding: 5px 0;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            font-size: 11.5px;
+            font-family: var(--font);
+            background: var(--surface-alt);
+            color: var(--text);
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .form-actions button:hover:not(:disabled) {
+            border-color: var(--accent);
+            background: var(--accent-light);
+        }
+        .form-actions button:disabled {
+            opacity: 0.4;
+            cursor: default;
+        }
+        .form-actions #btn-start {
+            background: var(--green-bg);
+            border-color: var(--green);
+            color: #3d7a55;
+        }
+
+        /* ── Logs Display ──────────────────────────────────────────── */
+        .log-container {
+            font-family: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+            font-size: 11px;
+            line-height: 1.5;
+            background: #1e1e24;
+            color: #c8c5be;
+            padding: var(--padding) 10px;
+            border-radius: var(--radius);
+            max-height: calc(100vh * 0.35);
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .log-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 6px;
+            font-size: 11px;
+        }
+        .log-controls label { cursor: pointer; display: flex; align-items: center; gap: 4px; }
+
+        /* ── Chat ──────────────────────────────────────────────────── */
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding-bottom: var(--padding);
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .chat-msg {
+            padding: var(--padding) 10px;
+            border-radius: var(--radius);
+            max-width: 92%;
+            font-size: 12.5px;
+            line-height: 1.45;
+        }
+        .chat-msg.user {
+            align-self: flex-end;
+            background: var(--accent);
+            color: #fff;
+            border-bottom-right-radius: 2px;
+        }
+        .chat-msg.assistant {
+            align-self: flex-start;
+            background: var(--surface-alt);
+            border: 1px solid var(--border);
+            border-bottom-left-radius: 2px;
+        }
+        .chat-msg.error {
+            align-self: center;
+            background: var(--red-bg);
+            color: var(--red);
+            font-size: 11.5px;
+        }
+
+        .chat-form {
+            display: flex;
+            gap: 4px;
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid var(--border);
+        }
+        .chat-form textarea {
+            flex: 1;
+            padding: 6px 8px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            font-size: 12px;
+            font-family: var(--font);
+            resize: none;
+            height: 36px;
+            outline: none;
+        }
+        .chat-form textarea:focus { border-color: var(--accent); }
+
+        .chat-send-btn {
+            padding: 0 12px;
+            border: none;
+            border-radius: var(--radius-sm);
+            background: var(--accent);
+            color: #fff;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .chat-send-btn:hover { background: var(--accent-hover); }
+        .chat-send-btn:disabled { opacity: 0.4; cursor: default; }
+
+        /* Chat params panel (slide-out above input) */
+        .chat-params-toggle {
+            font-size: 11px;
+            color: var(--text-dim);
+            cursor: pointer;
+            margin-top: 4px;
+            display: flex;
+            align-items: center;
+            gap: 3px;
+        }
+        .chat-params-panel {
+            display: none;
+            background: var(--surface-alt);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 6px 8px;
+            margin-top: 4px;
+        }
+        .chat-params-panel.open { display: block; }
+        .chat-params-grid {
+            display: grid;
+            grid-template-columns: repeat(3, auto);
+            gap: 6px 12px;
+            align-items: center;
+        }
+        .chat-param label {
+            font-size: 10.5px;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+        .chat-param input[type="number"] {
+            width: 60px;
+            padding: 3px 6px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            font-size: 12px;
+            font-family: var(--font);
+        }
+
+        /* ── Chat messages ───────────────────────────────────── */
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            min-height: 0;
+        }
+        .message {
+            max-width: 90%;
+            padding: 6px 10px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            line-height: 1.4;
+            word-wrap: break-word;
+        }
+        .message.user {
+            align-self: flex-end;
+            background: var(--accent-light);
+            color: var(--text-dark);
+        }
+        .message.assistant {
+            align-self: flex-start;
+            background: var(--bg-tertiary);
+            color: var(--text);
+        }
+        .message.streaming .cursor {
+            display: inline-block;
+            width: 2px;
+            height: 1em;
+            background: currentColor;
+            margin-left: 2px;
+            animation: blink 0.6s infinite;
+            vertical-align: text-bottom;
+        }
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
+        }
+
+        /* ── Scrollbars (subtle) ───────────────────────────────────── */
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+
+        /* ── Markdown in chat ──────────────────────────────────────── */
+        .chat-msg assistant p { margin: 0.4em 0; }
+        .chat-msg assistant code, .message code, .markdown-body code {
+            background: rgba(0,0,0,0.06);
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-size: 0.9em;
+            font-family: "SF Mono", "Cascadia Code", Consolas, monospace;
+        }
+        .chat-msg assistant pre, .message pre, .markdown-body pre {
+            background: rgba(0,0,0,0.06);
+            padding: var(--padding) 10px;
+            border-radius: var(--radius-sm);
+            overflow-x: auto;
+            margin: 0.4em 0;
+        }
+        .chat-msg assistant pre code, .message pre code, .markdown-body pre code { background: none; padding: 0; }
+
+        /* ── Loading placeholder ───────────────────────────────────── */
+        .placeholder-text {
+            color: var(--text-dim);
+            font-size: 12px;
+            text-align: center;
+            padding: 16px 8px;
+            font-style: italic;
+        }
     </style>
+
+    <script>
+        // ── 1.0 Configuration ─────────────────────────────────────
+        const ADMIN_KEY = 'whatever';
+        const BASE_URL  = '';
+
+        // ── 1.2 Global State ──────────────────────────────────────
+        let modelsCache      = [];          // from GET /admin/models
+        let selectedModel    = null;        // currently selected model name
+        let configSnapshot   = null;        // snapshot of fetched config for dirty detection
+        let backendOptions   = {};           // backends dict from /admin/models response
+        let runnerTypes      = [];          // runner types from /admin/models response
+        let logStreamCtrl    = null;        // AbortController for SSE log stream
+        let currentLogLines  = [];          // accumulated log lines for current model
+        let isChatStreaming  = false;       // true while a chat response is streaming
+
+        // ── 1.3 Fetch Helpers ─────────────────────────────────────
+        function adminFetch(path, options = {}) {
+            const headers = { 'X-Admin-Key': ADMIN_KEY, ...options.headers };
+            const opts = { method: 'GET', headers, ...options };
+            // Remove Content-Type for GET (browser handles it)
+            if (opts.method === 'GET') delete opts.headers['Content-Type'];
+
+            return fetch(`${BASE_URL}${path}`, opts).then(async r => {
+                const body = await r.text();
+                if (!r.ok) {
+                    let detail;
+                    try { detail = JSON.parse(body).detail || body; }
+                    catch { detail = body; }
+                    throw new Error(`[admin ${r.status}] ${detail}`);
+                }
+                return body ? JSON.parse(body) : null;
+            });
+        }
+
+        function adminGet(path, params) {
+            const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+            return adminFetch(path + qs);
+        }
+
+        function adminPost(path, body) {
+            return adminFetch(path, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+        }
+
+        function adminPut(path, body) {
+            return adminFetch(path, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+        }
+
+        // ── 2.1 Model List — fetch + render ───────────────────────
+        function renderModelList(filter = '') {
+            const list = document.getElementById('model-list');
+            if (!list) return;
+            const q = filter.toLowerCase();
+            const items = modelsCache.filter(m => !q || m.id.toLowerCase().includes(q));
+
+            // Build HTML once and set innerHTML (fast for a model list)
+            list.innerHTML = items.map(m => {
+                const statusClass = m.status.replace('runnerstate.', '').toLowerCase();
+                const meta = [m.backend_id, m.runner_type].filter(Boolean).join(' · '); //
+                return `<li class="model-item${selectedModel === m.id ? ' selected' : ''}" data-model="${m.id}">
+                    <span class="status-dot ${statusClass}"></span>
+                    <span class="model-name" title="${m.id}">${m.id}</span>
+                    ${meta ? `<span class="model-meta">${meta}</span>` : ''}
+                </li>`;
+            }).join('');
+
+            // Update model count badge
+            const badge = document.getElementById('model-count');
+            if (badge) badge.textContent = `(${modelsCache.length} models)`;
+        }
+
+        async function refreshModels() {
+            try {
+                const data = await adminGet('/admin/models');
+                if (data && Array.isArray(data.models)) {
+                    modelsCache = data.models;
+                    renderModelList(document.getElementById('model-search')?.value || '');
+                }
+            } catch (e) {
+                console.error('[admin] failed to refresh models:', e.message);
+                const badge = document.getElementById('model-count');
+                if (badge) badge.textContent = '(!error)';
+            }
+        }
+
+        // ── 2.3 Model Selection ───────────────────────────────────
+        async function selectModel(name) {
+            selectedModel = name;
+            renderModelList(document.getElementById('model-search')?.value || '');
+            stopLogFollow();          // clean up any active log stream
+            stopChatStream();         // cancel any active chat stream
+            clearChatHistory();       // reset conversation for new model
+            openEditForm(name);
+            restoreChatParams();      // load params for this model
+        }
+
+        // ── 3.1 Populate dropdowns from /admin/models metadata ────
+        function populateDropdowns(metadata) {
+            const backendSel = document.getElementById('edit-backend');
+            if (backendSel) {
+                const backends = metadata?.backends || {};
+                backendSel.innerHTML = '<option value="">(default)</option>' +
+                    Object.keys(backends).map(b => `<option value="${b}">${b}</option>`).join('');
+            }
+            const runnerSel = document.getElementById('edit-runner');
+            if (runnerSel) {
+                const types = metadata?.runner_types || [];
+                runnerSel.innerHTML = '<option value="">(auto)</option>' +
+                    types.map(t => `<option value="${t}">${t}</option>`).join('');
+            }
+        }
+
+        // ── 3.2 Render capability chips ───────────────────────────
+        function renderCapabilities(config) {
+            const container = document.getElementById('edit-capabilities');
+            if (!container) return;
+            const allCaps = ['chat', 'tts'];
+            const selected = new Set(config?.capabilities || ['chat']);
+            container.innerHTML = allCaps.map(c => {
+                const active = selected.has(c) ? ' active' : '';
+                return `<span class="capability-chip${active}" data-cap="${c}">${c}</span>`;
+            }).join('');
+
+            // Click toggle on chips
+            container.querySelectorAll('.capability-chip').forEach(chip => {
+                chip.addEventListener('click', () => {
+                    const cap = chip.dataset.cap;
+                    if (selected.has(cap)) selected.delete(cap);
+                    else selected.add(cap);
+                    chip.classList.toggle('active');
+                    maybeUpdateDirty();
+                });
+            });
+        }
+
+        // ── 3.3 Open Edit Form — fetch config + populate fields ──
+        async function openEditForm(modelName) {
+            const editSec = document.getElementById('sec-edit');
+            if (editSec) editSec.classList.remove('collapsed');
+
+            try {
+                const data = await adminGet(`/admin/config/${modelName}`);
+                if (!data || !data.config) return;
+                configSnapshot = JSON.parse(JSON.stringify(data.config));  // deep clone
+                populateFormFields(data.config);
+                renderCapabilities(data.config);
+                updateDirtyState();
+            } catch (e) {
+                console.error(`[admin] failed to load ${modelName} config:`, e.message);
+            }
+        }
+
+        function populateFormFields(cfg) {
+            document.getElementById('edit-name')?.setValue(cfg.id || '');  // not settable
+            const checkpoint = document.getElementById('edit-checkpoint');
+            if (checkpoint) checkpoint.value = cfg.checkpoint || '';
+            const backend = document.getElementById('edit-backend');
+            if (backend) backend.value = cfg.backend || '';
+            const runner = document.getElementById('edit-runner');
+            if (runner) runner.value = cfg.runner || '';
+            const args = document.getElementById('edit-args');
+            if (args) args.value = cfg.args || '';
+            const logBuffer = document.getElementById('edit-log-buffer');
+            if (logBuffer) logBuffer.value = cfg.max_log_lines || 500;
+        }
+
+        function getFormValues() {
+            return {
+                checkpoint: document.getElementById('edit-checkpoint').value,
+                backend: document.getElementById('edit-backend').value || undefined,
+                runner: document.getElementById('edit-runner').value || undefined,
+                args: document.getElementById('edit-args').value || undefined,
+                max_log_lines: parseInt(document.getElementById('edit-log-buffer').value) || 500,
+            };
+        }
+
+        function getSelectedCapabilities() {
+            const chips = document.querySelectorAll('#edit-capabilities .capability-chip.active');
+            return Array.from(chips).map(c => c.dataset.cap);
+        }
+
+        // ── 3.4 Dirty detection ───────────────────────────────────
+        function maybeUpdateDirty() {
+            updateDirtyState();
+        }
+
+        function updateDirtyState() {
+            const btn = document.getElementById('btn-save');
+            if (!configSnapshot || !btn) return;
+
+            const current = getFormValues();
+            const caps = getSelectedCapabilities();
+
+            const isDirty = (
+                current.checkpoint !== configSnapshot.checkpoint ||
+                (current.backend ?? '') !== (configSnapshot.backend ?? '') ||
+                (current.runner ?? '') !== (configSnapshot.runner ?? '') ||
+                current.args !== (configSnapshot.args ?? '') ||
+                current.max_log_lines !== (configSnapshot.max_log_lines ?? 500) ||
+                JSON.stringify(caps.sort()) !== JSON.stringify((configSnapshot.capabilities || ['chat']).sort())
+            );
+            btn.disabled = !isDirty;
+        }
+
+        // ── Wire up all form inputs for dirty detection ───────────
+        document.addEventListener('input', e => {
+            if (e.target.closest('#edit-form')) maybeUpdateDirty();
+        });
+
+        // ── 3.5 Reset button ──────────────────────────────────────
+        async function resetEditForm() {
+            if (!selectedModel) return;
+            try {
+                const data = await adminGet(`/admin/config/${selectedModel}`);
+                if (data && data.config) {
+                    configSnapshot = JSON.parse(JSON.stringify(data.config));
+                    populateFormFields(data.config);
+                    renderCapabilities(data.config);
+                    updateDirtyState();
+                }
+            } catch (e) {
+                console.error('[admin] reset failed:', e.message);
+            }
+        }
+
+        // ── 3.6 Save button (form submit) ────────────────────────
+        async function saveEditForm(e) {
+            e.preventDefault();
+            const btn = document.getElementById('btn-save');
+            if (!selectedModel || btn.disabled) return;
+
+            const body = getFormValues();
+            body.capabilities = getSelectedCapabilities();
+
+            try {
+                await adminPut(`/admin/config/${selectedModel}`, body);
+                // Update cache & snapshot
+                configSnapshot = JSON.parse(JSON.stringify(body));
+                updateDirtyState();
+                // Refresh model list to reflect any changes
+                refreshModels();
+            } catch (e) {
+                console.error('[admin] save failed:', e.message);
+            }
+        }
+
+        // ── 3.7 Cancel button ────────────────────────────────────
+        function cancelEditForm() {
+            const editSec = document.getElementById('sec-edit');
+            if (editSec) editSec.classList.add('collapsed');
+        }
+
+        // ── 3.8 Start/Restart button ─────────────────────────────
+        async function startSelectedModel() {
+            if (!selectedModel) return;
+            const btn = document.getElementById('btn-start');
+            const origText = btn.textContent;
+            btn.disabled = true;
+
+            try {
+                const body = getFormValues();
+                body.capabilities = getSelectedCapabilities();
+                await adminPost(`/admin/start/${selectedModel}`, body);
+                refreshModels();
+            } catch (e) {
+                console.error('[admin] start failed:', e.message);
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        // ── 5. Logs pane functions ────────────────────────────────
+        function stopLogFollow() {
+            if (logStreamCtrl) {
+                logStreamCtrl.abort();
+                logStreamCtrl = null;
+            }
+            currentLogLines = [];
+        }
+
+        async function loadLogSnapshot(modelName) {
+            try {
+                const data = await adminGet(`/admin/log/${modelName}`, { lines: 200 });
+                if (data && data.data) appendLogLines(data.data);
+            } catch (e) {
+                console.error(`[admin] log snapshot failed for ${modelName}:`, e.message);
+            }
+        }
+
+        function appendLogLines(lines) {
+            const pane = document.getElementById('right-model-logs');
+            if (!pane) return;
+            const wasScrolledToBottom = pane.scrollHeight - pane.scrollTop <= pane.clientHeight + 50;
+            lines.forEach(line => {
+                const div = document.createElement('div');
+                div.className = 'log-line';
+                div.textContent = line;          // XSS-safe
+                pane.appendChild(div);
+            });
+            currentLogLines.push(...lines);
+            if (wasScrolledToBottom) pane.scrollTop = pane.scrollHeight;
+        }
+
+        async function startLogFollow(modelName) {
+            stopLogFollow();                  // abort any prior stream
+            logStreamCtrl = new AbortController();
+
+            try {
+                const resp = await fetch(`${BASE_URL}/admin/log/${modelName}?follow=true`, {
+                    signal: logStreamCtrl.signal,
+                });
+                if (!resp.ok) throw new Error(`log stream ${resp.status}`);
+
+                const reader = resp.body.getReader();
+                const decoder = new TextDecoder();
+                let buf = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buf += decoder.decode(value, { stream: true });
+                    // Parse SSE frames
+                    const frames = buf.split('\n\n');
+                    buf = frames.pop();  // last partial frame stays in buffer
+
+                    for (const frame of frames) {
+                        if (!frame.startsWith('data: ')) continue;
+                        try {
+                            const msg = JSON.parse(frame.slice(6));
+                            if (msg.type === 'snapshot') {
+                                appendLogLines(msg.lines || []);
+                            } else if (msg.type === 'line') {
+                                appendLogLines(msg.lines || []);
+                            }
+                        } catch { /* skip malformed frames */ }
+                    }
+                }
+            } catch (err) {
+                if (err.name !== 'AbortError') console.error('[admin] log stream error:', err.message);
+            }
+        }
+
+        function renderLogToDOM(lines) {
+            const pane = document.getElementById('right-model-logs');
+            if (!pane) return;
+            pane.textContent = '';  // clear
+            appendLogLines(lines);  // re-fill via DOM-safe method
+        }
+
+        // ── 6. Chat pane functions ────────────────────────────────
+        let chatHistory      = [];   // full conversation history for selected model
+        let chatAbortCtrl    = null; // AbortController for active chat stream
+        const CHAT_PARAMS_KEY = 'arkestra-chat-params';
+
+        // 6.1 Parameters panel toggle
+        function toggleChatParams() {
+            const panel = document.getElementById('right-chat-params-panel');
+            const toggle = document.getElementById('right-chat-params-toggle');
+            if (!panel || !toggle) return;
+            panel.classList.toggle('open');
+            const isOpen = panel.classList.contains('open');
+            toggle.textContent = isOpen ? '⚙ Parameters ▴' : '⚙ Parameters ▾';
+            requestAnimationFrame(() => layoutRightPanels());
+        }
+
+        // 6.2 Param persistence
+        function getChatParams() {
+            const stored = localStorage.getItem(CHAT_PARAMS_KEY);
+            if (stored) {
+                try { return JSON.parse(stored); } catch { return {}; }
+            }
+            return {};
+        }
+
+        function saveChatParams() {
+            if (!selectedModel) return;
+            const params = getChatParams();
+            params[selectedModel] = {
+                temperature: parseFloat(document.getElementById('rcp-temp')?.value) || 0.7,
+                top_p: parseFloat(document.getElementById('rcp-top-p')?.value) || 0.95,
+                max_tokens: parseInt(document.getElementById('rcp-max-tokens')?.value) || 512,
+            };
+            localStorage.setItem(CHAT_PARAMS_KEY, JSON.stringify(params));
+        }
+
+        function restoreChatParams() {
+            if (!selectedModel) return;
+            const params = getChatParams()[selectedModel];
+            if (!params) return;
+            document.getElementById('rcp-temp')?.setValue(String(params.temperature ?? 0.7));
+            document.getElementById('rcp-top-p')?.setValue(String(params.top_p ?? 0.95));
+            document.getElementById('rcp-max-tokens')?.setValue(String(params.max_tokens ?? 512));
+        }
+
+        // 6.3 Message bubble helpers
+        function appendMessageBubble(role, content, isStreaming) {
+            const container = document.getElementById('right-chat-messages');
+            if (!container) return;
+
+            const div = document.createElement('div');
+            div.className = `message ${role}${isStreaming ? ' streaming' : ''}`;
+
+            if (role === 'user') {
+                // User messages are plain text
+                div.textContent = content;
+            } else {
+                // Assistant messages get markdown-rendered content
+                div.innerHTML = isStreaming
+                    ? `${content}<span class="cursor"></span>`
+                    : content;
+            }
+
+            container.appendChild(div);
+            if (!isStreaming) container.scrollTop = container.scrollHeight;
+            return div;
+        }
+
+        // 6.3 Send message (form submit handler)
+        async function sendMessage(e) {
+            e.preventDefault();
+            const input = document.getElementById('right-chat-input');
+            if (!input || !selectedModel || isChatStreaming) return;
+
+            const userText = input.value.trim();
+            if (!userText) return;
+
+            // Append user message to UI and history
+            appendMessageBubble('user', userText, false);
+            chatHistory.push({ role: 'user', content: userText });
+            input.value = '';
+
+            // Create assistant bubble (streaming)
+            const assitDiv = appendMessageBubble('assistant', '', true);
+            let rawContent = '';
+
+            isChatStreaming = true;
+            document.getElementById('right-chat-send-btn').disabled = true;
+
+            try {
+                await streamChatResponse(chatHistory, (delta) => {
+                    rawContent += delta;
+                    assitDiv.textContent = rawContent + ' ';  // cursor handled by CSS class
+                    const container = document.getElementById('right-chat-messages');
+                    if (container) container.scrollTop = container.scrollHeight;
+                });
+
+                // Stream complete — render markdown
+                isChatStreaming = false;
+                assitDiv.classList.remove('streaming');
+                assitDiv.textContent = '';  // clear plain text
+                await renderMarkdown(assitDiv, rawContent);
+            } catch (err) {
+                if (err.name !== 'AbortError') {
+                    console.error('[chat] stream failed:', err.message);
+                    appendMessageBubble('assistant', `⚠ Error: ${err.message}`, false);
+                }
+                isChatStreaming = false;
+            }
+
+            document.getElementById('right-chat-send-btn').disabled = false;
+        }
+
+        // 6.4 Streaming response handler
+        async function streamChatResponse(messages, onToken) {
+            stopLogFollow();    // ensure no log stream conflict
+
+            chatAbortCtrl = new AbortController();
+
+            const modelInfo = modelsCache.find(m => m.id === selectedModel);
+            if (!modelInfo || !modelInfo.port) {
+                throw new Error('Model is not running or has no port');
+            }
+
+            const params = getChatParams();
+            const mp = params[selectedModel] || { temperature: 0.7, top_p: 0.95, max_tokens: 512 };
+
+            const payload = {
+                model: selectedModel,
+                messages: messages,
+                stream: true,
+                temperature: mp.temperature,
+                top_p: mp.top_p,
+                max_tokens: mp.max_tokens,
+            };
+
+            const port = modelInfo.port;
+            const url = `http://127.0.0.1:${port}/v1/chat/completions`;
+
+            const resp = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                signal: chatAbortCtrl.signal,
+            });
+
+            if (!resp.ok) throw new Error(`Chat API ${resp.status}: ${await resp.text()}`);
+
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop();  // partial line stays
+
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed) continue;
+
+                    // Handle SSE format: "data: {...}" or "data: [DONE]"
+                    let text = trimmed;
+                    if (text.startsWith('data: ')) {
+                        text = text.slice(6);
+                    }
+
+                    if (text === '[DONE]') return;
+
+                    try {
+                        const parsed = JSON.parse(text);
+                        const delta = parsed.choices?.[0]?.delta?.content || '';
+                        if (delta) onToken(delta);
+                    } catch { /* skip malformed SSE lines */ }
+                }
+            }
+        }
+
+        // 6.5 Markdown rendering with marked.js fallback
+        function renderMarkdown(element, text) {
+            return new Promise((resolve) => {
+                if (typeof marked !== 'undefined') {
+                    element.innerHTML = marked.parse(text);
+                    resolve();
+                } else {
+                    // marked is loaded with defer — wait for it
+                    const maxWait = 50;
+                    let attempts = 0;
+                    const poll = () => {
+                        if (typeof marked !== 'undefined') {
+                            element.innerHTML = marked.parse(text);
+                            resolve();
+                        } else if (++attempts < maxWait) {
+                            setTimeout(poll, 100);
+                        } else {
+                            // Fallback: plain text with basic formatting
+                            element.textContent = text;
+                            console.warn('[chat] marked.js not loaded — showing raw text');
+                            resolve();
+                        }
+                    };
+                    poll();
+                }
+            });
+        }
+
+        function clearChatHistory() {
+            chatHistory = [];
+            const container = document.getElementById('right-chat-messages');
+            if (container) container.textContent = '';
+        }
+
+        function stopChatStream() {
+            if (chatAbortCtrl) {
+                chatAbortCtrl.abort();
+                chatAbortCtrl = null;
+            }
+        }
+
+        // ── Lifecycle ─────────────────────────────────────────────
+        document.addEventListener('DOMContentLoaded', () => {
+            refreshModels();
+
+            // Search filter (2.2)
+            const search = document.getElementById('model-search');
+            if (search) search.addEventListener('input', e => {
+                renderModelList(e.target.value);
+            });
+
+            // Model click delegation on the list
+            const list = document.getElementById('model-list');
+            if (list) list.addEventListener('click', e => {
+                const item = e.target.closest('.model-item');
+                if (!item || !item.dataset.model) return;
+                selectModel(item.dataset.model);
+            });
+
+            // ── 3.5 Reset button ─────────────────────────────────────
+            document.getElementById('btn-reset')?.addEventListener('click', resetEditForm);
+            // ── 3.6 Save button (form submit) ────────────────────────
+            document.getElementById('edit-form')?.addEventListener('submit', saveEditForm);
+            // ── 3.7 Cancel button ────────────────────────────────────
+            document.getElementById('btn-cancel')?.addEventListener('click', cancelEditForm);
+            // ── 3.8 Start/Restart button ─────────────────────────────
+            document.getElementById('btn-start')?.addEventListener('click', startSelectedModel);
+
+            // ── 4.1 Accordion toggle (shared) ─────────────────────────
+            window.toggleAccordion = function(id) {
+                const el = document.getElementById(id);
+                if (!el) return;
+                const wasCollapsed = el.classList.contains('collapsed');
+                el.classList.toggle('collapsed');
+
+                // 5.1: Load logs when right-logs pane is opened
+                if (id === 'sec-right-logs' && !wasCollapsed && selectedModel) {
+                    const followCb = document.getElementById('chk-log-follow');
+                    if (followCb && followCb.checked) {
+                        startLogFollow(selectedModel);
+                    } else {
+                        loadLogSnapshot(selectedModel);
+                    }
+                }
+
+                // 6: Auto-scroll chat to bottom when opened
+                if (id === 'sec-right-chat' && !wasCollapsed) {
+                    const container = document.getElementById('right-chat-messages');
+                    if (container) container.scrollTop = container.scrollHeight;
+                }
+
+                requestAnimationFrame(() => layoutRightPanels());
+            };
+
+            // ── 4.2 Right-accordion height splitting ─────────────────
+            function layoutRightPanels() {
+                const accordion = document.getElementById('right-accordion');
+                if (!accordion) return;
+                const items = Array.from(accordion.querySelectorAll('.accordion-item'));
+                // Count open items (not collapsed)
+                const openItems = items.filter(i => !i.classList.contains('collapsed'));
+                const closedCount = items.length - openItems.length;
+
+                if (openItems.length === 0) {
+                    accordion.style.height = '100%';
+                    return;
+                }
+
+                // Each open pane gets equal share of the height minus collapsed panes
+                // Collapse a single item takes ~32px (h3 area), so subtract that for each closed item
+                const availableHeight = 100 - (closedCount * 0);
+                items.forEach(item => {
+                    if (item.classList.contains('collapsed')) {
+                        item.style.flex = '0 0 auto';
+                    } else {
+                        item.style.flex = `1 1 ${Math.round(availableHeight / openItems.length)}%`;
+                    }
+                });
+            }
+
+            // ── 4.3 Column resize drag handle ─────────────────────────
+            let isDragging = false;
+            const divider = document.getElementById('col-divider');
+            const leftCol = document.getElementById('col-left');
+            const rootStyle = document.documentElement.style;
+            const STORAGE_KEY = 'arkestra-col-width';
+
+            // Restore saved width or use default 40%
+            const saved = localStorage.getItem(STORAGE_KEY);
+            if (saved && !isNaN(saved)) rootStyle.setProperty('--col-width', saved + '%');
+
+            divider?.addEventListener('mousedown', e => {
+                isDragging = true;
+                divider.classList.add('active');
+                document.body.style.cursor = 'col-resize';
+                document.body.style.userSelect = 'none';
+                e.preventDefault();
+            });
+
+            window.addEventListener('mousemove', e => {
+                if (!isDragging) return;
+                const layout = document.querySelector('.layout');
+                if (!layout) return;
+                const rect = layout.getBoundingClientRect();
+                const pct = Math.round(((e.clientX - rect.left) / rect.width) * 100);
+                if (pct >= 20 && pct <= 80) {
+                    rootStyle.setProperty('--col-width', pct + '%');
+                    localStorage.setItem(STORAGE_KEY, String(pct));
+                }
+            });
+
+            window.addEventListener('mouseup', () => {
+                if (!isDragging) return;
+                isDragging = false;
+                divider?.classList.remove('active');
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+            });
+
+            // ── 5. Logs pane — stream + snapshot ──────────────────────
+            const logFollowCb = document.getElementById('chk-log-follow');
+            if (logFollowCb) {
+                logFollowCb.addEventListener('change', () => {
+                    if (!selectedModel || !document.getElementById('sec-right-logs').classList.contains('collapsed')) return;
+                    if (logFollowCb.checked) startLogFollow(selectedModel);
+                });
+            }
+            document.getElementById('btn-clear-logs')?.addEventListener('click', () => {
+                const logPane = document.getElementById('right-model-logs');
+                if (logPane) logPane.textContent = '';
+            });
+
+            // ── 6. Chat pane wireups ────────────────────────────────
+            document.getElementById('right-chat-params-toggle')?.addEventListener('click', toggleChatParams);
+            document.getElementById('right-chat-form')?.addEventListener('submit', sendMessage);
+
+            // Auto-persist params on any change
+            ['rcp-temp', 'rcp-top-p', 'rcp-max-tokens'].forEach(id => {
+                document.getElementById(id)?.addEventListener('change', saveChatParams);
+            });
+        });
+    </script>
+
+    <!-- Markdown rendering (loaded lazily by JS) -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js" defer></script>
 </head>
 <body>
-    <h1>Arkestra <span class="badge">local</span></h1>
+
+    <!-- ── Header ──────────────────────────────────────────────── -->
+    <header class="header-bar">
+        <div class="title">
+            ArkestraAdmin
+            <span class="model-count" id="model-count"></span>
+        </div>
+    </header>
+
+    <!-- ── Main Layout ─────────────────────────────────────────── -->
+    <div class="layout">
+
+        <!-- ━━ LEFT COLUMN — Model list, Edit, Logs, Chat ━━━━━━━━ -->
+        <aside class="col-left" id="col-left">
+
+            <!-- Models Accordion -->
+            <section class="accordion" id="sec-models">
+                <h3 onclick="toggleAccordion('sec-models')">Models</h3>
+                <div class="accordion-body">
+                    <input type="search" id="model-search" placeholder="Filter models…">
+                    <ul id="model-list"></ul>
+                </div>
+            </section>
+
+            <!-- Edit Accordion (collapsed by default) -->
+            <section class="accordion collapsed" id="sec-edit">
+                <h3 onclick="toggleAccordion('sec-edit')">Edit</h3>
+                <div class="accordion-body">
+                    <form class="edit-form-grid" id="edit-form">
+
+                        <div class="edit-field">
+                            <label for="edit-name">Name</label>
+                            <input type="text" id="edit-name" readonly style="opacity:0.6;">
+                        </div>
+
+                        <div class="edit-field">
+                            <label for="edit-checkpoint">Checkpoint</label>
+                            <input type="text" id="edit-checkpoint" placeholder="e.g. unsloth/Qwen3-4B-GGUF:Q4_K_M">
+                        </div>
+
+                        <div class="edit-field">
+                            <label for="edit-backend">Backend</label>
+                            <select id="edit-backend">
+                                <option value="">(default)</option>
+                            </select>
+                        </div>
+
+                        <div class="edit-field">
+                            <label for="edit-runner">Runner</label>
+                            <select id="edit-runner">
+                                <option value="">(auto)</option>
+                            </select>
+                        </div>
+
+                        <div class="edit-field">
+                            <label for="edit-args">Args</label>
+                            <textarea id="edit-args" rows="2" placeholder="--temp 0.7 --top-p 0.95"></textarea>
+                        </div>
+
+                        <div class="edit-field">
+                            <label>Capabilities</label>
+                            <div class="capabilities-list" id="edit-capabilities">
+                                <!-- Populated from config at runtime -->
+                            </div>
+                        </div>
+
+                        <div class="edit-field">
+                            <label for="edit-log-buffer">Log Buffer Size</label>
+                            <input type="number" id="edit-log-buffer" min="50" max="10000" step="50" placeholder="500">
+                        </div>
+
+                    </form>
+
+                    <div class="form-actions">
+                        <button id="btn-reset"  type="button">Reset</button>
+                        <button id="btn-save"   type="submit" disabled>Save ·</button>
+                        <button id="btn-cancel" type="button">Cancel</button>
+                        <button id="btn-start"  type="button">Start / Restart</button>
+                    </div>
+                </div>
+            </section>
+
+        </aside>
+
+        <!-- ━━ RESIZABLE DIVIDER ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+        <div class="divider" id="col-divider"></div>
+
+        <!-- ━━ RIGHT COLUMN — single accordion widget ━━━━━━━━━━━━ -->
+        <main class="col-right" id="col-right">
+            <div id="right-accordion">
+                <section class="accordion-item collapsed" id="sec-right-logs">
+                    <h3 onclick="toggleAccordion('sec-right-logs')">Logs</h3>
+                    <div class="acc-body">
+                        <div class="log-controls">
+                            <label><input type="checkbox" id="right-log-follow" checked> Follow</label>
+                        </div>
+                        <pre class="log-container" id="right-model-logs"></pre>
+                    </div>
+                </section>
+                <section class="accordion-item collapsed" id="sec-right-chat">
+                    <h3 onclick="toggleAccordion('sec-right-chat')">Chat</h3>
+                    <div class="acc-body" style="display:flex;flex-direction:column;">
+                        <div class="chat-messages" id="right-chat-messages"></div>
+
+                        <div class="chat-params-toggle" id="right-chat-params-toggle">⚙ Parameters ▾</div>
+                        <div class="chat-params-panel" id="right-chat-params-panel">
+                            <div class="chat-params-grid">
+                                <div class="chat-param">
+                                    <label for="rcp-temp">Temperature</label>
+                                    <input type="number" id="rcp-temp" min="0" max="2" step="0.05" value="0.7">
+                                </div>
+                                <div class="chat-param">
+                                    <label for="rcp-top-p">Top P</label>
+                                    <input type="number" id="rcp-top-p" min="0" max="1" step="0.05" value="0.95">
+                                </div>
+                                <div class="chat-param">
+                                    <label for="rcp-max-tokens">Max Tokens</label>
+                                    <input type="number" id="rcp-max-tokens" min="1" max="8192" step="64" value="512">
+                                </div>
+                            </div>
+                        </div>
+
+                        <form class="chat-form" id="right-chat-form">
+                            <textarea id="right-chat-input" placeholder="Type a message…"></textarea>
+                            <button type="submit" class="chat-send-btn" id="right-chat-send-btn">▶</button>
+                        </form>
+                    </div>
+                </section>
+            </div>
+        </main>
+
+    </div>
+
 </body>
 </html>
