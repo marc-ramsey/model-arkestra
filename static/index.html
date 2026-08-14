@@ -72,27 +72,56 @@
             overflow: hidden;
         }
 
-        .col-left {
+        .left-panel {
             width: var(--col-width);
             min-width: 250px;
             max-width: 80%;
             display: flex;
             flex-direction: column;
-            gap: 0;
             overflow: hidden;
-            border-right: none;
         }
 
-        .col-right {
+        .right-panel {
             flex: 1;
             min-width: 300px;
             overflow: hidden;
             display: flex;
             flex-direction: column;
-            gap: 0;
         }
 
-        .divider {
+        .pane {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            min-height: 0;
+        }
+        .pane-logs { flex: 1; min-height: 0; }
+        .pane-chat { flex: 1; min-height: 0; }
+
+        .pane-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 8px;
+            background: var(--surface-alt);
+            border-bottom: 1px solid var(--border);
+            font-size: 11px;
+            flex-shrink: 0;
+        }
+        .pane-header label { white-space: nowrap; display: flex; align-items: center; gap: 4px; cursor: pointer; }
+        .pane-header select {
+            padding: 3px 6px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            font-size: 11px;
+            font-family: var(--font);
+            background: var(--surface);
+            color: var(--text);
+            outline: none;
+        }
+        .pane-header select:focus { border-color: var(--accent); }
+
+        .divider-v, .divider {
             width: 5px;
             cursor: col-resize;
             background: var(--border);
@@ -100,7 +129,18 @@
             flex-shrink: 0;
             position: relative;
         }
-        .divider:hover, .divider.active {
+        .divider-v:hover, .divider-v.active, .divider:hover, .divider.active {
+            background: var(--accent);
+        }
+
+        .divider-h {
+            height: 5px;
+            cursor: row-resize;
+            background: var(--border);
+            transition: background 0.15s;
+            flex-shrink: 0;
+        }
+        .divider-h:hover, .divider-h.active {
             background: var(--accent);
         }
 
@@ -162,23 +202,6 @@
         }
 
         /* ── Right column accordion — panes split height ───────────── */
-        #right-accordion {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            min-height: 0;
-        }
-        #right-accordion .accordion-item {
-            flex: 1 1 auto;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
-        #right-accordion .accordion-item.collapsed {
-            flex: 0 !important;
-            min-height: 0;
-        }
-
         /* ── Model List ─────────────────────────────────────────────── */
         #model-search {
             width: 100%;
@@ -499,6 +522,84 @@
         ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
         ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
 
+        /* ── Left panel — accordion scroll ───────────────────────── */
+        .left-panel .accordion {
+            flex-shrink: 0;
+            overflow: hidden;
+        }
+        .left-panel .accordion.collapsed > .accordion-body { display: none; }
+        #model-accordion-items {
+            /* Fills remaining height of accordion, scrolls if needed */
+            max-height: calc(100vh - 60px);
+            overflow-y: auto;
+            flex-shrink: 1;
+        }
+
+        /* ── Model config panel (inside expanded model row) ─────────── */
+        .model-config-panel {
+            padding: 6px 8px;
+            max-height: calc(100vh * 0.4);
+            overflow-y: auto;
+        }
+        .model-actions {
+            display: flex;
+            gap: 4px;
+            margin-top: 8px;
+            padding-top: 6px;
+            border-top: 1px solid var(--border);
+        }
+        .model-actions button {
+            width: 32px;
+            height: 26px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--surface-alt);
+            color: var(--text);
+            font-size: 14px;
+            cursor: pointer;
+            position: relative;
+            transition: all 0.15s;
+        }
+        .model-actions button:hover:not(:disabled) {
+            border-color: var(--accent);
+            background: var(--accent-light);
+        }
+        .model-actions button:disabled {
+            opacity: 0.35;
+            cursor: default;
+        }
+        .model-actions button.btn-danger { color: var(--red); }
+        .model-actions button.btn-danger:hover:not(:disabled) {
+            background: var(--red-bg);
+            border-color: var(--red);
+        }
+        .model-actions button.btn-success {
+            background: var(--green-bg);
+            border-color: var(--green);
+            color: #3d7a55;
+        }
+        /* Hover tooltip via title attr */
+        .model-actions button::after {
+            content: attr(title);
+            position: absolute;
+            bottom: calc(100% + 4px);
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 3px 6px;
+            background: var(--text);
+            color: var(--bg);
+            font-size: 10px;
+            border-radius: 3px;
+            white-space: nowrap;
+            z-index: 10;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.15s;
+        }
+        .model-actions button:hover::after {
+            opacity: 1;
+        }
+
         /* ── Markdown in chat ──────────────────────────────────────── */
         .chat-msg assistant p { margin: 0.4em 0; }
         .chat-msg assistant code, .message code, .markdown-body code {
@@ -534,12 +635,19 @@
 
         // ── 1.2 Global State ──────────────────────────────────────
         let modelsCache      = [];          // from GET /admin/models
-        let selectedModel    = null;        // currently selected model name
-        let configSnapshot   = null;        // snapshot of fetched config for dirty detection
+        let modelStates      = {};          // { modelName: { config, snapshot, dirty, expanded } }
+        let logModel         = '';          // currently selected model for logs pane
+        let chatModel        = '';          // currently selected model for chat pane
         let backendOptions   = {};           // backends dict from /admin/models response
         let runnerTypes      = [];          // runner types from /admin/models response
+
+        // Drag state for resize handles
+        let isVDragging  = false;           // vertical (left/right) divider
+        let isHDragging  = false;           // horizontal (logs/chat) divider
+
+        // Log streaming state
         let logStreamCtrl    = null;        // AbortController for SSE log stream
-        let currentLogLines  = [];          // accumulated log lines for current model
+        let currentLogLines  = [];          // accumulated log lines
         let isChatStreaming  = false;       // true while a chat response is streaming
 
         // ── 1.3 Fetch Helpers ─────────────────────────────────────
@@ -582,41 +690,323 @@
             });
         }
 
-        // ── 2.1 Model List — fetch + render ───────────────────────
-        function renderModelList(filter = '') {
-            const list = document.getElementById('model-list');
-            if (!list) return;
-            const q = filter.toLowerCase();
-            const items = modelsCache.filter(m => !q || m.id.toLowerCase().includes(q));
-
-            // Build HTML once and set innerHTML (fast for a model list)
-            list.innerHTML = items.map(m => {
-                const statusClass = m.status.replace('runnerstate.', '').toLowerCase();
-                const meta = [m.backend_id, m.runner_type].filter(Boolean).join(' · '); //
-                return `<li class="model-item${selectedModel === m.id ? ' selected' : ''}" data-model="${m.id}">
-                    <span class="status-dot ${statusClass}"></span>
-                    <span class="model-name" title="${m.id}">${m.id}</span>
-                    ${meta ? `<span class="model-meta">${meta}</span>` : ''}
-                </li>`;
-            }).join('');
-
-            // Update model count badge
+        // ── 4. Model List — fetch + render accordion items ───────────────
+        function updateModelCount() {
             const badge = document.getElementById('model-count');
-            if (badge) badge.textContent = `(${modelsCache.length} models)`;
+            if (badge) badge.textContent = '(' + modelsCache.length + ' models)';
+        }
+
+        function buildAccordionItems() {
+            const container = document.getElementById('model-accordion-items');
+            if (!container) return;
+
+            // Build HTML for each model as an accordion item
+            let html = '';
+            for (const m of modelsCache) {
+                const name = m.id;
+                const statusClass = m.status ? m.status.replace('runnerstate.', '').toLowerCase() : 'uncached';
+                const stateKey = 'sec-model-' + name.replace(/[^a-zA-Z0-9_-]/g, '_');
+                html += '<section class="accordion-item" id="' + stateKey + '">'
+                    + '  <h3 data-model="' + name + '" onclick="toggleAccordion('' + stateKey + '')">'
+                    + '    <span class="status-dot ' + statusClass + '"></span>'
+                    + '    <span class="model-name" title="' + name + '">' + name + '</span>'
+                    + '  </h3>'
+                    + '  <div class="acc-body">'
+                    + '    <div class="model-config-panel" id="body-' + name.replace(/[^a-zA-Z0-9_-]/g, '_') + '">'
+                    + '      <!-- Config fields populated on expand -->'
+                    + '      <p class="placeholder-text">Click to load configuration…</p>'
+                    + '    </div>'
+                    + '  </div>'
+                    + '</section>';
+            }
+            container.innerHTML = html;
         }
 
         async function refreshModels() {
             try {
-                const data = await adminGet('/admin/models');
-                if (data && Array.isArray(data.models)) {
-                    modelsCache = data.models;
-                    renderModelList(document.getElementById('model-search')?.value || '');
+                // Fetch both models status and config list
+                const [statusData, configData] = await Promise.all([
+                    adminGet('/admin/models'),
+                    adminGet('/admin/config'),
+                ]);
+
+                if (statusData && Array.isArray(statusData.models)) {
+                    modelsCache = statusData.models;
+                    backendOptions = statusData.backends || {};
+                    runnerTypes = statusData.runner_types || [];
+                } else if (!modelsCache.length) {
+                    // Fallback: just names from config
+                    updateModelCount();
+                    buildAccordionItems();
+                    return;
                 }
+
+                updateModelCount();
+                buildAccordionItems();
+
+                // Populate right-column dropdowns
+                populateRightDropdowns();
+
             } catch (e) {
                 console.error('[admin] failed to refresh models:', e.message);
                 const badge = document.getElementById('model-count');
                 if (badge) badge.textContent = '(!error)';
             }
+        }
+
+        function populateRightDropdowns() {
+            for (const id of ['log-model-select', 'chat-model-select']) {
+                const sel = document.getElementById(id);
+                if (!sel) continue;
+                let html = '<option value="">— none —</option>';
+                for (const m of modelsCache) {
+                    html += '<option value="' + m.id + '">' + m.id + '</option>';
+                }
+                sel.innerHTML = html;
+            }
+        }
+
+        // ── 5. Per-model config panel on expand ─────────────────────
+        async function populateModelPanel(modelName) {
+            const bodyId = 'body-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_');
+            const panel = document.getElementById(bodyId);
+            if (!panel) return;
+
+            // Check if already populated (avoid re-fetch on collapse+re-expand)
+            if (panel.dataset.fetched === '1') return;
+
+            try {
+                const data = await adminGet('/admin/config/' + encodeURIComponent(modelName));
+                if (!data || !data.config) return;
+
+                const cfg = data.config;
+                // Deep clone for dirty detection snapshot
+                modelStates[modelName] = { config: cfg, snapshot: JSON.parse(JSON.stringify(cfg)), dirty: false };
+
+                let html = '';
+
+                // Checkpoint field
+                html += '<div class="edit-field"><label for="mc-checkpoint-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_') + '">Checkpoint</label>';
+                html += '  <input type="text" id="mc-checkpoint-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_') + '" value="' + escapeAttr(cfg.checkpoint || '') + '"></div>';
+
+                // Backend select
+                const backendSelId = 'mc-backend-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_');
+                html += '<div class="edit-field"><label for="' + backendSelId + '">Backend</label>';
+                html += '  <select id="' + backendSelId + '">';
+                html += '    <option value="">(default)</option>';
+                if (backendOptions) {
+                    for (const [key, val] of Object.entries(backendOptions)) {
+                        const label = (typeof val === 'object') ? (val.host || key) : key;
+                        html += '    <option value="' + escapeAttr(key) + '"' + ((cfg.backend === key) ? ' selected' : '') + '>' + escapeHtml(label) + '</option>';
+                    }
+                }
+                html += '  </select></div>';
+
+                // Runner select
+                const runnerSelId = 'mc-runner-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_');
+                html += '<div class="edit-field"><label for="' + runnerSelId + '">Runner</label>';
+                html += '  <select id="' + runnerSelId + '">';
+                html += '    <option value="">(auto)</option>';
+                if (runnerTypes) {
+                    for (const t of runnerTypes) {
+                        html += '    <option value="' + escapeAttr(t) + '"' + ((cfg.runner === t) ? ' selected' : '') + '>' + escapeHtml(t) + '</option>';
+                    }
+                }
+                html += '  </select></div>';
+
+                // Args textarea
+                html += '<div class="edit-field"><label for="mc-args-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_') + '">Args</label>';
+                html += '  <textarea id="mc-args-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_') + '" rows="2">' + escapeHtml(cfg.args || '') + '</textarea></div>';
+
+                // Capabilities chips
+                const capsId = 'mc-caps-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_');
+                html += '<div class="edit-field"><label>Capabilities</label><div class="capabilities-list" id="' + capsId + '">';
+                const allCaps = ['chat', 'tts'];
+                const selectedCaps = new Set(cfg.capabilities || ['chat']);
+                for (const c of allCaps) {
+                    html += '  <span class="capability-chip' + (selectedCaps.has(c) ? ' active' : '') + '" data-cap="' + c + '">' + c + '</span>';
+                }
+                html += '</div></div>';
+
+                // Log buffer size
+                html += '<div class="edit-field"><label for="mc-log-buffer-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_') + '">Log Buffer Size</label>';
+                html += '  <input type="number" id="mc-log-buffer-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_') + '" min="50" max="10000" step="50" value="' + (cfg.max_log_lines || 500) + '"></div>';
+
+                // Action buttons
+                html += '<div class="model-actions">';
+                const btnId = (id) => 'mc-' + id + '-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_');
+                html += '  <button type="button" title="Reset config to server value" data-model="' + escapeAttr(modelName) + '" data-action="reset" id="' + btnId('reset') + '">↺</button>';
+                html += '  <button type="button" title="Stop model runner" data-model="' + escapeAttr(modelName) + '" data-action="stop" id="' + btnId('stop') + '" class="btn-danger">⏹</button>';
+                html += '  <button type="button" title="Start/Restart with current config" data-model="' + escapeAttr(modelName) + '" data-action="start" id="' + btnId('start') + '" class="btn-success">▶</button>';
+                html += '  <button type="button" title="Save config changes" data-model="' + escapeAttr(modelName) + '" data-action="save" id="' + btnId('save') + '">✓</button>';
+                html += '  <button type="button" title="Eject model (stop + delete cache)" data-model="' + escapeAttr(modelName) + '" data-action="eject" id="' + btnId('eject') + '" class="btn-danger">⏏</button>';
+                html += '</div>';
+
+                panel.innerHTML = html;
+                panel.dataset.fetched = '1';
+
+                // Wire up capability chip toggles
+                const chipsContainer = document.getElementById(capsId);
+                if (chipsContainer) {
+                    chipsContainer.addEventListener('click', (e) => {
+                        const chip = e.target.closest('.capability-chip');
+                        if (!chip) return;
+                        const cap = chip.dataset.cap;
+                        if (selectedCaps.has(cap)) selectedCaps.delete(cap);
+                        else selectedCaps.add(cap);
+                        chip.classList.toggle('active');
+                        maybeUpdateDirty(modelName);
+                    });
+                }
+
+                // Wire up all inputs for dirty detection
+                panel.querySelectorAll('input, select, textarea').forEach(el => {
+                    el.addEventListener('input', () => maybeUpdateDirty(modelName));
+                });
+
+                // Wire up action buttons via delegation on the panel
+                panel.querySelector('[data-action="save"]')?.addEventListener('click', () => saveModelConfig(modelName));
+                panel.querySelector('[data-action="reset"]')?.addEventListener('click', () => resetModelConfig(modelName));
+                panel.querySelector('[data-action="start"]')?.addEventListener('click', () => startModel(modelName));
+                panel.querySelector('[data-action="stop"]')?.addEventListener('click', () => stopModel(modelName));
+                panel.querySelector('[data-action="eject"]')?.addEventListener('click', () => ejectModel(modelName));
+
+            } catch (e) {
+                console.error('[admin] failed to load config for ' + modelName + ':', e.message);
+                panel.innerHTML = '<p class="placeholder-text" style="color:var(--red)">Failed to load config: ' + e.message + '</p>';
+            }
+        }
+
+        // Helper: get values from a model config panel
+        function getModelFormValues(modelName) {
+            const prefix = modelName.replace(/[^a-zA-Z0-9_-]/g, '_');
+            return {
+                checkpoint: document.getElementById('mc-checkpoint-' + prefix)?.value || '',
+                backend: (document.getElementById('mc-backend-' + prefix)?.value) || undefined,
+                runner: (document.getElementById('mc-runner-' + prefix)?.value) || undefined,
+                args: (document.getElementById('mc-args-' + prefix)?.value) || undefined,
+                max_log_lines: parseInt(document.getElementById('mc-log-buffer-' + prefix)?.value) || 500,
+            };
+        }
+
+        function getModelCapabilities(modelName) {
+            const prefix = modelName.replace(/[^a-zA-Z0-9_-]/g, '_');
+            const chips = document.querySelectorAll('#mc-caps-' + prefix + ' .capability-chip.active');
+            return Array.from(chips).map(c => c.dataset.cap);
+        }
+
+        // Dirty detection for a model panel
+        function maybeUpdateDirty(modelName) {
+            if (!modelStates[modelName]) return;
+            const current = getModelFormValues(modelName);
+            const caps = getModelCapabilities(modelName);
+            const snap = modelStates[modelName].snapshot;
+            const isDirty = (
+                current.checkpoint !== snap.checkpoint ||
+                (current.backend ?? '') !== (snap.backend ?? '') ||
+                (current.runner ?? '') !== (snap.runner ?? '') ||
+                current.args !== (snap.args ?? '') ||
+                current.max_log_lines !== (snap.max_log_lines ?? 500) ||
+                JSON.stringify(caps.sort()) !== JSON.stringify((snap.capabilities || ['chat']).sort())
+            );
+            modelStates[modelName].dirty = isDirty;
+            const btn = document.getElementById('mc-save-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_'));
+            if (btn) btn.disabled = !isDirty;
+        }
+
+        // Action: Save config
+        async function saveModelConfig(modelName) {
+            const body = getModelFormValues(modelName);
+            body.capabilities = getModelCapabilities(modelName);
+            try {
+                await adminPut('/admin/config/' + encodeURIComponent(modelName), body);
+                modelStates[modelName].snapshot = JSON.parse(JSON.stringify(body));
+                modelStates[modelName].dirty = false;
+                const btn = document.getElementById('mc-save-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_'));
+                if (btn) btn.disabled = true;
+                refreshModels();
+            } catch (e) {
+                console.error('[admin] save failed for ' + modelName + ':', e.message);
+            }
+        }
+
+        // Action: Reset config
+        async function resetModelConfig(modelName) {
+            try {
+                const data = await adminGet('/admin/config/' + encodeURIComponent(modelName));
+                if (data && data.config) {
+                    modelStates[modelName].snapshot = JSON.parse(JSON.stringify(data.config));
+                    modelStates[modelName].dirty = false;
+                    // Re-populate the panel with reset values
+                    populateModelPanel(modelName);
+                }
+            } catch (e) {
+                console.error('[admin] reset failed for ' + modelName + ':', e.message);
+            }
+        }
+
+        // Action: Start model
+        async function startModel(modelName) {
+            const btn = document.getElementById('mc-start-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_'));
+            if (!btn) return;
+            const origDisabled = btn.disabled;
+            btn.disabled = true;
+
+            const body = getModelFormValues(modelName);
+            body.capabilities = getModelCapabilities(modelName);
+
+            try {
+                await adminPost('/admin/start/' + encodeURIComponent(modelName), body);
+                refreshModels();
+            } catch (e) {
+                console.error('[admin] start failed for ' + modelName + ':', e.message);
+            } finally {
+                btn.disabled = origDisabled;
+            }
+        }
+
+        // Action: Stop model
+        async function stopModel(modelName) {
+            const btn = document.getElementById('mc-stop-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_'));
+            if (!btn) return;
+            const origDisabled = btn.disabled;
+            btn.disabled = true;
+
+            try {
+                await adminPost('/admin/stop/' + encodeURIComponent(modelName));
+                refreshModels();
+            } catch (e) {
+                console.error('[admin] stop failed for ' + modelName + ':', e.message);
+            } finally {
+                btn.disabled = origDisabled;
+            }
+        }
+
+        // Action: Eject model
+        async function ejectModel(modelName) {
+            const btn = document.getElementById('mc-eject-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_'));
+            if (!btn) return;
+            const origDisabled = btn.disabled;
+            btn.disabled = true;
+
+            try {
+                await adminPost('/admin/eject/' + encodeURIComponent(modelName));
+                refreshModels();
+            } catch (e) {
+                console.error('[admin] eject failed for ' + modelName + ':', e.message);
+            } finally {
+                btn.disabled = origDisabled;
+            }
+        }
+
+        // HTML escaping helpers
+        function escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str || '';
+            return div.innerHTML;
+        }
+        function escapeAttr(str) {
+            return (str || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
 
         // ── 2.3 Model Selection ───────────────────────────────────
@@ -813,32 +1203,53 @@
             }
             currentLogLines = [];
             // Also update the checkbox state to unchecked
-            const checkEl = document.getElementById('chk-log-follow') || document.getElementById('right-log-follow');
+            const checkEl = document.getElementById('log-follow-cb');
             if (checkEl) checkEl.checked = false;
         }
 
         async function loadLogSnapshot(modelName) {
+            const display = document.getElementById('log-display');
+            if (!display) return;
+            display.textContent = '';
+            currentLogLines = [];
+
+            if (!modelName) {
+                const ph = document.createElement('p');
+                ph.className = 'placeholder-text';
+                ph.textContent = 'Select a model to view logs.';
+                display.appendChild(ph);
+                return;
+            }
+
             try {
-                const data = await adminGet(`/admin/log/${modelName}`, { lines: 200 });
+                const data = await adminGet('/admin/log/' + encodeURIComponent(modelName), { lines: 200 });
                 if (data && data.data) appendLogLines(data.data);
             } catch (e) {
-                console.error(`[admin] log snapshot failed for ${modelName}:`, e.message);
+                console.error('[admin] log snapshot failed for ' + modelName + ':', e.message);
             }
         }
 
+
         function appendLogLines(lines) {
-            const pane = document.getElementById('right-model-logs');
-            if (!pane) return;
-            const wasScrolledToBottom = pane.scrollHeight - pane.scrollTop <= pane.clientHeight + 50;
+            const display = document.getElementById('log-display');
+            if (!display || !lines.length) return;
+
+            // Check if user is near bottom before appending
+            const nearBottom = display.scrollHeight - display.scrollTop <= display.clientHeight + 60;
+
             lines.forEach(line => {
                 const div = document.createElement('div');
                 div.className = 'log-line';
-                div.textContent = line;          // XSS-safe
-                pane.appendChild(div);
+                div.textContent = line;
+                display.appendChild(div);
             });
+
             currentLogLines.push(...lines);
-            if (wasScrolledToBottom) pane.scrollTop = pane.scrollHeight;
+
+            // Only auto-scroll if user was already at bottom
+            if (nearBottom) display.scrollTop = display.scrollHeight;
         }
+
 
         async function startLogFollow(modelName) {
             stopLogFollow();                  // abort any prior stream
@@ -880,12 +1291,7 @@
             }
         }
 
-        function renderLogToDOM(lines) {
-            const pane = document.getElementById('right-model-logs');
-            if (!pane) return;
-            pane.textContent = '';  // clear
-            appendLogLines(lines);  // re-fill via DOM-safe method
-        }
+        // (renderLogToDOM — kept for reference, uses appendLogLines which targets log-display)
 
         // ── 6. Chat pane functions ────────────────────────────────
         let chatHistory      = [];   // full conversation history for selected model
@@ -913,9 +1319,9 @@
         }
 
         function saveChatParams() {
-            if (!selectedModel) return;
+            if (!chatModel) return;
             const params = getChatParams();
-            params[selectedModel] = {
+            params[chatModel] = {
                 temperature: parseFloat(document.getElementById('rcp-temp')?.value) || 0.7,
                 top_p: parseFloat(document.getElementById('rcp-top-p')?.value) || 0.95,
                 max_tokens: parseInt(document.getElementById('rcp-max-tokens')?.value) || 512,
@@ -924,8 +1330,8 @@
         }
 
         function restoreChatParams() {
-            if (!selectedModel) return;
-            const params = getChatParams()[selectedModel];
+            if (!chatModel) return;
+            const params = getChatParams()[chatModel];
             if (!params) return;
             document.getElementById('rcp-temp').value     = String(params.temperature ?? 0.7);
             document.getElementById('rcp-top-p').value     = String(params.top_p ?? 0.95);
@@ -934,32 +1340,36 @@
 
         // 6.3 Message bubble helpers
         function appendMessageBubble(role, content, isStreaming) {
-            const container = document.getElementById('right-chat-messages');
+            const container = document.getElementById('chat-display');
             if (!container) return;
+
+            // Determine if we should auto-scroll: always for user messages,
+            // only at bottom for assistant during streaming
+            const nearBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 40;
 
             const div = document.createElement('div');
             div.className = `message ${role}${isStreaming ? ' streaming' : ''}`;
 
             if (role === 'user') {
-                // User messages are plain text
                 div.textContent = content;
+                container.appendChild(div);
+                container.scrollTop = container.scrollHeight;  // Always scroll for user
+                return div;
             } else {
-                // Assistant messages get markdown-rendered content
                 div.innerHTML = isStreaming
-                    ? `${content}<span class="cursor"></span>`
+                    ? content + '<span class="cursor"></span>'
                     : content;
+                container.appendChild(div);
+                if (nearBottom) container.scrollTop = container.scrollHeight;
+                return div;
             }
-
-            container.appendChild(div);
-            if (!isStreaming) container.scrollTop = container.scrollHeight;
-            return div;
         }
 
         // 6.3 Send message (form submit handler)
         async function sendMessage(e) {
             e.preventDefault();
             const input = document.getElementById('right-chat-input');
-            if (!input || !selectedModel || isChatStreaming) return;
+            if (!input || !chatModel || isChatStreaming) return;
 
             const userText = input.value.trim();
             if (!userText) return;
@@ -977,10 +1387,10 @@
             document.getElementById('right-chat-send-btn').disabled = true;
 
             try {
-                await streamChatResponse(chatHistory, (delta) => {
+                await streamChatResponse(chatHistory, chatModel, (delta) => {
                     rawContent += delta;
                     assitDiv.textContent = rawContent + ' ';  // cursor handled by CSS class
-                    const container = document.getElementById('right-chat-messages');
+                    const container = document.getElementById('chat-display');
                     if (container) container.scrollTop = container.scrollHeight;
                 });
 
@@ -1001,21 +1411,21 @@
         }
 
         // 6.4 Streaming response handler
-        async function streamChatResponse(messages, onToken) {
+        async function streamChatResponse(messages, modelName, onToken) {
             stopLogFollow();    // ensure no log stream conflict
 
             chatAbortCtrl = new AbortController();
 
-            const modelInfo = modelsCache.find(m => m.id === selectedModel);
+            const modelInfo = modelsCache.find(m => m.id === modelName);
             if (!modelInfo || !modelInfo.port) {
                 throw new Error('Model is not running or has no port');
             }
 
-            const params = getChatParams();
-            const mp = params[selectedModel] || { temperature: 0.7, top_p: 0.95, max_tokens: 512 };
+            const allParams = getChatParams();
+            const mp = allParams[modelName] || { temperature: 0.7, top_p: 0.95, max_tokens: 512 };
 
             const payload = {
-                model: selectedModel,
+                model: modelName,
                 messages: messages,
                 stream: true,
                 temperature: mp.temperature,
@@ -1024,7 +1434,7 @@
             };
 
             const port = modelInfo.port;
-            const url = `http://127.0.0.1:${port}/v1/chat/completions`;
+            const url = 'http://127.0.0.1:' + port + '/v1/chat/completions';
 
             const resp = await fetch(url, {
                 method: 'POST',
@@ -1097,11 +1507,14 @@
         }
 
         function clearChatHistory() {
-            chatHistory = [];
-            const container = document.getElementById('right-chat-messages');
+            // Per-model chat history already stored in localStorage
+            // Just clear the display when switching models
+            const container = document.getElementById('chat-display');
             if (container) container.textContent = '';
+            chatHistory = [];
         }
 
+        // (stopChatStream - called implicitly on model change)
         function stopChatStream() {
             if (chatAbortCtrl) {
                 chatAbortCtrl.abort();
@@ -1143,22 +1556,6 @@
                 const wasCollapsed = el.classList.contains('collapsed');
                 el.classList.toggle('collapsed');
 
-                // 5.1: Load logs when right-logs pane is opened
-                if (id === 'sec-right-logs' && !wasCollapsed && selectedModel) {
-                    document.getElementById('chk-log-follow') || document.getElementById('right-log-follow');
-                    if (followCb && followCb.checked) {
-                        startLogFollow(selectedModel);
-                    } else {
-                        loadLogSnapshot(selectedModel);
-                    }
-                }
-
-                // 6: Auto-scroll chat to bottom when opened
-                if (id === 'sec-right-chat' && !wasCollapsed) {
-                    const container = document.getElementById('right-chat-messages');
-                    if (container) container.scrollTop = container.scrollHeight;
-                }
-
                 requestAnimationFrame(() => layoutRightPanels());
             };
 
@@ -1188,57 +1585,99 @@
                 });
             }
 
-            // ── 4.3 Column resize drag handle ─────────────────────────
-            let isDragging = false;
-            const divider = document.getElementById('col-divider');
-            const leftCol = document.getElementById('col-left');
+                        // ── Tab visibility: abort streams when hidden, reload on show ─
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) {
+                    stopLogFollow();
+                    stopChatStream();
+                } else {
+                    // Reload log data for currently selected model
+                    if (logModel) loadLogSnapshot(logModel);
+                }
+            });
+
+            // ── 3. Resize handles (vertical + horizontal) ───────────────
             const rootStyle = document.documentElement.style;
-            const STORAGE_KEY = 'arkestra-col-width';
+            const VKEY = 'arkestra-col-width';
+            const HKEY = 'arkestra-log-ratio';
 
-            // Restore saved width or use default 40%
-            const saved = localStorage.getItem(STORAGE_KEY);
-            if (saved && !isNaN(saved)) rootStyle.setProperty('--col-width', saved + '%');
+            // Restore saved ratios
+            const sv = localStorage.getItem(VKEY);
+            if (sv && !isNaN(sv)) rootStyle.setProperty('--col-width', sv + '%');
+            const sh = localStorage.getItem(HKEY);
+            if (sh && !isNaN(sh)) {
+                const logsP = document.getElementById('pane-logs');
+                const chatP = document.getElementById('pane-chat');
+                if (logsP && chatP) {
+                    logsP.style.flex = '0 0 ' + sh + '%';
+                    chatP.style.flex = '0 0 ' + (100 - sh) + '%';
+                }
+            }
 
-            divider?.addEventListener('mousedown', e => {
-                isDragging = true;
-                divider.classList.add('active');
+            // Vertical divider: left ↔ right
+            const vDivider = document.getElementById('col-divider');
+            vDivider?.addEventListener('mousedown', e => {
+                isVDragging = true;
+                vDivider.classList.add('active');
                 document.body.style.cursor = 'col-resize';
                 document.body.style.userSelect = 'none';
                 e.preventDefault();
             });
 
+            // Horizontal divider: logs ↔ chat
+            const hDivider = document.getElementById('row-divider');
+            hDivider?.addEventListener('mousedown', e => {
+                isHDragging = true;
+                hDivider.classList.add('active');
+                document.body.style.cursor = 'row-resize';
+                document.body.style.userSelect = 'none';
+                e.preventDefault();
+            });
+
             window.addEventListener('mousemove', e => {
-                if (!isDragging) return;
                 const layout = document.querySelector('.layout');
                 if (!layout) return;
                 const rect = layout.getBoundingClientRect();
-                const pct = Math.round(((e.clientX - rect.left) / rect.width) * 100);
-                if (pct >= 20 && pct <= 80) {
-                    rootStyle.setProperty('--col-width', pct + '%');
-                    localStorage.setItem(STORAGE_KEY, String(pct));
+
+                if (isVDragging) {
+                    const pct = Math.round(((e.clientX - rect.left) / rect.width) * 100);
+                    if (pct >= 20 && pct <= 80) {
+                        rootStyle.setProperty('--col-width', pct + '%');
+                        localStorage.setItem(VKEY, String(pct));
+                    }
+                } else if (isHDragging) {
+                    const rightCol = document.getElementById('right-panel');
+                    if (!rightCol) return;
+                    const rRect = rightCol.getBoundingClientRect();
+                    const ratio = Math.round(((e.clientY - rRect.top) / rRect.height) * 100);
+                    if (ratio >= 15 && ratio <= 85) {
+                        const logsP = document.getElementById('pane-logs');
+                        const chatP = document.getElementById('pane-chat');
+                        if (logsP && chatP) {
+                            logsP.style.flex = '0 0 ' + ratio + '%';
+                            chatP.style.flex = '0 0 ' + (100 - ratio) + '%';
+                        }
+                        localStorage.setItem(HKEY, String(ratio));
+                    }
                 }
             });
 
             window.addEventListener('mouseup', () => {
-                if (!isDragging) return;
-                isDragging = false;
-                divider?.classList.remove('active');
-                document.body.style.cursor = '';
-                document.body.style.userSelect = '';
+                if (isVDragging) {
+                    isVDragging = false;
+                    vDivider?.classList.remove('active');
+                    document.body.style.cursor = '';
+                    document.body.style.userSelect = '';
+                } else if (isHDragging) {
+                    isHDragging = false;
+                    hDivider?.classList.remove('active');
+                    document.body.style.cursor = '';
+                    document.body.style.userSelect = '';
+                }
             });
 
         // ── 5. Logs pane — stream + snapshot ──────────────────────
-            const logFollowCb = document.getElementById('chk-log-follow') || document.getElementById('right-log-follow');
-            if (logFollowCb) {
-                logFollowCb.addEventListener('change', () => {
-                    if (!selectedModel || !document.getElementById('sec-right-logs').classList.contains('collapsed')) return;
-                    if (logFollowCb.checked) startLogFollow(selectedModel);
-                });
-            }
-            document.getElementById('btn-clear-logs')?.addEventListener('click', () => {
-                const logPane = document.getElementById('right-model-logs');
-                if (logPane) logPane.textContent = '';
-            });
+            // (old log-follow wiring removed — new handler in DOMContentLoaded above)
 
             // ── 6. Chat pane wireups ────────────────────────────────
             document.getElementById('right-chat-params-toggle')?.addEventListener('click', toggleChatParams);
@@ -1246,7 +1685,8 @@
 
             // Auto-persist params on any change
             ['rcp-temp', 'rcp-top-p', 'rcp-max-tokens'].forEach(id => {
-                document.getElementById(id)?.addEventListener('change', saveChatParams);
+                const el = document.getElementById(id);
+                if (el) el.addEventListener('change', saveChatParams);
             });
         });
     </script>
@@ -1261,128 +1701,74 @@
         <div class="title">
             ArkestraAdmin
             <span class="model-count" id="model-count"></span>
+            <button id="btn-collapse-all" title="Collapse all expanded items" style="font-size:11px;padding:3px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-alt);color:var(--text);cursor:pointer;">▼ Collapse All</button>
         </div>
     </header>
 
     <!-- ── Main Layout ─────────────────────────────────────────── -->
     <div class="layout">
 
-        <!-- ━━ LEFT COLUMN — Model list, Edit, Logs, Chat ━━━━━━━━ -->
-        <aside class="col-left" id="col-left">
-
-            <!-- Models Accordion -->
-            <section class="accordion" id="sec-models">
-                <h3 onclick="toggleAccordion('sec-models')">Models</h3>
-                <div class="accordion-body">
-                    <input type="search" id="model-search" placeholder="Filter models…">
-                    <ul id="model-list"></ul>
-                </div>
+        <!-- ── Left Column — single accordion widget ─────────────── -->
+        <aside class="left-panel" id="left-panel">
+            <section class="accordion" id="left-accordion">
+                <!-- Settings placeholder (disabled, collapsed) -->
+                <section class="accordion-item collapsed" id="sec-settings">
+                    <h3>⚙ Settings</h3>
+                    <div class="acc-body"><p class="placeholder-text">Server configuration — coming soon.</p></div>
+                </section>
+                <!-- Model items: dynamically generated at runtime -->
+                <div id="model-accordion-items"></div>
             </section>
-
-            <!-- Edit Accordion (collapsed by default) -->
-            <section class="accordion collapsed" id="sec-edit">
-                <h3 onclick="toggleAccordion('sec-edit')">Edit</h3>
-                <div class="accordion-body">
-                    <form class="edit-form-grid" id="edit-form">
-
-                        <div class="edit-field">
-                            <label for="edit-name">Name</label>
-                            <input type="text" id="edit-name" readonly style="opacity:0.6;">
-                        </div>
-
-                        <div class="edit-field">
-                            <label for="edit-checkpoint">Checkpoint</label>
-                            <input type="text" id="edit-checkpoint" placeholder="e.g. unsloth/Qwen3-4B-GGUF:Q4_K_M">
-                        </div>
-
-                        <div class="edit-field">
-                            <label for="edit-backend">Backend</label>
-                            <select id="edit-backend">
-                                <option value="">(default)</option>
-                            </select>
-                        </div>
-
-                        <div class="edit-field">
-                            <label for="edit-runner">Runner</label>
-                            <select id="edit-runner">
-                                <option value="">(auto)</option>
-                            </select>
-                        </div>
-
-                        <div class="edit-field">
-                            <label for="edit-args">Args</label>
-                            <textarea id="edit-args" rows="2" placeholder="--temp 0.7 --top-p 0.95"></textarea>
-                        </div>
-
-                        <div class="edit-field">
-                            <label>Capabilities</label>
-                            <div class="capabilities-list" id="edit-capabilities">
-                                <!-- Populated from config at runtime -->
-                            </div>
-                        </div>
-
-                        <div class="edit-field">
-                            <label for="edit-log-buffer">Log Buffer Size</label>
-                            <input type="number" id="edit-log-buffer" min="50" max="10000" step="50" placeholder="500">
-                        </div>
-
-                    </form>
-
-                    <div class="form-actions">
-                        <button id="btn-reset"  type="button">Reset</button>
-                        <button id="btn-save"   type="submit" disabled>Save ·</button>
-                        <button id="btn-cancel" type="button">Cancel</button>
-                        <button id="btn-start"  type="button">Start / Restart</button>
-                    </div>
-                </div>
-            </section>
-
         </aside>
 
-        <!-- ━━ RESIZABLE DIVIDER ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
-        <div class="divider" id="col-divider"></div>
+        <!-- Vertical divider (for resize) -->
+        <div class="divider-v" id="col-divider"></div>
 
-        <!-- ━━ RIGHT COLUMN — single accordion widget ━━━━━━━━━━━━ -->
-        <main class="col-right" id="col-right">
-            <div id="right-accordion">
-                <section class="accordion-item collapsed" id="sec-right-logs">
-                    <h3 onclick="toggleAccordion('sec-right-logs')">Logs</h3>
-                    <div class="acc-body">
-                        <div class="log-controls">
-                            <label><input type="checkbox" id="right-log-follow" checked> Follow</label>
+        <!-- ── Right Column — two independent panes ──────────────── -->
+        <main class="right-panel" id="right-panel">
+            <!-- Logs Pane -->
+            <div class="pane pane-logs" id="pane-logs">
+                <div class="pane-header">
+                    <label>Select Model:</label>
+                    <select id="log-model-select"></select>
+                    <label><input type="checkbox" id="log-follow-cb"> Follow</label>
+                </div>
+                <pre class="log-container" id="log-display"></pre>
+            </div>
+
+            <!-- Horizontal divider (for resize) -->
+            <div class="divider-h" id="row-divider"></div>
+
+            <!-- Chat Pane -->
+            <div class="pane pane-chat" id="pane-chat">
+                <div class="pane-header">
+                    <label>Select Model:</label>
+                    <select id="chat-model-select"></select>
+                    <span class="chat-params-toggle" id="right-chat-params-toggle">⚙ Parameters ▾</span>
+                </div>
+                <div class="chat-messages" id="chat-display"></div>
+
+                <div class="chat-params-panel" id="chat-params-panel">
+                    <div class="chat-params-grid">
+                        <div class="chat-param">
+                            <label for="rcp-temp">Temperature</label>
+                            <input type="number" id="rcp-temp" min="0" max="2" step="0.05" value="0.7">
                         </div>
-                        <pre class="log-container" id="right-model-logs"></pre>
-                    </div>
-                </section>
-                <section class="accordion-item collapsed" id="sec-right-chat">
-                    <h3 onclick="toggleAccordion('sec-right-chat')">Chat</h3>
-                    <div class="acc-body" style="display:flex;flex-direction:column;">
-                        <div class="chat-messages" id="right-chat-messages"></div>
-
-                        <div class="chat-params-toggle" id="right-chat-params-toggle">⚙ Parameters ▾</div>
-                        <div class="chat-params-panel" id="right-chat-params-panel">
-                            <div class="chat-params-grid">
-                                <div class="chat-param">
-                                    <label for="rcp-temp">Temperature</label>
-                                    <input type="number" id="rcp-temp" min="0" max="2" step="0.05" value="0.7">
-                                </div>
-                                <div class="chat-param">
-                                    <label for="rcp-top-p">Top P</label>
-                                    <input type="number" id="rcp-top-p" min="0" max="1" step="0.05" value="0.95">
-                                </div>
-                                <div class="chat-param">
-                                    <label for="rcp-max-tokens">Max Tokens</label>
-                                    <input type="number" id="rcp-max-tokens" min="1" max="8192" step="64" value="512">
-                                </div>
-                            </div>
+                        <div class="chat-param">
+                            <label for="rcp-top-p">Top P</label>
+                            <input type="number" id="rcp-top-p" min="0" max="1" step="0.05" value="0.95">
                         </div>
-
-                        <form class="chat-form" id="right-chat-form">
-                            <textarea id="right-chat-input" placeholder="Type a message…"></textarea>
-                            <button type="submit" class="chat-send-btn" id="right-chat-send-btn">▶</button>
-                        </form>
+                        <div class="chat-param">
+                            <label for="rcp-max-tokens">Max Tokens</label>
+                            <input type="number" id="rcp-max-tokens" min="1" max="8192" step="64" value="512">
+                        </div>
                     </div>
-                </section>
+                </div>
+
+                <form class="chat-form" id="right-chat-form">
+                    <textarea id="right-chat-input" placeholder="Type a message…"></textarea>
+                    <button type="submit" class="chat-send-btn" id="right-chat-send-btn">▶</button>
+                </form>
             </div>
         </main>
 
