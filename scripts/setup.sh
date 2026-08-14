@@ -9,3 +9,6 @@ fi
 
 source venv/bin/activate
 pip install -e ".[proxy]"
+
+# Post-install: wrap entry points for auto-activation
+scripts/post_install.sh
