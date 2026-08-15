@@ -60,6 +60,7 @@ class TestBuildDockerCmdNewArch:
         runner = MagicMock()
         runner.cm = inner
         runner.broadcast_addr = "0.0.0.0"
+        runner._build_cmd_line.return_value = []
         return runner
 
     @pytest.fixture(autouse=True)

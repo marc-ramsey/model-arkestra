@@ -110,8 +110,8 @@ def _build_docker_cmd(
             # Replace the image-bundled llama-server with the mounted host binary
             parts[-1] = binary_path
         # Append inference kwargs as CLI flags
-        kwarg_flags = self._build_cmd_line(
-            self._inference_kwargs.get(ctx.name, {})
+        kwarg_flags = runner._build_cmd_line(
+            runner._inference_kwargs.get(ctx.name, {})
         )
         parts.extend(llama_arg_list + kwarg_flags)
 

@@ -150,8 +150,8 @@ def _build_podman_cmd(
         # launcher.sh: first arg = binary, rest = --model etc.
         if binary_path:
             # Append inference kwargs as CLI flags
-            kwarg_flags = self._build_cmd_line(
-                self._inference_kwargs.get(ctx.name, {})
+            kwarg_flags = runner._build_cmd_line(
+                runner._inference_kwargs.get(ctx.name, {})
             )
             parts.extend([image, binary_path] + fixed_args + kwarg_flags)
         else:
