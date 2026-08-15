@@ -706,8 +706,8 @@
                 const name = m.id;
                 const statusClass = m.status ? m.status.replace('runnerstate.', '').toLowerCase() : 'uncached';
                 const stateKey = 'sec-model-' + name.replace(/[^a-zA-Z0-9_-]/g, '_');
-                html += '<section class="accordion-item" id="' + stateKey + '">'
-                    + '  <h3 data-model="' + name + '" onclick="toggleAccordion('' + stateKey + '')">'
+                html += '<section class="accordion-item collapsed" id="' + stateKey + '">'
+                    + '  <h3 data-model="' + name + '" onclick="toggleAccordion(\'' + stateKey + '\')">'
                     + '    <span class="status-dot ' + statusClass + '"></span>'
                     + '    <span class="model-name" title="' + name + '">' + name + '</span>'
                     + '  </h3>'
@@ -1555,6 +1555,14 @@
                 if (!el) return;
                 const wasCollapsed = el.classList.contains('collapsed');
                 el.classList.toggle('collapsed');
+
+                // Load config when expanding
+                if (!wasCollapsed) {
+                    const h3 = el.querySelector('h3');
+                    if (h3 && h3.dataset.model) {
+                        populateModelPanel(h3.dataset.model);
+                    }
+                }
 
                 requestAnimationFrame(() => layoutRightPanels());
             };
