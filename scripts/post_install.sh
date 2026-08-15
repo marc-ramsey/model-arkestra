@@ -18,7 +18,7 @@ fi
 echo "Installing package..."
 [ -d "$PROJECT/vendor/llm-config-manager" ] && \
     pip install -e "$PROJECT/vendor/llm-config-manager" --quiet
-pip install -e "$PROJECT/[proxy]" --quiet
+pip install -e "$(pwd)[.[proxy]]" --quiet
 
 # ── Add venv/bin to PATH in shell profiles ──────────────────────────────
 VENV_LINE="export PATH=\"$VENV/bin:\$PATH\""

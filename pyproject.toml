@@ -26,3 +26,4 @@ dependencies = [
 [project.optional-dependencies]
 proxy = ["fastapi>=0.115", "uvicorn[standard]>=0.30"]
 langchain = ["langchain-core>=0.3"]
+test = ["httpx", "pytest-asyncio"]

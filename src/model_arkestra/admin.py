@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 try:
     from fastapi import FastAPI, HTTPException, Request
-    from fastapi.responses import JSONResponse
+    from fastapi.responses import JSONResponse, HTMLResponse
 except ImportError:
     raise RuntimeError("model_arkestra.admin requires fastapi")
 
@@ -53,17 +53,19 @@ class ArkestraAdmin:
     def _add_root_route(self) -> None:
         from pathlib import Path
 
-        from fastapi.responses import FileResponse
-
         html = Path(__file__).parent.parent.parent / "static" / "index.html"
 
         @self._app.get("/")
         async def root():
-            return FileResponse(html, media_type="text/html")
+            key = self.admin_key or ""
+            content = html.read_text().replace("{{ADMIN_KEY}}", key)
+            return HTMLResponse(content, media_type="text/html")
 
         @self._app.get("/index.html")
         async def index_html():
-            return FileResponse(html, media_type="text/html")
+            key = self.admin_key or ""
+            content = html.read_text().replace("{{ADMIN_KEY}}", key)
+            return HTMLResponse(content, media_type="text/html")
 
     def _add_auth_middleware(self) -> None:
         if not self.admin_key:

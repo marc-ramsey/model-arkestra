@@ -63,13 +63,26 @@ class TestAdminModels:
             assert "capabilities" in model
 
     def test_uncached_status_for_downloaded_checkpoints(self, live_server, admin_headers):
-        """Models with a checkpoint field but no HF cache should be UNCACHED."""
+        """Models with a checkpoint field but no HF cache should be UNCACHED.
+
+        Cached-but-not-running models get status 'stopped'; truly uncached
+        (no files in the cache dir) get 'uncached'.
+        """
         client = live_server["client"]
         r = client.get("/admin/models", headers=admin_headers)
         models_by_id = {m["id"]: m for m in r.json()["models"]}
 
-        # Checkpoints are cached at /home/lemonade/hub — none of these have been downloaded
-        assert all(m["status"] == "uncached" for m in r.json()["models"])
+        # Checkpoints cached at /home/lemonade/hub — mixed reality on a real machine
+        gemma  = models_by_id["gemma-4-e2b"]
+        qwen   = models_by_id["qwen3.5-4b"]
+        vox    = models_by_id["voxtral-mini"]
+
+        # Verify expected statuses based on actual cache presence:
+        # gemma & qwen are cached, so stopped (not running);
+        # vox is not cached, so uncached.
+        assert gemma["status"] == "stopped"
+        assert qwen["status"] == "stopped"
+        assert vox["status"] == "uncached"
 
 
 # ── /admin/stop/{model} ────────────────────────────────────────────
