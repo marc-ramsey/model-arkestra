@@ -3,12 +3,10 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-if [ ! -d "venv" ]; then
-    python3 -m venv venv
+# If venv doesn't exist yet, post_install.sh creates it + installs
+if [ -d "venv" ]; then
+    source venv/bin/activate
 fi
 
-source venv/bin/activate
-pip install -e ".[proxy]"
-
-# Post-install: wrap entry points for auto-activation
+# Post-install handles: pip install, vendor deps, entry-point wrapping
 scripts/post_install.sh
