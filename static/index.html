@@ -707,7 +707,7 @@
                 const statusClass = m.status ? m.status.replace('runnerstate.', '').toLowerCase() : 'uncached';
                 const stateKey = 'sec-model-' + name.replace(/[^a-zA-Z0-9_-]/g, '_');
                 html += '<section class="accordion-item collapsed" id="' + stateKey + '">'
-                    + '  <h3 data-model="' + name + '" onclick="toggleAccordion(\'' + stateKey + '\')">'
+                    + '  <h3 data-model="' + name + '">'
                     + '    <span class="status-dot ' + statusClass + '"></span>'
                     + '    <span class="model-name" title="' + name + '">' + name + '</span>'
                     + '  </h3>'
@@ -771,9 +771,6 @@
             const bodyId = 'body-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_');
             const panel = document.getElementById(bodyId);
             if (!panel) return;
-
-            // Check if already populated (avoid re-fetch on collapse+re-expand)
-            if (panel.dataset.fetched === '1') return;
 
             try {
                 const data = await adminGet('/admin/config/' + encodeURIComponent(modelName));
@@ -843,6 +840,7 @@
                 html += '</div>';
 
                 panel.innerHTML = html;
+
                 panel.dataset.fetched = '1';
 
                 // Wire up capability chip toggles
@@ -1018,181 +1016,6 @@
             clearChatHistory();       // reset conversation for new model
             openEditForm(name);
             restoreChatParams();      // load params for this model
-        }
-
-        // ── 3.1 Populate dropdowns from /admin/models metadata ────
-        function populateDropdowns(metadata) {
-            const backendSel = document.getElementById('edit-backend');
-            if (backendSel) {
-                const backends = metadata?.backends || {};
-                backendSel.innerHTML = '<option value="">(default)</option>' +
-                    Object.keys(backends).map(b => `<option value="${b}">${b}</option>`).join('');
-            }
-            const runnerSel = document.getElementById('edit-runner');
-            if (runnerSel) {
-                const types = metadata?.runner_types || [];
-                runnerSel.innerHTML = '<option value="">(auto)</option>' +
-                    types.map(t => `<option value="${t}">${t}</option>`).join('');
-            }
-        }
-
-        // ── 3.2 Render capability chips ───────────────────────────
-        function renderCapabilities(config) {
-            const container = document.getElementById('edit-capabilities');
-            if (!container) return;
-            const allCaps = ['chat', 'tts'];
-            const selected = new Set(config?.capabilities || ['chat']);
-            container.innerHTML = allCaps.map(c => {
-                const active = selected.has(c) ? ' active' : '';
-                return `<span class="capability-chip${active}" data-cap="${c}">${c}</span>`;
-            }).join('');
-
-            // Click toggle on chips
-            container.querySelectorAll('.capability-chip').forEach(chip => {
-                chip.addEventListener('click', () => {
-                    const cap = chip.dataset.cap;
-                    if (selected.has(cap)) selected.delete(cap);
-                    else selected.add(cap);
-                    chip.classList.toggle('active');
-                    maybeUpdateDirty();
-                });
-            });
-        }
-
-        // ── 3.3 Open Edit Form — fetch config + populate fields ──
-        async function openEditForm(modelName) {
-            const editSec = document.getElementById('sec-edit');
-            if (editSec) editSec.classList.remove('collapsed');
-
-            try {
-                const data = await adminGet(`/admin/config/${modelName}`);
-                if (!data || !data.config) return;
-                configSnapshot = JSON.parse(JSON.stringify(data.config));  // deep clone
-                populateFormFields(data.config);
-                renderCapabilities(data.config);
-                updateDirtyState();
-            } catch (e) {
-                console.error(`[admin] failed to load ${modelName} config:`, e.message);
-            }
-        }
-
-        function populateFormFields(cfg) {
-            document.getElementById('edit-name').value = cfg.id || '';  // not settable
-            const checkpoint = document.getElementById('edit-checkpoint');
-            if (checkpoint) checkpoint.value = cfg.checkpoint || '';
-            const backend = document.getElementById('edit-backend');
-            if (backend) backend.value = cfg.backend || '';
-            const runner = document.getElementById('edit-runner');
-            if (runner) runner.value = cfg.runner || '';
-            const args = document.getElementById('edit-args');
-            if (args) args.value = cfg.args || '';
-            const logBuffer = document.getElementById('edit-log-buffer');
-            if (logBuffer) logBuffer.value = cfg.max_log_lines || 500;
-        }
-
-        function getFormValues() {
-            return {
-                checkpoint: document.getElementById('edit-checkpoint').value,
-                backend: document.getElementById('edit-backend').value || undefined,
-                runner: document.getElementById('edit-runner').value || undefined,
-                args: document.getElementById('edit-args').value || undefined,
-                max_log_lines: parseInt(document.getElementById('edit-log-buffer').value) || 500,
-            };
-        }
-
-        function getSelectedCapabilities() {
-            const chips = document.querySelectorAll('#edit-capabilities .capability-chip.active');
-            return Array.from(chips).map(c => c.dataset.cap);
-        }
-
-        // ── 3.4 Dirty detection ───────────────────────────────────
-        function maybeUpdateDirty() {
-            updateDirtyState();
-        }
-
-        function updateDirtyState() {
-            const btn = document.getElementById('btn-save');
-            if (!configSnapshot || !btn) return;
-
-            const current = getFormValues();
-            const caps = getSelectedCapabilities();
-
-            const isDirty = (
-                current.checkpoint !== configSnapshot.checkpoint ||
-                (current.backend ?? '') !== (configSnapshot.backend ?? '') ||
-                (current.runner ?? '') !== (configSnapshot.runner ?? '') ||
-                current.args !== (configSnapshot.args ?? '') ||
-                current.max_log_lines !== (configSnapshot.max_log_lines ?? 500) ||
-                JSON.stringify(caps.sort()) !== JSON.stringify((configSnapshot.capabilities || ['chat']).sort())
-            );
-            btn.disabled = !isDirty;
-        }
-
-        // ── Wire up all form inputs for dirty detection ───────────
-        document.addEventListener('input', e => {
-            if (e.target.closest('#edit-form')) maybeUpdateDirty();
-        });
-
-        // ── 3.5 Reset button ──────────────────────────────────────
-        async function resetEditForm() {
-            if (!selectedModel) return;
-            try {
-                const data = await adminGet(`/admin/config/${selectedModel}`);
-                if (data && data.config) {
-                    configSnapshot = JSON.parse(JSON.stringify(data.config));
-                    populateFormFields(data.config);
-                    renderCapabilities(data.config);
-                    updateDirtyState();
-                }
-            } catch (e) {
-                console.error('[admin] reset failed:', e.message);
-            }
-        }
-
-        // ── 3.6 Save button (form submit) ────────────────────────
-        async function saveEditForm(e) {
-            e.preventDefault();
-            const btn = document.getElementById('btn-save');
-            if (!selectedModel || btn.disabled) return;
-
-            const body = getFormValues();
-            body.capabilities = getSelectedCapabilities();
-
-            try {
-                await adminPut(`/admin/config/${selectedModel}`, body);
-                // Update cache & snapshot
-                configSnapshot = JSON.parse(JSON.stringify(body));
-                updateDirtyState();
-                // Refresh model list to reflect any changes
-                refreshModels();
-            } catch (e) {
-                console.error('[admin] save failed:', e.message);
-            }
-        }
-
-        // ── 3.7 Cancel button ────────────────────────────────────
-        function cancelEditForm() {
-            const editSec = document.getElementById('sec-edit');
-            if (editSec) editSec.classList.add('collapsed');
-        }
-
-        // ── 3.8 Start/Restart button ─────────────────────────────
-        async function startSelectedModel() {
-            if (!selectedModel) return;
-            const btn = document.getElementById('btn-start');
-            const origText = btn.textContent;
-            btn.disabled = true;
-
-            try {
-                const body = getFormValues();
-                body.capabilities = getSelectedCapabilities();
-                await adminPost(`/admin/start/${selectedModel}`, body);
-                refreshModels();
-            } catch (e) {
-                console.error('[admin] start failed:', e.message);
-            } finally {
-                btn.disabled = false;
-            }
         }
 
         // ── 5. Logs pane functions ────────────────────────────────
@@ -1497,7 +1320,6 @@
                         } else {
                             // Fallback: plain text with basic formatting
                             element.textContent = text;
-                            console.warn('[chat] marked.js not loaded — showing raw text');
                             resolve();
                         }
                     };
@@ -1540,15 +1362,6 @@
                 selectModel(item.dataset.model);
             });
 
-            // ── 3.5 Reset button ─────────────────────────────────────
-            document.getElementById('btn-reset')?.addEventListener('click', resetEditForm);
-            // ── 3.6 Save button (form submit) ────────────────────────
-            document.getElementById('edit-form')?.addEventListener('submit', saveEditForm);
-            // ── 3.7 Cancel button ────────────────────────────────────
-            document.getElementById('btn-cancel')?.addEventListener('click', cancelEditForm);
-            // ── 3.8 Start/Restart button ─────────────────────────────
-            document.getElementById('btn-start')?.addEventListener('click', startSelectedModel);
-
             // ── 4.1 Accordion toggle (shared) ─────────────────────────
             window.toggleAccordion = function(id) {
                 const el = document.getElementById(id);
@@ -1557,7 +1370,7 @@
                 el.classList.toggle('collapsed');
 
                 // Load config when expanding
-                if (!wasCollapsed) {
+                if (wasCollapsed) {
                     const h3 = el.querySelector('h3');
                     if (h3 && h3.dataset.model) {
                         populateModelPanel(h3.dataset.model);
@@ -1566,6 +1379,19 @@
 
                 requestAnimationFrame(() => layoutRightPanels());
             };
+
+            // Delegate clicks on accordion items to toggleAccordion
+            const itemContainer = document.getElementById('model-accordion-items');
+            if (itemContainer) {
+                itemContainer.addEventListener('click', (e) => {
+                    e.stopImmediatePropagation();
+                    const h3 = e.target.closest('h3[data-model]');
+                    if (!h3) return;
+                    const section = h3.closest('.accordion-item');
+                    if (!section) return;
+                    toggleAccordion(section.id);
+                });
+            }
 
             // ── 4.2 Right-accordion height splitting ─────────────────
             function layoutRightPanels() {
