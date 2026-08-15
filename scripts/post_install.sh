@@ -17,21 +17,31 @@ for script in arkestra-server arkestra-cli; do
     # Preserve the original entry-point body as .real
     cp "$dst" "$dst.real"
 
-    # Replace with auto-activating wrapper
+    # Replace with auto-activating wrapper.
+    # Strategy: source venv/bin/activate, then use $VIRTUAL_ENV directly
+    # (avoids which/path resolution issues in some environments).
     cat > "$dst" << 'WRAPPER'
 #!/usr/bin/env bash
 # Auto-generated: activates venv if $VIRTUAL_ENV is unset, then execs the real script.
 if [ -z "${VIRTUAL_ENV:-}" ]; then
+    # Source activate from same bin directory as this script
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    # SCRIPT_DIR is <project>/venv/bin — look for activate in the same bin dir
     if [ -f "$SCRIPT_DIR/activate" ]; then
         . "$SCRIPT_DIR/activate"
     else
-        echo "Warning: could not locate venv to auto-activate." >&2
+        echo "Error: could not locate venv activate at $SCRIPT_DIR" >&2
+        exit 1
     fi
 fi
-# shellcheck disable=SC1090
-exec -a "$0" "$(which python)" "${BASH_SOURCE[0]}.real" "$@"
+
+# Use VIRTUAL_ENV to find python (reliable, no PATH/which caching issues)
+PYTHON="${VIRTUAL_ENV}/bin/python"
+if [ ! -x "$PYTHON" ]; then
+    echo "Error: venv python not found at $PYTHON (is VIRTUAL_ENV=$VIRTUAL_ENV valid?)" >&2
+    exit 1
+fi
+
+exec -a "$0" "$PYTHON" "${BASH_SOURCE[0]}.real" "$@"
 WRAPPER
 
     rm -f "$venv_bin/$script.py" "$venv_bin/__pycache__/"* 2>/dev/null || true
