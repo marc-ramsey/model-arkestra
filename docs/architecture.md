@@ -87,3 +87,34 @@ See [API Reference — ModelArkestra](../api/model-arkestra.md) for full method 
 ## Process Lifecycle
 
 For crash detection, shutdown sequencing, and teardown behavior, see [Lifecycle](../lifecycle.md).
+
+## Argument Passing and Resolution
+
+CLI arguments flow through a six-layer defaults chain before reaching subprocess construction. Values are typed YAML lists internally and reconstructed to CLI flags only at the invocation boundary.
+
+### Defaults Cascade
+
+Each layer fills in values missing from the one above:
+
+1. `**overrides` — transient runtime values (single invocation)
+2. Model-level `args:` list — explicit per-model overrides
+3. `defaults:` top-level config section — global shared defaults
+4. Backend class defaults — each backend defines fallback values
+5. Engine + runner type defaults — inference engine and execution container baselines
+6. Hardcoded fallbacks on the base runner class
+
+### Engine → Target Resolution
+
+Each backend name (e.g., `rocm`, `vulkan-radv`) implies an inference engine (llama.cpp). The engine is resolved from the backend name at runtime — users do not specify it separately. This allows each engine to maintain its own target registry and default chain without cluttering user-facing config.
+
+### CLI Reconstruction (`_build_cmd_line`)
+
+A private method on the runner base class converts the merged args list into a subprocess-compatible command:
+
+| YAML Entry | Reconstructed Flag |
+|---|---|
+| `- temp: 0.7` | `--temp 0.7` (snake_case → kebab-case, value appended) |
+| `- jinja: true` / `- jinja: false` | `--jinja true` / `--jinja false` (boolean with value) |
+| `- flash_attn: present` | `--flash-attn` (bare flag, no value) |
+
+Infrastructure flags (`--port`, `--model`) are added by the method from runner context. The method is called right before `subprocess.Popen()` — this is the only place where arguments become strings. Internally everything stays structured as YAML lists.

@@ -16,11 +16,30 @@ The properties `.process_runner`, `.podman_runner`, and `.docker_runner` still e
 
 ## Methods
 
-### `async start(model_name: str, port: int | None = None, backend: str | None = None, runner: str | None = None) -> None`
+### `async start(model_name: str, **overrides) -> None`
 
-Starts the server process or container for *model_name*. Runner type is resolved automatically:
-- If `runner=` is provided, that runner type is used directly.
-- Otherwise: `backends.<id>.runner` (from config) → `runners:<type>` in config → falls back to `"process"`.
+Starts the server process or container for *model_name*. Accepts optional keyword overrides — all are transient (never persisted to disk):
+
+| Override Key | Type | Description |
+|---|---|---|
+| `port` | `int \| None` | Explicit port (auto-allocated from range if omitted) |
+| `args` | `list[dict[str, Any]] \| None` | CLI flag overrides (e.g., `[{"temp": 1.0}]`), merged onto config args as YAML list entries |
+| `backend` | `str \| None` | Backend/target override — engine resolved from backend name |
+
+Runner type resolution follows precedence: explicit `runner=` arg → `backends.<id>.runner` → `runners:` config → default "process".
+
+If the model already exists and is in a STOPPED state, it restarts in-place on the same port. If it is already RUNNING, `/health` is polled — 200 returns immediately, anything else continues startup. Polls `/health` until ready or timeout. Raises `ServerReadyTimeout` on health-check failure (not on intermediate 502/504; those raise `RunnerError`).
+
+```python
+# Simple — use config as-is
+await arkestra.start("qwen3-4b")
+
+# Override just temperature for this invocation
+await arkestra.start("qwen3-4b", args=[{"temp": 1.0}])
+
+# Explicit port + backend override
+await arkestra.start("qwen3-4b", port=18000, backend="vulkan-radv")
+```
 
 If the model already exists and is in a STOPPED state, it restarts in-place on the same port. If it is already RUNNING, `/health` is polled — 200 returns immediately, anything else continues startup. Polls `/health` until ready or timeout. Raises `ServerReadyTimeout` on health-check failure (not on intermediate 502/504; those raise `RunnerError`).
 
