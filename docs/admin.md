@@ -52,7 +52,7 @@ Returns a list of all configured models with their full runtime context. Models 
       "port": 18000,
       "runner_type": "process",
       "backend_id": "rocm",
-      "args": "--temp 0.7 --top-k 20 --ctx-size 131072",
+      "args": ["temp", 0.7, "top-k", 20, "ctx-size", 131072],
       "checkpoint": "unsloth/Qwen3-4B-GGUF:Q4_K_M",
       "capabilities": ["chat"]
     },
@@ -62,7 +62,7 @@ Returns a list of all configured models with their full runtime context. Models 
       "port": null,
       "runner_type": null,
       "backend_id": "vulkan-radv",
-      "args": "--temp 0.7 --top-p 0.95 --ctx-size 131072",
+      "args": ["temp", 0.7, "top-p", 0.95, "ctx-size", 131072],
       "checkpoint": "unsloth/gemma-4-E2B-it-GGUF:Q4_K_M",
       "capabilities": []
     }
@@ -102,7 +102,7 @@ curl -X POST 'http://localhost:8080/admin/config' \
        "name": "my-new-model",
        "checkpoint": "unsloth/my-model-GGUF:Q4_K_M",
        "backend": "vulkan-radv",
-       "args": "--temp 0.7 --ctx-size 131072"
+       "args": {"temp": 0.7, "ctx-size": 131072}
      }'
 ```
 
@@ -133,7 +133,7 @@ Returns:
   "model": "qwen3.5-4b",
   "config": {
     "checkpoint": "unsloth/Qwen3-4B-GGUF:Q4_K_M",
-    "args": "--temp 0.7 --top-k 20 --ctx-size 131072",
+    "args": {"temp": 0.7, "top-k": 20, "ctx-size": 131072},
     "backend": "rocm"
   }
 }
@@ -149,7 +149,7 @@ Update an existing model's configuration and write it to disk. **Does not restar
 curl -X PUT 'http://localhost:8080/admin/config/qwen3.5-4b' \
      -H 'Content-Type: application/json' \
      -H 'X-Admin-Key: your-secret-key' \
-     -d '{"args": "--temp 1.0 --ctx-size 32768", "capabilities": ["chat"]}'
+     -d '{"args": {"temp": 1.0, "ctx-size": 32768}, "capabilities": ["chat"]}'
 ```
 
 Valid fields: `args`, `checkpoint`, `backend`, `capabilities`, `runner`, `tags`.

@@ -113,8 +113,10 @@ A private method on the runner base class converts the merged args list into a s
 
 | YAML Entry | Reconstructed Flag |
 |---|---|
-| `- temp: 0.7` | `--temp 0.7` (snake_case → kebab-case, value appended) |
+| `- temp: 0.7` | `--temp 0.7` (value appended) |
 | `- jinja: true` / `- jinja: false` | `--jinja true` / `--jinja false` (boolean with value) |
-| `- flash_attn: present` | `--flash-attn` (bare flag, no value) |
+| `- flash-attn: present` | `--flash-attn` (bare flag, no value) |
+
+Keys use kebab-case in YAML, matching CLI flag names directly.
 
 Infrastructure flags (`--port`, `--model`) are added by the method from runner context. The method is called right before `subprocess.Popen()` — this is the only place where arguments become strings. Internally everything stays structured as YAML lists.

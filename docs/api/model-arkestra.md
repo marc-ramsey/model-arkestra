@@ -18,13 +18,16 @@ The properties `.process_runner`, `.podman_runner`, and `.docker_runner` still e
 
 ### `async start(model_name: str, **overrides) -> None`
 
-Starts the server process or container for *model_name*. Accepts optional keyword overrides — all are transient (never persisted to disk):
+Starts the server process or container for *model_name*. Accepts optional keyword overrides — all are transient (never persisted to disk). Keys separated into infrastructure and inference:
 
-| Override Key | Type | Description |
+| Key | Type | Description |
 |---|---|---|
 | `port` | `int \| None` | Explicit port (auto-allocated from range if omitted) |
-| `args` | `list[dict[str, Any]] \| None` | CLI flag overrides (e.g., `[{"temp": 1.0}]`), merged onto config args as YAML list entries |
 | `backend` | `str \| None` | Backend/target override — engine resolved from backend name |
+| `runner` | `str \| None` | Explicit runner type (`process`, `podman`, `docker`) |
+| *other* | any | Inference param (e.g., `temp=1.0`, `top-p=0.95`). Passed through to runner and converted to ``--flag value`` CLI flags at subprocess boundary. |
+
+Infra keys (`port`, `backend`, `runner`) control routing and lifecycle. Everything else is an inference parameter — snake_case in Python code (e.g., `top_k`), kebab-case in YAML config (e.g., `top-p`). Both produce ``--top-k`` / ``--top-p`` CLI flags.
 
 Runner type resolution follows precedence: explicit `runner=` arg → `backends.<id>.runner` → `runners:` config → default "process".
 
@@ -35,21 +38,19 @@ If the model already exists and is in a STOPPED state, it restarts in-place on t
 await arkestra.start("qwen3-4b")
 
 # Override just temperature for this invocation
-await arkestra.start("qwen3-4b", args=[{"temp": 1.0}])
+await arkestra.start("qwen3-4b", temp=1.0)
 
 # Explicit port + backend override
 await arkestra.start("qwen3-4b", port=18000, backend="vulkan-radv")
 ```
 
-If the model already exists and is in a STOPPED state, it restarts in-place on the same port. If it is already RUNNING, `/health` is polled — 200 returns immediately, anything else continues startup. Polls `/health` until ready or timeout. Raises `ServerReadyTimeout` on health-check failure (not on intermediate 502/504; those raise `RunnerError`).
-
 ### `async stop(model_name: str) -> None`
 
 Stops the model matching *model_name*. Sends the appropriate shutdown signal (see [Lifecycle](../lifecycle.md)).
 
-### `async restart(model_name: str, *, backend: str | None = None, runner: str | None = None) -> None`
+### `async restart(model_name: str, **overrides) -> None`
 
-Stops the running instance and starts a new one on the **same port**. Optional keyword args override backend or runner for the restarted instance.
+Stops the running instance and starts a new one on the **same port**. Infra keys (`backend`, `runner`) override routing. Everything else is an inference param.
 
 ### `async stop_all() -> None`
 

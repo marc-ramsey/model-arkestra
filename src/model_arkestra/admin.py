@@ -256,25 +256,30 @@ class ArkestraAdmin:
             if model not in cfg:
                 raise HTTPException(status_code=404, detail=f"Model '{model}' not in config")
 
-            overrides = {}
+            # Build raw kwargs — infra keys handled by ModelArkestra, rest are inference params
+            kw = {}
+            for key in ("args", "checkpoint", "backend", "runner"):
+                if body and key in body and body[key] is not None:
+                    kw[key] = body[key]
+            if body and "max_log_lines" in body and body["max_log_lines"] is not None:
+                try:
+                    kw["max_log_lines"] = int(body["max_log_lines"])
+                except (ValueError, TypeError):
+                    pass
+            # Any other keys in body are inference params — pass through as-is
             if body:
-                for key in ("args", "checkpoint", "backend", "runner"):
-                    if key in body and body[key] is not None:
-                        overrides[key] = str(body[key])
-                if "max_log_lines" in body and body["max_log_lines"] is not None:
-                    try:
-                        overrides["max_log_lines"] = int(body["max_log_lines"])
-                    except (ValueError, TypeError):
-                        pass
+                for key, value in body.items():
+                    if key not in ("args", "checkpoint", "backend", "runner", "max_log_lines") and value is not None:
+                        kw[key] = value
 
             # If model is already running with overrides, stop first then start fresh
-            if overrides:
+            if kw:
                 ctxs = [c for c in self.server._arkestra._get_model_contexts() if c.name == model]
                 if ctxs and ctxs[0].state == RunnerState.RUNNING:
                     await self.server._arkestra.stop(model)
 
             try:
-                await self.server._arkestra.start(model, overrides=overrides)
+                await self.server._arkestra.start(model, **kw)
                 ctxs = [c for c in self.server._arkestra._get_model_contexts() if c.name == model]
                 port = ctxs[0].port if ctxs else None
                 return {"ok": True, "model": model, "port": port}

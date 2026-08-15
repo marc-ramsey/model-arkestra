@@ -151,6 +151,10 @@ class ModelArkestra:
         for r in self._runners.values():
             if model_name in r._models and r._models[model_name].state == RunnerState.RUNNING:
                 return r
+        # Find the runner that has this model
+        for r in self._runners.values():
+            if model_name in r._models and r._models[model_name].state == RunnerState.RUNNING:
+                return r
         runner_type = self._resolve_runner_type(model_name, env_vars, backend)
         return self._get_runner_instance(runner_type, model_name)
 
@@ -189,16 +193,21 @@ class ModelArkestra:
     async def start(
         self,
         model_name: str,
-        port: Optional[int] = None,
-        backend: Optional[str] = None,
-        runner: Optional[str] = None,
+        **overrides: Any,
     ) -> None:
         """Start a model.
 
-        * ``backend`` — resolves from config.yaml (the backend_id to use).
-        * ``runner`` — explicit override for which runner to use:
-          ``None`` / ``"process"`` → ProcessModelRunner,
-          ``"podman"`` → PodmanModelRunner, ``"docker"`` → DockerModelRunner.
+        ``**overrides`` is a flat mix of infrastructure and inference kwargs:
+
+        * Infra keys (handled by ModelArkestra): ``port``, ``backend``, ``runner``
+        * Everything else → inference param, passed through to runner.start()
+          as bare kwargs. Converted to ``--flag value`` CLI flags at subprocess
+          boundary.
+
+        Example::
+
+            await arkestra.start("qwen3-4b", temp=1.0, top_k=20)
+            await arkestra.start("qwen3-4b", port=18000, backend="rocm", temp=0.9)
         """
         # Validate inputs before allocating anything
         model = self.get_model(model_name)
@@ -207,6 +216,13 @@ class ModelArkestra:
 
         backends_cfg = self._cm.data.get("backends", {})
         runners_cfg = self._cm.data.get("runners", {})
+
+        # Separate infra keys from inference kwargs
+        infra_keys = {"port", "backend", "runner"}
+        port = overrides.get("port")
+        backend = overrides.get("backend")
+        runner_type_override = overrides.get("runner")
+        inference_kwargs = {k: v for k, v in overrides.items() if k not in infra_keys}
 
         # Validate explicit backend
         if backend and backend not in backends_cfg:
@@ -219,26 +235,28 @@ class ModelArkestra:
             port = self._alloc()
 
         # runner= selects the transport layer
-        if runner is not None:
-            inst = self._get_runner_instance(runner, model_name)
-            await inst.start(model_name, port=port, backend=backend)
+        if runner_type_override is not None:
+            inst = self._get_runner_instance(runner_type_override, model_name)
+            await inst.start(model_name, port=port, backend=backend, **inference_kwargs)
             ctx = inst._models[model_name]
-            ctx.runner_type = runner
+            ctx.runner_type = runner_type_override
             return
-        else:
-            be_id = self._resolve_backend_id(model_name, {}, backend)
-            be_cfg = backends_cfg.get(be_id, {})
-            runner_type = str(be_cfg.get("runner", "process"))
-            if runner_type not in runners_cfg and runner_type not in ("process", "podman", "docker"):
-                raise ValueError(
-                    f"Backend '{be_id}' resolves to unknown runner type '{runner_type}'. "
-                    f"Available runners: {list(runners_cfg.keys())}"
-                )
-            runner = self._get_runner_instance(runner_type, model_name)
 
-        await runner.start(model_name, port=port, backend=backend)
+        # Resolve backend + runner type from config
+        be_id = self._resolve_backend_id(model_name, {}, backend)
+        be_cfg = backends_cfg.get(be_id, {})
+        resolved_runner = str(be_cfg.get("runner", "process"))
+
+        if resolved_runner not in runners_cfg and resolved_runner not in ("process", "podman", "docker"):
+            raise ValueError(
+                f"Backend '{be_id}' resolves to unknown runner type '{resolved_runner}'. "
+                f"Available runners: {list(runners_cfg.keys())}"
+            )
+
+        runner = self._get_runner_instance(resolved_runner, model_name)
+        await runner.start(model_name, port=port, backend=backend, **inference_kwargs)
         ctx = runner._models[model_name]
-        ctx.runner_type = runner_type
+        ctx.runner_type = resolved_runner
 
     async def stop(self, model_name: str) -> None:
         """Stop the named model."""
@@ -253,17 +271,15 @@ class ModelArkestra:
     async def restart(
         self,
         model_name: str,
-        *,
-        backend: Optional[str] = None,
-        runner: Optional[str] = None,
+        **overrides: Any,
     ) -> None:
         """Stop a model and start a new instance on the same port.
 
-        Optional ``backend`` / ``runner`` kwargs override the runner for
-        the restarted instance; either, both, or neither may be supplied.
+        Optional kwargs override backend, runner, or pass inference params.
+        All overrides are transient — they disappear on restart.
         """
         await self.stop(model_name)
-        await self.start(model_name, backend=backend, runner=runner)
+        await self.start(model_name, **overrides)
 
     async def stop_all(self) -> None:
         """Stop all model processes across every runner, keeping entries alive."""

@@ -34,7 +34,7 @@ backends:
     runner: process     ← maps this backend to ProcessModelRunner
     args:
       - ngpu_layers: -1
-      - flash_attn: present
+      - flash-attn: present
   rocm:
     runner: podman      ← maps this backend to PodmanModelRunner
     args:
@@ -84,9 +84,9 @@ The `args:` key holds a YAML list of single-key entries representing typed CLI f
 |---|---|---|
 | Standard value | `- temp: 0.7` | `--temp 0.7` |
 | Boolean with value | `- jinja: true` / `- jinja: false` | `--jinja true` (or `false`) |
-| Presence-only flag | `- flash_attn: present` | `--flash-attn` (bare flag, no value) |
+| Presence-only flag | `- flash-attn: present` | `--flash-attn` (bare flag, no value) |
 
-Keys are snake_case in YAML and reconstructed as kebab-case flags (`top_k` → `--top-k`). Non-arg model metadata (checkpoint, capabilities, max_log_lines) lives at the model level alongside `args:`, not inside it — only `args:` keys reach subprocesses.
+Keys use kebab-case in YAML, matching CLI flag names directly. Non-arg model metadata (checkpoint, capabilities, max_log_lines) lives at the model level alongside `args:`, not inside it — only `args:` keys reach subprocesses.
 
 Backend args use the same list format. A backend entry looks like:
 
@@ -95,8 +95,8 @@ backends:
   rocm:
     runner: process
     args:
-      - ngpu_layers: -1
-      - flash_attn: present
+      - ngpu-layers: -1
+      - flash-attn: present
 ```
 
 Model args and backend args merge through the same defaults cascade — no macro layer, no string substitution.
@@ -109,10 +109,10 @@ models:
 
     args:
       - temp: 0.7
-      - top_k: 20
-      - ctx_size: 16384
+      - top-p: 20
+      - ctx-size: 16384
       - jinja: true
-      - flash_attn: present
+      - flash-attn: present
 
     max_log_lines: 500        # non-arg — stays in admin context
     capabilities: ["chat"]     # non-arg — never reaches subprocess

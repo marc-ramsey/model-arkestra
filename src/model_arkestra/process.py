@@ -48,6 +48,12 @@ class ProcessModelRunner(BaseModelRunner):
 
         args_list, _cmd_str = result
 
+        # Append inference kwargs as CLI flags (--snake_case value)
+        kwarg_flags = self._build_cmd_line(
+            self._inference_kwargs.get(ctx.name, {})
+        )
+        args_list.extend(kwarg_flags)
+
         # Merge environment: process + global env + backend env_container.
         env = os.environ.copy()
         for k, v in (self.cm.get_vector("env") or {}).items():

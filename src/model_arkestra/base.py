@@ -34,6 +34,7 @@ class BaseModelRunner(ABC):
         cfg_br = (self.cm.data.get("runners") or {}).get("broadcast_addr")
         self.broadcast_addr = broadcast_addr if broadcast_addr is not None else (cfg_br or "0.0.0.0")
         self._watchers: Dict[str, asyncio.Task] = {}
+        self._inference_kwargs: Dict[str, Dict[str, Any]] = {}
         self._models: Dict[str, _ModelContext] = {}
 
 
@@ -301,50 +302,86 @@ class BaseModelRunner(ABC):
                 else:
                     raise RunnerError(f"Request failed with status {resp.status}")
 
-    async def start(self, model_name: str, port: Optional[int] = None, backend: Optional[str] = None,
-                    overrides: Optional[Dict[str, Any]] = None) -> None:
+    async def _build_cmd_line(self, args: Dict[str, Any]) -> List[str]:
+        """Convert inference kwargs to CLI flags.
+
+        Each key-value pair becomes two subprocess args:
+          `--snake-case-key` `value`
+
+        Keys are snake_case → kebab-case. Values are stringified.
+        This method is appended to the base CLI from ``build_model_args``.
+        """
+        cli: List[str] = []
+        for key, value in args.items():
+            flag = f"--{key.replace('_', '-')}"  # snake_case → kebab-case
+            if isinstance(value, bool):
+                cli.extend([flag, str(value).lower()])
+            else:
+                cli.extend([flag, str(value)])
+        return cli
+
+    async def start(
+        self,
+        model_name: str,
+        port: Optional[int] = None,
+        backend: Optional[str] = None,
+        **inference_kwargs: Any,
+    ) -> None:
+        """Start a model process.
+
+        *port* and *backend* are infra keys (routing/lifecycle).
+        All other keyword arguments are inference params — converted to
+        ``--flag value`` CLI flags appended after the base args from
+        ``build_model_args``.
+        """
+        # ── Context lookup / creation ────────────────────────────────
+        ctx = self._models.get(model_name)
+        if not ctx:
+            ctx = next(
+                (v for k, v in self._models.items() if k == model_name), None
+            )
+
         effective_backend: Optional[str] = backend
-        if backend is not None:
-            ctx = self._models.get(model_name)
-        else:
-            ctx = next((v for k, v in self._models.items() if k == model_name), None)
+
+        # ── Restart path: reuse existing port ────────────────────────
         if ctx and ctx.state in (RunnerState.STOPPED, RunnerState.STOPPING):
-            # Restart in place — reuse existing ctx.port
             await self._before_restart(ctx)
             eff_port = port if port is not None else ctx.port
-            # Replace log buffer if size changed via overrides
-            new_size = overrides.get("max_log_lines") if overrides else None
+            new_size = inference_kwargs.get("max_log_lines")
             if new_size is None:
                 new_size = self.cm.data.get('log-buffer-size', 500)
             if len(ctx._log_buffer) > 0 and ctx._log_buffer.maxlen != new_size:
                 from collections import deque
                 ctx._log_buffer = deque(maxlen=new_size)
+
+        # ── Already running: health-check shortcut ───────────────────
         elif ctx is not None and ctx.state == RunnerState.RUNNING:
-            # Already running — check health (idempotent start shortcut).
-            # Overrides are handled by the caller (admin endpoint) which
-            # stops the model first before calling start() again.
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(
                         f"http://127.0.0.1:{ctx.port}/health", timeout=3
                     ) as resp:
                         if resp.status == 200:
+                            # Already healthy — store kwargs for potential restart
+                            self._inference_kwargs[model_name] = inference_kwargs
                             return
             except Exception:
                 pass
+
+        # ── New model: allocate port & create context ────────────────
         else:
             eff_port = port if port is not None else int(
                 self.cm.data.get('models-start-port', 18000)
             )
             if not isinstance(eff_port, int) or eff_port < 1 or eff_port > 65535:
                 raise ValueError(f"Invalid port: {eff_port}")
+
             model_data = self.cm.get_model(model_name, env_vars={"PORT": str(eff_port)})
             if not model_data:
                 raise ModelNotStarted(model_name)
 
             effective_backend = backend or model_data.get("backend")
-
-            log_size = overrides.get("max_log_lines") if overrides else None
+            log_size = inference_kwargs.get("max_log_lines")
             if log_size is None:
                 log_size = self.cm.data.get('log-buffer-size', 500)
 
@@ -359,14 +396,16 @@ class BaseModelRunner(ABC):
         if not model_data:
             model_data = self.cm.get_model(model_name, env_vars={"PORT": str(eff_port)})
 
-        # Apply transient overrides (args, checkpoint, backend from dashboard)
-        if overrides:
-            for key in ('args', 'checkpoint'):
-                if key in overrides and overrides[key] is not None:
-                    model_data[key] = overrides[key]
-            if overrides.get('backend') is not None:
-                effective_backend = overrides['backend']
-                ctx.backend_id = effective_backend
+        # ── Apply transient overrides from inference_kwargs ──────────
+        for key in ('args', 'checkpoint'):
+            if key in inference_kwargs and inference_kwargs[key] is not None:
+                model_data[key] = inference_kwargs[key]
+        if inference_kwargs.get('backend') is not None:
+            effective_backend = inference_kwargs['backend']
+            ctx.backend_id = effective_backend
+
+        # Store inference kwargs for _start_model_process to use
+        self._inference_kwargs[model_name] = inference_kwargs
 
         await self._start_model_process(ctx, model_data)
 
