@@ -302,7 +302,7 @@ class BaseModelRunner(ABC):
                 else:
                     raise RunnerError(f"Request failed with status {resp.status}")
 
-    async def _build_cmd_line(self, args: Dict[str, Any]) -> List[str]:
+    def _build_cmd_line(self, args: Dict[str, Any]) -> List[str]:
         """Convert inference kwargs to CLI flags.
 
         Each key-value pair becomes two subprocess args:
