@@ -21,17 +21,17 @@ This is **not** a replacement for [Lemonade](https://github.com/ollama/lemonade)
 
 ```bash
 cd model-arkestra
-scripts/setup.sh        # creates venv, pip install -e ".[proxy]", auto-wraps entry points
+scripts/post_install.sh
 ```
 
-`setup.sh` is idempotent — safe to re-run. After setup you can use:
+This creates the venv, installs the package (editable mode with `[proxy]` extras), and adds `venv/bin` to your shell's PATH in both `.bashrc` and `.profile`. Source your profile or restart the terminal afterwards.
 
-| Shortcut | Equivalent |
-|---|---|
-| `arkestra-server --config config.yaml --port 8080` | `python -m model_arkestra.server …` |
-| `arkestra-cli list` | (CLI entry point) |
+After setup, CLI commands work from any directory — no activation needed:
 
-The scripts auto-activate the venv on first invocation, so they work from any directory without sourcing `venv/bin/activate`. Use `scripts/post_install.sh` separately if you need to re-wrap the entry points after a fresh clone.
+```bash
+arkestra-server --config config.yaml --port 8080
+arkestra-cli list
+```
 
 ### Quick Start — Python API
 
