@@ -39,6 +39,7 @@ Missing or incorrect keys return `401 Unauthorized`. Public paths (`/`, `/index.
 | `POST` | `/admin/eject/{model}` | Yes | Remove model from cache, clear contexts (no config change) |
 | `GET` | `/admin/log/{model}?lines=N&follow=true` | Yes | Log snapshot or SSE stream |
 | `POST` | `/admin/restart` | Yes | Stop all running models — models restart implicitly on next inference request |
+| `POST` | `/admin/shutdown` | Yes | Full server teardown — stops uvicorn and all models
 
 ### GET /admin/models
 
@@ -224,6 +225,29 @@ curl -X POST 'http://localhost:8080/admin/restart' \
 ```
 
 Always returns `200 OK`. The HTTP server stays alive; only model runners are stopped.
+
+### POST /admin/shutdown
+
+Full server teardown — stops the uvicorn HTTP listener and shuts down all model runners. This is an irreversible operation: after shutdown, model entries are cleared and cannot be restarted without restarting the entire server process.
+
+```bash
+curl -X POST 'http://localhost:8080/admin/shutdown' \
+     -H 'X-Admin-Key: your-secret-key'
+```
+
+Returns immediately with `200 OK`:
+```json
+{"ok": true, "message": "Server shutting down"}
+```
+
+Then shuts down in background:
+1. All model runners stopped (same sequencing as `stop_all`) — graceful signals → 20s timeout → SIGKILL
+2. Watcher tasks cancelled and awaited
+3. `_models` and `_watchers` dictionaries cleared
+4. Container runners force-removed (`podman rm -f` / `docker rm -f`)
+5. Uvicorn HTTP server stops — process exits
+
+This endpoint always returns `200 OK`. The response is sent before shutdown begins.
 
 ### POST /admin/eject/{model}
 

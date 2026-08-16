@@ -257,3 +257,18 @@ class TestRestart:
         body = r.json()
         assert "stopped" in body
         assert isinstance(body["stopped"], list)
+
+
+# ── /admin/shutdown ────────────────────────────────────────────────
+
+class TestShutdown:
+    """POST /admin/shutdown — server teardown."""
+
+    def test_shutdown_returns_200(self, live_server):
+        """Returns 200 with ok/message structure immediately (shutdown runs in background)."""
+        client = live_server["client"]
+        r = client.post("/admin/shutdown")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["ok"] is True
+        assert "shutting down" in body["message"].lower()

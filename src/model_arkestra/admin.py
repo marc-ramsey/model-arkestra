@@ -33,6 +33,7 @@ class ArkestraAdmin:
         self._add_config_routes()
         self._add_stop_route()
         self._add_restart_route()
+        self._add_shutdown_route()
         self._add_start_route()
         self._add_eject_route()
         self._add_log_route()
@@ -174,6 +175,7 @@ class ArkestraAdmin:
     def _add_restart_route(self) -> None:
         from model_arkestra.types import RunnerState
         from fastapi.responses import JSONResponse
+        import asyncio
 
         @self._app.post("/admin/restart")
         async def admin_restart():
@@ -193,6 +195,24 @@ class ArkestraAdmin:
                     "stopped": running,
                 },
             )
+
+    def _add_shutdown_route(self) -> None:
+        from fastapi.responses import JSONResponse
+        import asyncio
+
+        @self._app.post("/admin/shutdown")
+        async def admin_shutdown():
+            # Send response first, then shut down — uvicorn won't be reachable after this
+            result = {"ok": True, "message": "Server shutting down"}
+            
+            async def do_shutdown():
+                await asyncio.sleep(0.1)  # brief delay to let response flush
+                if self.server._server:
+                    await self.server._server.shutdown()
+                await self.server._arkestra.shutdown()
+            
+            asyncio.create_task(do_shutdown())
+            return JSONResponse(status_code=200, content=result)
 
     def _add_config_routes(self) -> None:
         import copy
