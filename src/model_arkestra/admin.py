@@ -202,15 +202,16 @@ class ArkestraAdmin:
 
         @self._app.post("/admin/shutdown")
         async def admin_shutdown():
-            # Send response first, then shut down — uvicorn won't be reachable after this
             result = {"ok": True, "message": "Server shutting down"}
-            
+
             async def do_shutdown():
-                await asyncio.sleep(0.1)  # brief delay to let response flush
+                # _arkestra.shutdown() calls r.stop_all() internally,
+                # which sends SIGHUP and awaits up to 20s per model —
+                # this is the real graceful shutdown wait.
+                await self.server._arkestra.shutdown()
                 if self.server._server:
                     await self.server._server.shutdown()
-                await self.server._arkestra.shutdown()
-            
+
             asyncio.create_task(do_shutdown())
             return JSONResponse(status_code=200, content=result)
 
