@@ -38,6 +38,7 @@ Missing or incorrect keys return `401 Unauthorized`. Public paths (`/`, `/index.
 | `POST` | `/admin/stop/{model}` | Yes | Stop a running model |
 | `POST` | `/admin/eject/{model}` | Yes | Remove model from cache, clear contexts (no config change) |
 | `GET` | `/admin/log/{model}?lines=N&follow=true` | Yes | Log snapshot or SSE stream |
+| `POST` | `/admin/restart` | Yes | Stop all running models — models restart implicitly on next inference request |
 
 ### GET /admin/models
 
@@ -202,6 +203,27 @@ Stops the named model. Returns `202 Accepted` if the model is already stopped/st
 ```
 
 Returns `404` if the model is not found in any runner context.
+
+### POST /admin/restart
+
+Stops all running models at once. Models remain configured and will **restart implicitly** on their next inference request (same lazy-start behavior as a cold server).
+
+```bash
+curl -X POST 'http://localhost:8080/admin/restart' \
+     -H 'X-Admin-Key: your-secret-key'
+```
+
+**When models are running:**
+```json
+{"ok": true, "message": "Stopped 2 model(s) — will restart implicitly on next request", "stopped": ["qwen3.5-4b", "gemma-4-e2b"]}
+```
+
+**When no models are running:**
+```json
+{"ok": true, "message": "No models running — nothing to restart", "stopped": []}
+```
+
+Always returns `200 OK`. The HTTP server stays alive; only model runners are stopped.
 
 ### POST /admin/eject/{model}
 
