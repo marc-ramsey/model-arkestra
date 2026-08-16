@@ -205,14 +205,23 @@ class ArkestraAdmin:
             result = {"ok": True, "message": "Server shutting down"}
 
             async def do_shutdown():
-                # _arkestra.shutdown() calls r.stop_all() internally,
-                # which sends SIGHUP and awaits up to 20s per model —
-                # this is the real graceful shutdown wait.
-                await self.server._arkestra.shutdown()
+                # Brief pause so uvicorn flushes the response to the client
+                await asyncio.sleep(0.2)
+                print("[SHUTDOWN] Stopping all models gracefully…", flush=True)
+                try:
+                    await self.server._arkestra.shutdown()
+                    print("[SHUTDOWN] Models stopped, tearing down uvicorn…", flush=True)
+                except Exception as e:
+                    print(f"[SHUTDOWN] Error during model stop: {e}", flush=True)
                 if self.server._server:
                     await self.server._server.shutdown()
+                    print("[SHUTDOWN] Uvicorn shut down. Goodbye.", flush=True)
 
-            asyncio.create_task(do_shutdown())
+            task = asyncio.create_task(do_shutdown())
+            # Prevent the task from being garbage-collected by attaching it to the app lifespan
+            if hasattr(self._app, "_shutdown_task"):
+                del self._app._shutdown_task
+            self._app._shutdown_task = task  # type: ignore
             return JSONResponse(status_code=200, content=result)
 
     def _add_config_routes(self) -> None:
