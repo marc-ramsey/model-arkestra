@@ -1,0 +1,161 @@
+"""Live integration tests for ArkestraAdmin endpoints (via real uvicorn, no mocks).
+
+Starts a real uvicorn server backed by a real ModelArkestra loaded from
+tests/test-config.yaml.  Every admin call goes through the full stack:
+FastAPI → admin routes → ModelArkestra.start / stop_all / shutdown.
+
+No mocks — models are started via their real runners, uvicorn is a real
+background process, httpx talks to it over HTTP like a real client would.
+"""
+
+from __future__ import annotations
+
+import os
+import threading
+import time
+
+import httpx
+import pytest
+import uvicorn
+
+from model_arkestra.server import ArkestraServer
+
+
+# ── Fixtures ───────────────────────────────────────────────────────────────
+
+
+@pytest.fixture(scope="module")
+def live_admin_server():
+    """Start a real ArkestraServer on a background thread for admin endpoint tests."""
+    proxy = ArkestraServer(
+        config_path="tests/test-config.yaml",
+        port=21100,
+        ready_timeout=60,
+    )
+    app = proxy.get_app()
+
+    config = uvicorn.Config(app, host="127.0.0.1", port=21100, log_level="warning")
+    server_obj = uvicorn.Server(config)
+
+    # Wire it into proxy._server so shutdown route can shut down uvicorn cleanly
+    proxy._server = server_obj  # type: ignore
+
+    def serve():
+        import asyncio
+        asyncio.run(server_obj.serve())
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+
+    # Wait for the server to accept connections
+    url = "http://127.0.0.1:21100/admin/models"
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        try:
+            httpx.get(url, timeout=2)
+            break
+        except Exception:
+            time.sleep(0.5)
+    else:
+        pytest.fail("Live admin server did not become ready in 30s")
+
+    yield proxy
+
+    # Shutdown — stop all model processes and exit uvicorn
+    server_obj.should_exit = True
+    import subprocess as _sp, time as _time
+    for _ in range(10):
+        result = _sp.run(["lsof", "-ti:", "21100"], capture_output=True, text=True)
+        pids = [p for p in result.stdout.strip().split() if p]
+        if not pids:
+            break
+        for pid in pids:
+            try:
+                os.kill(int(pid), 9)
+            except OSError:
+                pass
+        _time.sleep(0.3)
+
+
+BASE = "http://127.0.0.1:21100"
+
+
+# ── Tests: /admin/restart ──────────────────────────────────────────────────
+
+
+class TestRestartLive:
+    """POST /admin/restart — live HTTP, no mocks."""
+
+    def test_restart_no_models_returns_200(self, live_admin_server):
+        """When no models are running, returns 200 with a message."""
+        resp = httpx.post(f"{BASE}/admin/restart", timeout=5)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert "nothing to restart" in body["message"].lower()
+        assert isinstance(body["stopped"], list)
+        assert len(body["stopped"]) == 0
+
+    def test_restart_stops_model(self, live_admin_server):
+        """When a model is running, restart stops it and lists it."""
+        # First start a model — use short timeout config for speed
+        resp = httpx.post(
+            f"{BASE}/admin/start/qwen3.5-4b",
+            json={"max_tokens": 16, "temp": 0.7},
+            timeout=180,
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["model"] == "qwen3.5-4b"
+
+        # Now restart — should stop the running model
+        resp = httpx.post(f"{BASE}/admin/restart", timeout=10)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert "qwen3.5-4b" in body["stopped"]
+
+        # Model should be stopped now (lazy restart on next request)
+        models_resp = httpx.get(f"{BASE}/admin/models", timeout=5)
+        for m in models_resp.json()["models"]:
+            if m["id"] == "qwen3.5-4b":
+                assert m["status"] == "stopped"
+
+    def test_restart_twice_is_safe(self, live_admin_server):
+        """Calling restart when already stopped returns clean response (idempotent)."""
+        httpx.post(f"{BASE}/admin/restart", timeout=5)
+        resp = httpx.post(f"{BASE}/admin/restart", timeout=5)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+
+
+# ── Tests: /admin/shutdown ────────────────────────────────────────────────
+
+
+class TestShutdownLive:
+    """POST /admin/shutdown — verifies response before server exits."""
+
+    def test_shutdown_sends_response_before_exit(self, live_admin_server):
+        """The 200 response arrives before uvicorn stops accepting connections.
+
+        Does NOT start a model — shutdown with no running models is still a real
+        end-to-end test: the endpoint exists, auth passes, response is sent, then
+        the background task tears everything down.
+        """
+        client = httpx.Client(timeout=None)
+        resp = client.post(f"{BASE}/admin/shutdown", timeout=3)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert "shutting down" in body["message"].lower()
+        client.close()
+
+        # After shutdown, server should no longer be reachable
+        time.sleep(5)
+        try:
+            httpx.get(f"{BASE}/health", timeout=3)
+            pytest.fail("Server should have shut down but is still responding")
+        except (httpx.ConnectError, httpx.ConnectTimeout, OSError):
+            pass  # expected — server is gone

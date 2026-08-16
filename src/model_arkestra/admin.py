@@ -214,14 +214,14 @@ class ArkestraAdmin:
                     print("[SHUTDOWN] All models stopped.", flush=True)
                 except Exception as e:
                     print(f"[SHUTDOWN] Error during model stop: {e}", flush=True)
-                # _server is only set via start_background() (embedded usage).
-                # In CLI mode uvicorn.run() owns the process — we just exit.
+                # _server is set via start_background() or when embedded
+                # (as in live tests that attach server_obj to proxy._server).
                 if self.server._server:
-                    print("[SHUTDOWN] Tearing down embedded uvicorn…", flush=True)
                     await self.server._server.shutdown()
+                    print("[SHUTDOWN] uvicorn stopped.", flush=True)
                 else:
-                    print("[SHUTDOWN] CLI mode — exiting process.", flush=True)
-                os._exit(0)
+                    # CLI mode — no Server object to tell, just exit
+                    os._exit(0)
 
             task = asyncio.create_task(do_shutdown())
             if hasattr(self._app, "_shutdown_task"):
