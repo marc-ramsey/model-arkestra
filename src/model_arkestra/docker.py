@@ -94,6 +94,7 @@ def _build_docker_cmd(
             ctx.name,
             env_vars={"PORT": str(ctx.port)},
             override_backend=ctx.backend_id,
+            inference_kwargs=runner._inference_kwargs.get(ctx.name, {}),
         )
         if result is not None:
             llama_arg_list = list(result[0])
@@ -109,11 +110,7 @@ def _build_docker_cmd(
         if binary_path:
             # Replace the image-bundled llama-server with the mounted host binary
             parts[-1] = binary_path
-        # Append inference kwargs as CLI flags
-        kwarg_flags = runner._build_cmd_line(
-            runner._inference_kwargs.get(ctx.name, {})
-        )
-        parts.extend(llama_arg_list + kwarg_flags)
+        parts.extend(llama_arg_list)
 
         return parts
 

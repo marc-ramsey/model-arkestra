@@ -102,13 +102,17 @@ def safe_container_name(name: str, port: int) -> str:
 def _dict_to_cli(args_dict: Dict[str, Any]) -> List[str]:
     """Convert a flat args dict to CLI flag list (snake_case → kebab-case).
 
-    Each key-value pair becomes two subprocess args:
-      `--snake-case-key` `value`
+    Boolean True → ``--flag`` (presence-only).  False → omitted.
+    All other values → ``--flag value``.
     """
     cli: List[str] = []
     for key, value in args_dict.items():
         flag = f"--{key.replace('_', '-')}"
-        cli.extend([flag, str(value)])
+        if isinstance(value, bool):
+            if value:
+                cli.append(flag)
+        else:
+            cli.extend([flag, str(value)])
     return cli
 
 
@@ -117,6 +121,7 @@ def build_model_args(
     model_name: str,
     env_vars: Optional[Dict[str, Any]] = None,
     override_backend: Optional[str] = None,
+    inference_kwargs: Optional[Dict[str, Any]] = None,
 ) -> Optional[Tuple[List[str], str]]:
     """Build command arguments for a model using its backend config.
 
@@ -132,6 +137,9 @@ def build_model_args(
                           PORT and other placeholders.
         override_backend: Optional backend ID that overrides whichever
                           backend the model would normally use.
+        inference_kwargs: Optional dict of runtime inference parameters
+                          to merge into model args (last-wins).
+                          String values containing ``${...}`` are macro-resolved.
 
     Returns:
         A tuple of (arg_list, cmd_str) where arg_list is a list of
@@ -171,8 +179,14 @@ def build_model_args(
         backend_args_resolved = cm._resolve_string(backend_args_raw, resolve_macros, strict=False)  # noqa: SLF001
         backend_arg_list = shlex.split(backend_args_resolved) if backend_args_resolved.strip() else []
     elif isinstance(backend_args_raw, dict):
-        # New format: flat dict → CLI flags
-        backend_arg_list = _dict_to_cli(backend_args_raw)
+        # Macro-resolve string values in dict before CLI conversion.
+        resolved_backend: Dict[str, Any] = {}
+        for key, val in backend_args_raw.items():
+            if isinstance(val, str) and "${" in val:
+                resolved_backend[key] = cm._resolve_string(val, resolve_macros, strict=False)  # noqa: SLF001
+            else:
+                resolved_backend[key] = val
+        backend_arg_list = _dict_to_cli(resolved_backend)
     else:
         backend_arg_list = []
 
@@ -182,18 +196,38 @@ def build_model_args(
         defaults_resolved = cm._resolve_string(defaults_raw, resolve_macros, strict=False)  # noqa: SLF001
         default_arg_list = shlex.split(defaults_resolved) if defaults_resolved.strip() else []
     elif isinstance(defaults_raw, dict):
-        default_arg_list = _dict_to_cli(defaults_raw)
+        # Macro-resolve string values in dict before CLI conversion.
+        resolved_defaults: Dict[str, Any] = {}
+        for key, val in defaults_raw.items():
+            if isinstance(val, str) and "${" in val:
+                resolved_defaults[key] = cm._resolve_string(val, resolve_macros, strict=False)  # noqa: SLF001
+            else:
+                resolved_defaults[key] = val
+        default_arg_list = _dict_to_cli(resolved_defaults)
     else:
         default_arg_list = []
 
     # 6. Get model args — handle both string and flat dict
+    #    Merge inference_kwargs into model args (last-wins).
     model_args_raw = model.get("args")
     if isinstance(model_args_raw, str):
         model_args_text = " ".join(model_args_raw.split())  # normalize whitespace
         model_arg_list = shlex.split(model_args_text) if model_args_text.strip() else []
     elif isinstance(model_args_raw, dict):
-        # New format: flat dict → CLI flags
-        model_arg_list = _dict_to_cli(model_args_raw)
+        # Merge inference kwargs on top (last-wins for overlapping keys).
+        merged_model = dict(model_args_raw)
+        if inference_kwargs:
+            for k, v in inference_kwargs.items():
+                if k not in ("backend", "checkpoint"):
+                    merged_model[k] = v
+        # Macro-resolve any string values before CLI conversion.
+        resolved_dict: Dict[str, Any] = {}
+        for key, val in merged_model.items():
+            if isinstance(val, str) and "${" in val:
+                resolved_dict[key] = cm._resolve_string(val, resolve_macros, strict=False)  # noqa: SLF001
+            else:
+                resolved_dict[key] = val
+        model_arg_list = _dict_to_cli(resolved_dict)
     else:
         model_arg_list = []
 

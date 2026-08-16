@@ -25,7 +25,7 @@ Starts the server process or container for *model_name*. Accepts optional keywor
 | `port` | `int \| None` | Explicit port (auto-allocated from range if omitted) |
 | `backend` | `str \| None` | Backend/target override — engine resolved from backend name |
 | `runner` | `str \| None` | Explicit runner type (`process`, `podman`, `docker`) |
-| *other* | any | Inference param (e.g., `temp=1.0`, `top-p=0.95`). Passed through to runner and converted to ``--flag value`` CLI flags at subprocess boundary. |
+| *other* | any | Inference param (e.g., `temp=1.0`, `top-p=0.95`). Merged with model args inside ``build_model_args()`` and converted to ``--flag value`` CLI flags via ``_dict_to_cli()``. |
 
 Infra keys (`port`, `backend`, `runner`) control routing and lifecycle. Everything else is an inference parameter — snake_case in Python code (e.g., `top_k`), kebab-case in YAML config (e.g., `top-p`). Both produce ``--top-k`` / ``--top-p`` CLI flags.
 

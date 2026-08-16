@@ -37,22 +37,17 @@ class ProcessModelRunner(BaseModelRunner):
                 f"Binary '{binary_path}' not found for backend '{be_id}'"
             )
 
-        # Build args from config backend + model sections.
+        # Build args from config backend + model + inference kwargs.
         result = build_model_args(
             self.cm, ctx.name,
             env_vars={"PORT": str(ctx.port)},
             override_backend=ctx.backend_id,
+            inference_kwargs=self._inference_kwargs.get(ctx.name, {}),
         )
         if result is None:
             raise RuntimeError(f"Model '{ctx.name}' has no backend configured")
 
         args_list, _cmd_str = result
-
-        # Append inference kwargs as CLI flags (--snake_case value)
-        kwarg_flags = self._build_cmd_line(
-            self._inference_kwargs.get(ctx.name, {})
-        )
-        args_list.extend(kwarg_flags)
 
         # Merge environment: process + global env + backend env_container.
         env = os.environ.copy()

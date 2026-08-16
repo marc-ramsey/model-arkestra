@@ -78,28 +78,27 @@ Each model entry uses `checkpoint` for the model path, structurally separated `a
 
 ### `args:` Field Format
 
-The `args:` key holds a YAML list of single-key entries representing typed CLI flag values instead of an opaque string. Each entry falls into one of three styles:
+The `args:` key holds a **flat YAML dict** where each key is a CLI flag name (kebab-case) and each value becomes the flag's argument. Entries are resolved in config-dict order.
 
 | Style | YAML Entry | Reconstructed Flag |
 |---|---|---|
-| Standard value | `- temp: 0.7` | `--temp 0.7` |
-| Boolean with value | `- jinja: true` / `- jinja: false` | `--jinja true` (or `false`) |
-| Presence-only flag | `- flash-attn: present` | `--flash-attn` (bare flag, no value) |
+| Standard value | `temp: 0.7` | `--temp 0.7` |
+| Boolean `true` | `jinja: true` | `--jinja` (presence-only, no value) |
+| Boolean `false` | `no-mmap: false` | omitted from the list entirely |
 
 Keys use kebab-case in YAML, matching CLI flag names directly. Non-arg model metadata (checkpoint, capabilities, max_log_lines) lives at the model level alongside `args:`, not inside it — only `args:` keys reach subprocesses.
 
-Backend args use the same list format. A backend entry looks like:
+Backend args use the same dict format.
 
 ```yaml
 backends:
   rocm:
     runner: process
     args:
-      - ngpu-layers: -1
-      - flash-attn: present
+      flash-attn: on
 ```
 
-Model args and backend args merge through the same defaults cascade — no macro layer, no string substitution.
+Model args and backend args merge through the same defaults cascade — dict-style entries from each layer are combined with later layers overriding earlier ones (last-wins for overlapping keys).
 
 ```yaml
 models:
@@ -108,11 +107,10 @@ models:
     backend: rocm
 
     args:
-      - temp: 0.7
-      - top-p: 20
-      - ctx-size: 16384
-      - jinja: true
-      - flash-attn: present
+      temp: 0.7
+      top-p: 20
+      ctx-size: 16384
+      jinja: true
 
     max_log_lines: 500        # non-arg — stays in admin context
     capabilities: ["chat"]     # non-arg — never reaches subprocess

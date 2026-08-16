@@ -302,24 +302,6 @@ class BaseModelRunner(ABC):
                 else:
                     raise RunnerError(f"Request failed with status {resp.status}")
 
-    def _build_cmd_line(self, args: Dict[str, Any]) -> List[str]:
-        """Convert inference kwargs to CLI flags.
-
-        Each key-value pair becomes two subprocess args:
-          `--snake-case-key` `value`
-
-        Keys are snake_case → kebab-case. Values are stringified.
-        This method is appended to the base CLI from ``build_model_args``.
-        """
-        cli: List[str] = []
-        for key, value in args.items():
-            flag = f"--{key.replace('_', '-')}"  # snake_case → kebab-case
-            if isinstance(value, bool):
-                cli.extend([flag, str(value).lower()])
-            else:
-                cli.extend([flag, str(value)])
-        return cli
-
     async def start(
         self,
         model_name: str,
@@ -330,9 +312,9 @@ class BaseModelRunner(ABC):
         """Start a model process.
 
         *port* and *backend* are infra keys (routing/lifecycle).
-        All other keyword arguments are inference params — converted to
-        ``--flag value`` CLI flags appended after the base args from
-        ``build_model_args``.
+        All other keyword arguments are inference params — merged with
+        config args and converted to ``--flag value`` CLI flags
+        inside ``build_model_args``.
         """
         # ── Context lookup / creation ────────────────────────────────
         ctx = self._models.get(model_name)

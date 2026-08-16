@@ -127,6 +127,7 @@ def _build_podman_cmd(
             ctx.name,
             env_vars={"PORT": str(ctx.port)},
             override_backend=ctx.backend_id,
+            inference_kwargs=runner._inference_kwargs.get(ctx.name, {}),
         )
         if result is not None:
             llama_arg_list = list(result[0]) if result is not None else []
@@ -149,11 +150,7 @@ def _build_podman_cmd(
 
         # launcher.sh: first arg = binary, rest = --model etc.
         if binary_path:
-            # Append inference kwargs as CLI flags
-            kwarg_flags = runner._build_cmd_line(
-                runner._inference_kwargs.get(ctx.name, {})
-            )
-            parts.extend([image, binary_path] + fixed_args + kwarg_flags)
+            parts.extend([image, binary_path] + fixed_args)
         else:
             parts.extend([image])
             parts.extend(["-c", f"/usr/local/bin/llama-launch.sh {' '.join(fixed_args)}"])

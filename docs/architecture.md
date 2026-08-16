@@ -90,16 +90,16 @@ For crash detection, shutdown sequencing, and teardown behavior, see [Lifecycle]
 
 ## Argument Passing and Resolution
 
-CLI arguments flow through a six-layer defaults chain before reaching subprocess construction. Values are typed YAML lists internally and reconstructed to CLI flags only at the invocation boundary.
+CLI arguments flow through a defaults cascade before reaching subprocess construction. Values are stored as flat YAML dicts internally and reconstructed to CLI flags via ``_dict_to_cli()`` inside `build_model_args()`.
 
 ### Defaults Cascade
 
-Each layer fills in values missing from the one above:
+Each layer fills in values, with later layers overriding earlier ones for overlapping keys:
 
-1. `**overrides` — transient runtime values (single invocation)
-2. Model-level `args:` list — explicit per-model overrides
+1. `**inference_kwargs` — transient runtime values (single invocation), merged into model args dict
+2. Model-level `args:` dict — explicit per-model overrides
 3. `defaults:` top-level config section — global shared defaults
-4. Backend class defaults — each backend defines fallback values
+4. Backend `args:` dict — per-backend fallback values
 5. Engine + runner type defaults — inference engine and execution container baselines
 6. Hardcoded fallbacks on the base runner class
 
@@ -107,16 +107,15 @@ Each layer fills in values missing from the one above:
 
 Each backend name (e.g., `rocm`, `vulkan-radv`) implies an inference engine (llama.cpp). The engine is resolved from the backend name at runtime — users do not specify it separately. This allows each engine to maintain its own target registry and default chain without cluttering user-facing config.
 
-### CLI Reconstruction (`_build_cmd_line`)
+### CLI Reconstruction (`_dict_to_cli()`)
 
-A private method on the runner base class converts the merged args list into a subprocess-compatible command:
+The `_dict_to_cli()` helper inside `build_model_args()` converts a merged args dict into a subprocess-compatible command:
 
 | YAML Entry | Reconstructed Flag |
 |---|---|
-| `- temp: 0.7` | `--temp 0.7` (value appended) |
-| `- jinja: true` / `- jinja: false` | `--jinja true` / `--jinja false` (boolean with value) |
-| `- flash-attn: present` | `--flash-attn` (bare flag, no value) |
+| `temp: 0.7` | `--temp 0.7` (value appended) |
+| `jinja: true` / `jinja: false` | `--jinja` (boolean True → presence-only, False → omitted) |
 
 Keys use kebab-case in YAML, matching CLI flag names directly.
 
-Infrastructure flags (`--port`, `--model`) are added by the method from runner context. The method is called right before `subprocess.Popen()` — this is the only place where arguments become strings. Internally everything stays structured as YAML lists.
+Infrastructure flags (`--port`, `--model`) are added by the runner from context metadata. The conversion happens inside ``build_model_args()`` which is called once per model start — this is the only place where arguments become strings. Internally everything stays structured as dicts.
