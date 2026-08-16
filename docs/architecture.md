@@ -107,9 +107,13 @@ Each layer fills in values, with later layers overriding earlier ones for overla
 
 Each backend name (e.g., `rocm`, `vulkan-radv`) implies an inference engine (llama.cpp). The engine is resolved from the backend name at runtime — users do not specify it separately. This allows each engine to maintain its own target registry and default chain without cluttering user-facing config.
 
+### Inference Param Filtering (`LlamaCppEngine`)
+
+For llama.cpp backends, inference kwargs are filtered through `LlamaCppEngine.LLAMA_INFER_ARGS` before reaching `_dict_to_cli()`. Only keys in this whitelist (e.g. `temp`, `top-p`, `reasoning-budget`) become CLI flags; anything else is silently dropped to prevent crashes from bogus POST body fields.
+
 ### CLI Reconstruction (`_dict_to_cli()`)
 
-The `_dict_to_cli()` helper inside `build_model_args()` converts a merged args dict into a subprocess-compatible command:
+The `_dict_to_cli()` helper inside `build_model_args()` converts a merged args dict into a subprocess-compatible command (llama.cpp only — container runners have their own path):
 
 | YAML Entry | Reconstructed Flag |
 |---|---|
@@ -118,4 +122,4 @@ The `_dict_to_cli()` helper inside `build_model_args()` converts a merged args d
 
 Keys use kebab-case in YAML, matching CLI flag names directly.
 
-Infrastructure flags (`--port`, `--model`) are added by the runner from context metadata. The conversion happens inside ``build_model_args()`` which is called once per model start — this is the only place where arguments become strings. Internally everything stays structured as dicts.
+Infrastructure flags (`--port`, `--model`) are added by the runner from context metadata. The conversion happens inside ``build_model_args()`` which is called once per model start — this is the only place where arguments become strings. Internally everything stays structured as dicts. For llama.cpp, a single whitelist (`LLAMA_INFER_ARGS`) gates what inference kwargs reach CLI construction.

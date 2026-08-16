@@ -131,6 +131,8 @@ Returns:
 {
   "ok": true,
   "model": "qwen3.5-4b",
+  "status": "running",
+  "port": 18000,
   "config": {
     "checkpoint": "unsloth/Qwen3-4B-GGUF:Q4_K_M",
     "args": {"temp": 0.7, "top-k": 20, "ctx-size": 131072},
@@ -175,11 +177,15 @@ curl -X POST 'http://localhost:8080/admin/start/qwen3.5-4b' \
 ```
 
 Transient overrides are **not** persisted to disk. They apply only to this invocation:
+
+Infra keys (resolved before inference filtering):
 - `args` — command-line arguments override
 - `checkpoint` — model checkpoint reference override
 - `backend` — backend ID override (runner resolves from config chain)
 - `runner` — explicit runner type (`process`, `podman`, `docker`)
 - `max_log_lines` — per-invocation log buffer size
+
+Any other keys are treated as inference parameters for llama.cpp. Only those present in the engine's ``LLAMA_INFER_ARGS`` whitelist (e.g. `temp`, `top-p`, `reasoning-budget`) reach CLI construction; unknown keys are silently dropped to prevent subprocess crashes.
 
 Returns `503` if the model fails to start within `ready_timeout`.
 

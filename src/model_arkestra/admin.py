@@ -226,7 +226,14 @@ class ArkestraAdmin:
                 raise HTTPException(
                     status_code=404, detail=f"Model '{model}' not in config"
                 )
-            return {"ok": True, "model": model, "config": copy.deepcopy(cfg[model])}
+            # Also resolve current runtime status if the model is loaded
+            status = None
+            for ctx in self.server._arkestra._get_model_contexts():
+                if ctx.name == model:
+                    status = str(ctx.state).lower().replace("runnerstate.", "")
+                    break
+
+            return {"ok": True, "model": model, "config": copy.deepcopy(cfg[model]), "status": status}
 
         @self._app.put("/admin/config/{model}")
         async def admin_config_update(model: str, body: Dict[str, Any]):

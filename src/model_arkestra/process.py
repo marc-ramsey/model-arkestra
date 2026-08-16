@@ -5,6 +5,7 @@ import signal
 from typing import Any, Dict, List
 from model_arkestra.base import BaseModelRunner
 from model_arkestra.common import build_model_args
+from model_arkestra.llama_cpp import LlamaCppEngine
 from model_arkestra.types import _ModelContext
 
 
@@ -37,12 +38,17 @@ class ProcessModelRunner(BaseModelRunner):
                 f"Binary '{binary_path}' not found for backend '{be_id}'"
             )
 
+        # Filter inference kwargs through engine — drop anything not valid for llama.cpp.
+        raw_inference = self._inference_kwargs.get(ctx.name, {})
+        engine = LlamaCppEngine()
+        filtered_inference = engine.filter_infer_kwargs(raw_inference)
+
         # Build args from config backend + model + inference kwargs.
         result = build_model_args(
             self.cm, ctx.name,
             env_vars={"PORT": str(ctx.port)},
             override_backend=ctx.backend_id,
-            inference_kwargs=self._inference_kwargs.get(ctx.name, {}),
+            inference_kwargs=filtered_inference,
         )
         if result is None:
             raise RuntimeError(f"Model '{ctx.name}' has no backend configured")
