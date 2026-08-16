@@ -324,6 +324,8 @@ class BaseModelRunner(ABC):
             )
 
         effective_backend: Optional[str] = backend
+        eff_port = port  # default — overwritten by each path
+        model_data = None
 
         # ── Restart path: reuse existing port ────────────────────────
         if ctx and ctx.state in (RunnerState.STOPPED, RunnerState.STOPPING):
@@ -335,6 +337,7 @@ class BaseModelRunner(ABC):
             if len(ctx._log_buffer) > 0 and ctx._log_buffer.maxlen != new_size:
                 from collections import deque
                 ctx._log_buffer = deque(maxlen=new_size)
+            model_data = None  # reset — will be fetched below
 
         # ── Already running: health-check shortcut ───────────────────
         elif ctx is not None and ctx.state == RunnerState.RUNNING:
