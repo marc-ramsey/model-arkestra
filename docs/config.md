@@ -26,20 +26,20 @@ Environment variable resolution follows priority: method argument > config.yaml 
 
 ## `backends:` Section — Executable Registry
 
-Each backend entry specifies its argument list and which runner type should handle it. Backend args use the same YAML list format as model args — a sequence of single-key entries that merge into the defaults cascade.
+Each backend entry specifies its argument list and which runner type should handle it. Backend args use the same YAML dict format as model args — a flat mapping of flag names to values that merges into the defaults cascade.
 
 ```yaml
 backends:
   vulkan-radv:
     runner: process     ← maps this backend to ProcessModelRunner
     args:
-      - ngpu_layers: -1
-      - flash-attn: present
+      flash-attn: "on"
+      hf: ${CHECKPOINT}
   rocm:
     runner: podman      ← maps this backend to PodmanModelRunner
     args:
-      - ngpu_layers: -1
-      - threads: 8
+      flash-attn: "on"
+      hf: ${CHECKPOINT}
   default: vulkan-radv         ← global default backend (also has runner: process)
 ```
 
@@ -85,8 +85,9 @@ The `args:` key holds a **flat YAML dict** where each key is a CLI flag name (ke
 | Standard value | `temp: 0.7` | `--temp 0.7` |
 | Boolean `true` | `jinja: true` | `--jinja` (presence-only, no value) |
 | Boolean `false` | `no-mmap: false` | omitted from the list entirely |
+| HuggingFace repo | `hf: user/repo:Q4_K_M` | `-hf user/repo:Q4_K_M` |
 
-Keys use kebab-case in YAML, matching CLI flag names directly. Non-arg model metadata (checkpoint, capabilities, max_log_lines) lives at the model level alongside `args:`, not inside it — only `args:` keys reach subprocesses.
+Keys use kebab-case in YAML, matching CLI flag names directly. **Special key `hf`** maps to the llama-server `-hf` flag for loading models from HuggingFace Hub (not a regular `--hf` flag). Non-arg model metadata (checkpoint, capabilities, max_log_lines) lives at the model level alongside `args:`, not inside it — only `args:` keys reach subprocesses.
 
 Backend args use the same dict format.
 
@@ -95,8 +96,10 @@ backends:
   rocm:
     runner: process
     args:
-      flash-attn: on
+      flash-attn: "on"
 ```
+
+> **Note:** YAML interprets bare `on` and `off` as boolean values. Always quote them (`"on"`, `"off"`) for llama-server flags that accept string values.
 
 Model args and backend args merge through the same defaults cascade — dict-style entries from each layer are combined with later layers overriding earlier ones (last-wins for overlapping keys).
 

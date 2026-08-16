@@ -17,7 +17,8 @@ backends:
   rocm:
     runner: podman
     args:
-      flash-attn: on
+      flash-attn: "on"
+      hf: ${CHECKPOINT}
     binary_dir: /home/marc/local/llama.cpp/build-rocm/bin
     devices:
     - /dev/dri/card1:rwm
@@ -29,7 +30,8 @@ backends:
   vulkan-radv:
     runner: process
     args:
-      flash-attn: on
+      flash-attn: "on"
+      hf: ${CHECKPOINT}
     binary_dir: /home/marc/local/llama.cpp/build-vulkan-radv/bin
     devices:
     - /dev/dri/card0:rwm

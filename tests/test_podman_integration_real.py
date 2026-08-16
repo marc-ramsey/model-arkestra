@@ -6,6 +6,7 @@ These tests spin up actual podman containers — they are marked
 
 from __future__ import annotations
 import asyncio
+import os
 import subprocess
 
 import pytest
@@ -22,7 +23,27 @@ def _podman_available() -> bool:
 
 
 def _cleanup_zombies() -> None:
-    """Kill any leftover llm-* podman containers from previous runs."""
+    """Kill any leftover llm-* podman containers from previous runs.
+
+    Handles rootless podman pasta networking — lsof alone misses the pasta
+    processes that hold onto host ports after a container is removed.
+    """
+    import re as _re
+
+    # 1. Kill pasta listeners on any port (rootless networking)
+    result = subprocess.run(
+        ["ss", "-tlnp"], capture_output=True, text=True, timeout=5
+    )
+    for line in result.stdout.split("\n"):
+        if "pasta" in line:
+            m = _re.search(r"pid=(\d+)", line)
+            if m:
+                try:
+                    os.kill(int(m.group(1)), 9)
+                except OSError:
+                    pass
+
+    # 2. Remove all llm-* containers
     result = subprocess.run(
         [
             "podman", "ps", "-a", "--filter", "name=llm-",
@@ -32,10 +53,21 @@ def _cleanup_zombies() -> None:
     )
     for cid in result.stdout.strip().split():
         if cid:
-            subprocess.run(["podman", "rm", "-f", cid], capture_output=True)
-    # Wait so pasta listeners release their ports.
+            subprocess.run(["podman", "rm", "-f", cid], capture_output=True, timeout=10)
+
+    # 3. Kill any remaining processes on the test port range
+    for port in range(18000, 18032):
+        result = subprocess.run(["lsof", f"-ti:{port}"], capture_output=True, text=True)
+        for pid in result.stdout.strip().split():
+            if pid:
+                try:
+                    os.kill(int(pid), 9)
+                except OSError:
+                    pass
+
+    # Wait so killed listeners release their file descriptors.
     import time as _time
-    _time.sleep(0.3)
+    _time.sleep(0.5)
 
 
 @pytest.mark.slow

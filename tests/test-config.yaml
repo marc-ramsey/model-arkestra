@@ -22,7 +22,7 @@ backends:
       ROCBLAS_USE_HIPBLASLT: "1"
       GGML_CUDA_ENABLE_UNIFIED_MEMORY: "ON"
     args:
-      model: ${CHECKPOINT}
+      hf: ${CHECKPOINT}
       port: "${PORT}"
     runner: process
 

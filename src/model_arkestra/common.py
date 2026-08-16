@@ -103,15 +103,20 @@ def _dict_to_cli(args_dict: Dict[str, Any]) -> List[str]:
     """Convert a flat args dict to CLI flag list (snake_case → kebab-case).
 
     Boolean True → ``--flag`` (presence-only).  False → omitted.
-    All other values → ``--flag value``.
+    All other values → ``--flag value``. Special key ``hf`` maps to ``-hf``
+    for HuggingFace repo specification in llama-server.
     """
     cli: List[str] = []
     for key, value in args_dict.items():
-        flag = f"--{key.replace('_', '-')}"
-        if isinstance(value, bool):
+        if key == "hf":
+            # llama-server uses -hf (not --hf) for HuggingFace repos
+            cli.extend(["-hf", str(value)])
+        elif isinstance(value, bool):
+            flag = f"--{key.replace('_', '-')}"
             if value:
                 cli.append(flag)
         else:
+            flag = f"--{key.replace('_', '-')}"
             cli.extend([flag, str(value)])
     return cli
 
