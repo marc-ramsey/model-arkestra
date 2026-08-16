@@ -19,6 +19,7 @@ backends:
     args:
       flash-attn: "on"
       hf: ${CHECKPOINT}
+      port: "${PORT}"
     binary_dir: /home/marc/local/llama.cpp/build-rocm/bin
     devices:
     - /dev/dri/card1:rwm
@@ -32,6 +33,7 @@ backends:
     args:
       flash-attn: "on"
       hf: ${CHECKPOINT}
+      port: "${PORT}"
     binary_dir: /home/marc/local/llama.cpp/build-vulkan-radv/bin
     devices:
     - /dev/dri/card0:rwm
