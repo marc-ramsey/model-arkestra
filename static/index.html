@@ -633,6 +633,13 @@
         const ADMIN_KEY = '{{ADMIN_KEY}}';
         const BASE_URL  = '';
 
+        // Set admin key as cookie on first load
+        (function() {
+            if (!document.cookie.includes('admin_key=')) {
+                document.cookie = 'admin_key=' + encodeURIComponent(ADMIN_KEY) + '; path=/; SameSite=Lax';
+            }
+        })();
+
         // ── 1.2 Global State ──────────────────────────────────────
         let modelsCache      = [];          // from GET /admin/models
         let modelStates      = {};          // { modelName: { config, snapshot, dirty, expanded } }
@@ -652,7 +659,8 @@
 
         // ── 1.3 Fetch Helpers ─────────────────────────────────────
         function adminFetch(path, options = {}) {
-            const headers = { 'X-Admin-Key': ADMIN_KEY, ...options.headers };
+            const headers = { ...options.headers };
+            console.log('[adminFetch]', BASE_URL + path, 'cookie=' + (document.cookie.match(/admin_key=([^;]+)/) || ['', ''])[1]);
             const opts = { method: 'GET', headers, ...options };
             // Remove Content-Type for GET (browser handles it)
             if (opts.method === 'GET') delete opts.headers['Content-Type'];

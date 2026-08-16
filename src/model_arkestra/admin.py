@@ -59,13 +59,15 @@ class ArkestraAdmin:
         async def root():
             key = self.admin_key or ""
             content = html.read_text().replace("{{ADMIN_KEY}}", key)
-            return HTMLResponse(content, media_type="text/html")
+            return HTMLResponse(content, media_type="text/html",
+                                headers={"X-Admin-Key": key, "Cache-Control": "no-store"})
 
         @self._app.get("/index.html")
         async def index_html():
             key = self.admin_key or ""
             content = html.read_text().replace("{{ADMIN_KEY}}", key)
-            return HTMLResponse(content, media_type="text/html")
+            return HTMLResponse(content, media_type="text/html",
+                                headers={"X-Admin-Key": key, "Cache-Control": "no-store"})
 
     def _add_auth_middleware(self) -> None:
         if not self.admin_key:
@@ -74,11 +76,12 @@ class ArkestraAdmin:
         @self._app.middleware("http")
         async def admin_auth(request: Request, call_next):
             if request.url.path.startswith("/admin"):
-                key = request.headers.get("X-Admin-Key", "")
+                key = request.cookies.get("admin_key", "")
+                print(f"[AUTH] {request.method} {request.url.path} cookie={key!r}", flush=True)
                 if not key or key != self.admin_key:
                     return JSONResponse(
                         status_code=401,
-                        content={"error": "Invalid or missing X-Admin-Key"},
+                        content={"error": "Invalid or missing admin_key cookie"},
                     )
             return await call_next(request)
 
