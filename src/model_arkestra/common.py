@@ -108,10 +108,7 @@ def _dict_to_cli(args_dict: Dict[str, Any]) -> List[str]:
     cli: List[str] = []
     for key, value in args_dict.items():
         flag = f"--{key.replace('_', '-')}"
-        if isinstance(value, bool):
-            cli.extend([flag, str(value).lower()])
-        else:
-            cli.extend([flag, str(value)])
+        cli.extend([flag, str(value)])
     return cli
 
 
@@ -179,7 +176,17 @@ def build_model_args(
     else:
         backend_arg_list = []
 
-    # 5. Get model args — handle both string and flat dict
+    # 5. Resolve defaults — handle both string template and flat dict
+    defaults_raw = cm.data.get("defaults")
+    if isinstance(defaults_raw, str):
+        defaults_resolved = cm._resolve_string(defaults_raw, resolve_macros, strict=False)  # noqa: SLF001
+        default_arg_list = shlex.split(defaults_resolved) if defaults_resolved.strip() else []
+    elif isinstance(defaults_raw, dict):
+        default_arg_list = _dict_to_cli(defaults_raw)
+    else:
+        default_arg_list = []
+
+    # 6. Get model args — handle both string and flat dict
     model_args_raw = model.get("args")
     if isinstance(model_args_raw, str):
         model_args_text = " ".join(model_args_raw.split())  # normalize whitespace
@@ -190,8 +197,8 @@ def build_model_args(
     else:
         model_arg_list = []
 
-    # Return merged list
-    combined = backend_arg_list + model_arg_list
+    # Return merged list: defaults → backend → model
+    combined = default_arg_list + backend_arg_list + model_arg_list
     return (combined, " ".join(combined))
 
 
