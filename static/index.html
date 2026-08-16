@@ -630,8 +630,9 @@
 
     <script>
         // ── 1.0 Configuration ─────────────────────────────────────
-        const ADMIN_KEY = '{{ADMIN_KEY}}';
-        const BASE_URL  = '';
+        const ADMIN_KEY    = '{{ADMIN_KEY}}';
+        const BASE_URL     = '';
+        const POLL_INTERVAL = 2000;            // ms — settable constant for model status polling
 
         // Set admin key as cookie on first load
         (function() {
@@ -1355,6 +1356,8 @@
         // ── Lifecycle ─────────────────────────────────────────────
         document.addEventListener('DOMContentLoaded', () => {
             refreshModels();
+            // Poll for model status updates at configurable interval
+            setInterval(refreshModels, POLL_INTERVAL);
 
             // Search filter (2.2)
             const search = document.getElementById('model-search');
@@ -1433,7 +1436,7 @@
                     stopLogFollow();
                     stopChatStream();
                 } else {
-                    // Reload log data for currently selected model
+                    refreshModels();      // re-read model status on focus
                     if (logModel) loadLogSnapshot(logModel);
                 }
             });
