@@ -66,7 +66,8 @@ class ContainerModelRunner(BaseModelRunner, ABC):
             await asyncio.sleep(0.2)
 
     async def _before_restart(self, ctx: _ModelContext) -> bool:
-        """Ensure stale container reference is cleared before restarting."""
+        """Cancel active log capture and clear stale container reference."""
+        self._cancel_log_task(ctx)
         ctx.container_id = None
         return await super()._before_restart(ctx)
 
@@ -120,8 +121,20 @@ class ContainerModelRunner(BaseModelRunner, ABC):
                 )
                 continue
 
+    # ── Log capture helpers (Docker SDK follow-stream) ───────────
+
+    def _cancel_log_task(self, ctx: _ModelContext) -> None:
+        """Cancel the asyncio log-capture task for a model (if any)."""
+        if not hasattr(self, '_log_tasks'):
+            return
+        task = self._log_tasks.pop(ctx.name, None)
+        if task and not task.done():
+            task.cancel()
+
     async def _stop_model_process(self, ctx: _ModelContext) -> None:
-        """Stop a container gracefully, falling back to force-kill."""
+        """Stop a container gracefully (cancel log stream first), falling back to force-kill."""
+        # Cancel log capture before stopping the container
+        self._cancel_log_task(ctx)
         cid = getattr(ctx, "container_id", None)
         if not cid:
             return

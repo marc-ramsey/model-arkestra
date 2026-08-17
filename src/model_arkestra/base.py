@@ -446,6 +446,10 @@ class BaseModelRunner(ABC):
         ctx = self._models.get(model_name)
         if not ctx:
             return
+        # Cancel any active log-capture task (containers only — no-op for processes)
+        if hasattr(ctx, 'container_id') and ctx.container_id is not None:
+            if hasattr(self, '_cancel_log_task'):
+                self._cancel_log_task(ctx)
         ctx.state = RunnerState.STOPPING
         await self._stop_model_process(ctx)
         # Release port but keep entry for restart-on-start semantics

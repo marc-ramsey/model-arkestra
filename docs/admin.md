@@ -279,7 +279,7 @@ data: {"type":"line","lines":["new line 3"]}
 data: [DONE]
 ```
 
-Returns `404` if the model is not found in config. Uses the log buffer populated by the process watcher task.
+Returns `404` if the model is not found in config. Uses the log buffer populated by either the process watcher (ProcessRunner) or the Docker log capture subprocess (`docker logs -f`), both feeding the same deque.
 
 ## Admin Dashboard (`static/index.html`)
 
