@@ -618,7 +618,7 @@ class TestImports:
     def test_arkestra_server_has_expected_methods(self):
         from model_arkestra.server import ArkestraServer
 
-        methods = ["get_app", "start_background", "shutdown", "_resolve_model",
+        methods = ["get_app", "start", "shutdown", "_resolve_model",
                     "_complete_chat", "_stream_chat"]
         for method in methods:
             assert hasattr(ArkestraServer, method), f"Missing method: {method}"

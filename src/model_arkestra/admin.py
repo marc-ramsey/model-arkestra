@@ -214,7 +214,7 @@ class ArkestraAdmin:
                     print("[SHUTDOWN] All models stopped.", flush=True)
                 except Exception as e:
                     print(f"[SHUTDOWN] Error during model stop: {e}", flush=True)
-                # _server is set via start_background() or when embedded
+                # _server is set via start() or when embedded
                 # (as in live tests that attach server_obj to proxy._server).
                 if self.server._server:
                     await self.server._server.shutdown()

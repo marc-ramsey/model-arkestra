@@ -73,7 +73,7 @@ uvicorn.run(app, port=8080)
 
 ```python
 server = ArkestraServer("config.yaml")
-await server.start_background()  # uvicorn runs in daemon thread
+await server.start()  # blocks until shutdown
 # ... your app logic ...
 await server.shutdown()  # stops everything on exit
 ```

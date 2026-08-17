@@ -143,7 +143,7 @@ class ArkestraServer:
 
     Example embedding into an existing FastAPI app:
         proxy = ArkestraServer("config.yaml", port=8080)
-        proxy.start_background()  # launches uvicorn in a background thread
+        proxy.start()  # blocks until server is shut down
         # ... use your app normally ...
         await proxy.shutdown()
     """
@@ -372,27 +372,18 @@ class ArkestraServer:
 
     # ── Lifecycle management ──────────────────────────────────────
 
-    async def start_background(self) -> None:
-        """Start the proxy server in a background thread.
+    async def start(self) -> None:
+        """Start the proxy server. Blocks until shutdown is called.
 
-        Use when embedding into an existing application that doesn't want to
-        hand over control to uvicorn.
+        Sets ``self._server`` so the admin shutdown route can stop uvicorn cleanly.
         """
-        import threading
         import uvicorn
 
         app = self.get_app()
         config = uvicorn.Config(app, host="0.0.0.0", port=self.port, log_level="info")
         server = uvicorn.Server(config)
         self._server = server
-
-        # Run in background thread — uvicorn.run() blocks, so we wrap it
-        def _run():
-            import asyncio
-            asyncio.run(server.serve())
-
-        thread = threading.Thread(target=_run, daemon=True)
-        thread.start()
+        await server.serve()
 
     async def shutdown(self) -> None:
         """Stop the proxy server and shut down all models."""
