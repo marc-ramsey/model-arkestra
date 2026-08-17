@@ -12,6 +12,7 @@ _ROCM_BUILD_MAP: Dict[str, str] = {}
 # ── Default build dirs (sensible fallbacks — override via config or env) ────
 _DEFAULT_VULKAN_DIR = "/usr/local/llama.cpp/build-vulkan-radv/bin"
 _DEFAULT_ROCM_DIR = "/usr/local/llama.cpp/build-rocm/bin"
+_DEFAULT_IMAGE = "ark-llama:vulkan-radv"
 
 
 def register_rocm_build(version: str, build_dir: str) -> None:
@@ -84,13 +85,55 @@ def resolve_binary_from_backend(backend: Dict[str, Any]) -> Optional[tuple]:
 
 
 def default_image_for_backend(backend_id: Optional[str]) -> str:
-    """Derive a default image tag from the backend identifier."""
-    if not backend_id:
-        return "llama-strix-halo:vulkan"
-    b = backend_id.lower()
-    if any(k in b for k in ("rocm", "hip", "opencl")):
-        return "llama-strix-halo:rocm"
-    return "llama-strix-halo:vulkan"
+    """Derive a default image tag from the backend identifier.
+
+    Reads from config 'images' section if available. Falls back to
+    hardcoded names for legacy / programmatic usage.
+    """
+    # Try config first
+    try:
+        import yaml, os
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        for candidate in ["sample-config.yaml", "config.yaml"]:
+            path = os.path.join(project_root, candidate)
+            if os.path.isfile(path):
+                with open(path) as f:
+                    cfg = yaml.safe_load(f) or {}
+                images = cfg.get("images") or {}
+                default_image = cfg.get("default-image")
+                if backend_id and backend_id in images:
+                    return images[backend_id].get("image", default_image or _DEFAULT_IMAGE)
+                return default_image or _DEFAULT_IMAGE
+    except Exception:
+        pass
+    # Hardcoded fallbacks
+    if backend_id and any(k in backend_id.lower() for k in ("rocm", "hip", "opencl")):
+        return "ark-llama:rocm"
+    return "ark-llama:vulkan-radv"
+
+
+def containerfile_for_backend(backend_id: Optional[str]) -> Optional[str]:
+    """Return the Containerfile path for building a backend's image.
+
+    Reads from config 'images' section. Returns None if not found.
+    The caller should resolve relative to the project root.
+    """
+    try:
+        import yaml, os
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        for candidate in ["sample-config.yaml", "config.yaml"]:
+            path = os.path.join(project_root, candidate)
+            if os.path.isfile(path):
+                with open(path) as f:
+                    cfg = yaml.safe_load(f) or {}
+                images = cfg.get("images") or {}
+                if backend_id and backend_id in images:
+                    cf = images[backend_id].get("containerfile")
+                    if cf:
+                        return os.path.join("tests", "files", cf)
+    except Exception:
+        pass
+    return None
 
 
 def safe_container_name(name: str, port: int) -> str:

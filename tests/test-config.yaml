@@ -9,6 +9,14 @@ env:
   LLAMA_CACHE: /home/lemonade/hub
   HF_HUB_CACHE: /home/lemonade/hub
 
+images:
+  vulkan-radv:
+    image: ark-llama:vulkan-radv
+    containerfile: Containerfile.vulkan-radv
+    default: true
+
+default-image: ark-llama:vulkan-radv
+
 macros:
   vulkan-build-dir: /home/marc/local/llama.cpp/build-vulkan-radv/bin
   ctx-size: 16384
@@ -16,8 +24,9 @@ macros:
 backends:
   default: vulkan-radv
   vulkan-radv:
-    binary_dir: ${vulkan-build-dir}
-    image: llama-vulkan-driver:vulkan
+    binary_dir: /home/marc/local/llama.cpp/build-vulkan-radv/bin
+    binary: llama
+    image: ark-llama:vulkan-radv
     env_container:
       ROCBLAS_USE_HIPBLASLT: "1"
       GGML_CUDA_ENABLE_UNIFIED_MEMORY: "ON"

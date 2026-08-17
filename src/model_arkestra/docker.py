@@ -10,9 +10,20 @@ logger = logging.getLogger(__name__)
 from typing import Any, Dict, List, Optional
 from model_arkestra.container_runner import ContainerModelRunner
 from model_arkestra.common import (
-    build_model_args, resolve_binary_from_backend, safe_container_name, default_image_for_backend
+    build_model_args, resolve_binary_from_backend, safe_container_name
 )
 from model_arkestra.types import _ModelContext
+
+
+def _default_image(runner):
+    """Resolve default image from runner config, falling back to hardcoded name."""
+    data = runner.cm.data if hasattr(runner, "cm") and hasattr(runner.cm, "data") else {}
+    images = data.get("images") or {}
+    default = data.get("default-image")
+    for candidate in ["vulkan-radv", "rocm"]:
+        if candidate in images:
+            return images[candidate].get("image", default or "ark-llama:vulkan-radv")
+    return default or "ark-llama:vulkan-radv"
 
 
 def _resolve_backend_for_docker(
@@ -43,7 +54,7 @@ def _build_docker_cmd(
 
     if backend is not None:
         # --- New backends architecture ----------------------------------
-        image = str(backend.get("image") or default_image_for_backend(ctx.backend_id))
+        image = str(backend.get("image") or _default_image(runner))
         devices: List[str] = list(backend.get("devices", []))
         container_env: Dict[str, str] = dict(backend.get("env_container", {}))
 
@@ -115,7 +126,7 @@ def _build_docker_cmd(
         return parts
 
     # ── Legacy fallback (no backends section) ──────────────────────────
-    image = model_data.get("image") or "llama-strix-halo:vulkan"
+    image = model_data.get("image") or _default_image(runner)
     devices = list(model_data.get("devices", []))
 
     parts: List[str] = ["docker", "run", "-d"]

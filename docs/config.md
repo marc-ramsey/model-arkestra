@@ -1,6 +1,6 @@
 # Configuration Format (YAML)
 
-The runner reads from the same YAML configuration used by `ConfigManager`. This document covers the three sections relevant to Model Arkestra: top-level settings, the `env:` section, `backends:`, `runners:`, and `models:`.
+The runner reads from the same YAML configuration used by `ConfigManager`. This document covers the top-level settings, the `env:` section, `images:`, `backends:`, `runners:`, and `models:`.
 
 See [Usage Guide](./usage.md#basic-initialization) for how to load a config file.
 
@@ -11,6 +11,7 @@ See [Usage Guide](./usage.md#basic-initialization) for how to load a config file
 | `models-start-port` | `int` | `18000` | First port in the auto-allocated range. |
 | `model-ports` | `int` | `32` | Number of ports available — valid range is `models-start-port` through `models-start-port + model-ports - 1`. Allocation raises `RuntimeError("Port range exceeded: …")` when exhausted. |
 | `warmup-time` | `float` | `10.0` | Seconds to wait after `/health` returns OK before marking the model as `"running"`. Improves reliability of the first inference request by bridging the gap between HTTP readiness and weight loading completion. |
+| `default-image` | `str` | `ark-llama:vulkan-radv` | Default container image tag for runners when no backend specifies an `image:`. Used as fallback in both PodmanModelRunner and DockerModelRunner. |
 
 ## `env:` Section — Process Environment Variables
 
@@ -24,6 +25,34 @@ env:
 
 Environment variable resolution follows priority: method argument > config.yaml `env:` section > OS environment.
 
+## `images:` Section — Container Image Registry
+
+This section defines container images and their source Containerfiles, one entry per backend type. It is read by `default_image_for_backend()` (to resolve image tags) and `containerfile_for_backend()` (to locate the build artifact).
+
+```yaml
+images:
+  rocm:
+    image: ark-llama:rocm
+    containerfile: Containerfile.rocm
+    default: false
+  vulkan-radv:
+    image: ark-llama:vulkan-radv
+    containerfile: Containerfile.vulkan-radv
+    default: true
+
+default-image: ark-llama:vulkan-radv
+```
+
+### Image Configuration Keys
+
+| Key | Type | Description |
+|---|---|---|
+| `image` | str | Full image tag (e.g. `ark-llama:rocm`). Used as the default for this backend when no explicit `image:` is set in the backend config. |
+| `containerfile` | str | Filename of the Containerfile used to build the image. Resolved relative to `tests/files/` at project root. |
+| `default` | bool | Marks which image is the global default. Only one entry should be `true`. Controls the `default-image` top-level value. |
+
+The `default-image` top-level key serves as the ultimate fallback — when no images section, no backend `image:`, and no runner class has a configured value, this tag is used.
+
 ## `backends:` Section — Executable Registry
 
 Each backend entry specifies its argument list and which runner type should handle it. Backend args use the same YAML dict format as model args — a flat mapping of flag names to values that merges into the defaults cascade.
@@ -35,11 +64,13 @@ backends:
     args:
       flash-attn: "on"
       hf: ${CHECKPOINT}
+    image: ark-llama:vulkan-radv
   rocm:
     runner: podman      ← maps this backend to PodmanModelRunner
     args:
       flash-attn: "on"
       hf: ${CHECKPOINT}
+    image: ark-llama:rocm
   default: vulkan-radv         ← global default backend (also has runner: process)
 ```
 

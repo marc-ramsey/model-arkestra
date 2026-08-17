@@ -6,8 +6,8 @@ set -euo pipefail
 # The llama-server binary is mounted from host at runtime.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CONTAINERFILE="$SCRIPT_DIR/Containerfile.vulkan-driver-only"
-IMAGE_NAME="llama-vulkan-driver:vulkan"
+CONTAINERFILE="$SCRIPT_DIR/Containerfile.vulkan-radv"
+IMAGE_NAME="ark-llama:vulkan-radv"
 
 echo "==> Building $IMAGE_NAME from $CONTAINERFILE ..."
 

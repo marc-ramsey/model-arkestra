@@ -356,6 +356,7 @@ class ArkestraAdmin:
                 raise HTTPException(status_code=503, detail=f"Start failed: {exc}")
 
     def _add_log_route(self) -> None:
+        import asyncio
         import json
 
         @self._app.get("/admin/log/{model}")

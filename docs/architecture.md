@@ -52,6 +52,47 @@ backends section absent?
 
 See [Configuration Format](../config.md) for how `backends:` and `runners:` sections work.
 
+## Naming Conventions
+
+All names are deterministic and derived from configuration — no random or time-based suffixes. This makes debugging, log searching, and container management straightforward.
+
+### Container Image Tags
+
+| Name | Pattern | Source |
+|---|---|---|
+| ROCm image | `ark-llama:rocm` | `images.rocm.image` in config.yaml |
+| Vulkan image | `ark-llama:vulkan-radv` | `images.vulkan-radv.image` in config.yaml |
+
+The `default-image` top-level key is the fallback when no backend specifies an `image:`. Defined and documented in [Configuration Format](../config.md).
+
+### Container Names (Podman / Docker)
+
+Container runtime names follow this pattern:
+
+```
+llm-{model-name}-{port}
+```
+
+- `llm` — fixed prefix identifying Arkestra-managed containers
+- `{model-name}` — the model name from config (underscores → hyphens, dots → hyphens)
+- `{port}` — the port assigned to that model instance
+
+Example: a model named `qwen3.5-4b` on port 18001 becomes `llm-qwen3-5-4b-18001`.
+
+Implemented by `safe_container_name()` in `model_arkestra/common.py`. The same name is used for both Podman and Docker runners via `_build_podman_cmd()` / `_build_docker_cmd()`.
+
+### Backend IDs
+
+Backend identifiers serve as the single naming hub — they connect config, images, and Containerfiles:
+
+| Context | Reference |
+|---|---|
+| `backends:` key in YAML | `rocm`, `vulkan-radv` |
+| Image registry key (`images:`) | Same IDs; each defines its `image` tag and `containerfile` |
+| Runner type dispatch | `runner: podman` + backend ID → resolves to correct ContainerModelRunner subclass |
+
+The backend ID never changes across the system — it is the anchor that ties config, images, and runtime execution together.
+
 ## Port Allocation — A Global Counter Controlled by ModelArkestra
 
 The starting port and range are driven entirely by config:

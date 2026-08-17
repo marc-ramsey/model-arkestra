@@ -94,7 +94,7 @@ class TestPodmanIntegration:
         inner = MagicMock()
         inner.get_backend.return_value = {
             "wrapper": "/nonexistent/wrapper",
-            "image": "llama-strix-halo:vulkan",
+            "image": "ark-llama:vulkan-radv",
             "devices": [],
             "env_container": {},
         }

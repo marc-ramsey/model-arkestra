@@ -9,10 +9,21 @@ logger = logging.getLogger(__name__)
 from typing import Any, Dict, List, Optional
 from model_arkestra.container_runner import ContainerModelRunner
 from model_arkestra.common import (
-    build_model_args, resolve_binary_from_backend, safe_container_name, default_image_for_backend
+    build_model_args, resolve_binary_from_backend, safe_container_name
 )
 from model_arkestra.types import _ModelContext
 
+
+
+def _default_image(runner):
+    """Resolve default image from runner config, falling back to hardcoded name."""
+    data = runner.cm.data if hasattr(runner, "cm") and hasattr(runner.cm, "data") else {}
+    images = data.get("images") or {}
+    default = data.get("default-image")
+    for candidate in ["vulkan-radv", "rocm"]:
+        if candidate in images:
+            return images[candidate].get("image", default or "ark-llama:vulkan-radv")
+    return default or "ark-llama:vulkan-radv"
 
 class PodmanModelRunner(ContainerModelRunner):
     INSIDE_PORT = 8080
@@ -83,7 +94,7 @@ def _build_podman_cmd(
 
     if backend is not None:
         # --- New backends architecture ----------------------------------
-        image = str(backend.get("image", "llama-vulkan-driver:vulkan"))
+        image = str(backend.get("image") or _default_image(runner))
         devices: List[str] = list(backend.get("devices", []))
         container_env: Dict[str, str] = dict(backend.get("env_container", {}))
 
@@ -157,7 +168,7 @@ def _build_podman_cmd(
         return parts
 
     # ── Legacy fallback (no backends section) ──────────────────────────
-    image = model_data.get("image", "llama-vulkan-driver:vulkan")
+    image = model_data.get("image") or _default_image(runner)
     devices = list(model_data.get("devices", []))
 
     parts: List[str] = ["podman", "run", "--replace", "-d"]

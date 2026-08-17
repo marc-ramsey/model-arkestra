@@ -52,7 +52,7 @@ class TestBuildDockerCmdNewArch:
     def mock_config_manager(self):
         inner = MagicMock()
         inner.get_backend.return_value = {
-            "image": "llama-strix-halo:vulkan",
+            "image": "ark-llama:vulkan-radv",
             "devices": ["/dev/dri/card0:rwm", "/dev/dri/renderD128:rwm"],
             "env_container": {"GGML_VK_VISIBLE_DEVICES": "0"},
         }
@@ -132,7 +132,7 @@ class TestBuildDockerCmdNewArch:
         """If a key exists in both container_env and global env, container_env wins."""
         inner = mock_config_manager.cm
         inner.get_backend.return_value = {
-            "image": "llama-strix-halo:vulkan",
+            "image": "ark-llama:vulkan-radv",
             "devices": [],
             "env_container": {"MY_VAR": "from_container"},
         }
@@ -149,7 +149,7 @@ class TestBuildDockerCmdNewArch:
         inner = mock_config_manager.cm
         # Provide binary_dir so resolve_binary_from_backend returns a valid path via first branch
         inner.get_backend.return_value = {
-            "image": "llama-strix-halo:vulkan",
+            "image": "ark-llama:vulkan-radv",
             "binary_dir": "/tmp/test-wrappers/vulkan-radv",
             "devices": [],
             "env_container": {},
@@ -180,7 +180,7 @@ class TestBuildDockerCmdNewArch:
         }
         cmd_parts = _build_docker_cmd(mock_config_manager, ctx, {})
         # Should use a reasonable default image (from default_image_for_backend)
-        assert any("llama-strix-halo" in p or "vulkan" in p for p in cmd_parts)
+        assert any("ark-llama" in p or "vulkan" in p for p in cmd_parts)
 
 
 # ── Legacy fallback tests ────────────────────────────────────────────────

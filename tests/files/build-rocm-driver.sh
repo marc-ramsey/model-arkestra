@@ -6,8 +6,8 @@ set -euo pipefail
 # The llama-server binary is mounted from host at runtime.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CONTAINERFILE="$SCRIPT_DIR/Containerfile.rocm-driver-only"
-IMAGE_NAME="llama-rocm-driver:rocm"
+CONTAINERFILE="$SCRIPT_DIR/Containerfile.rocm"
+IMAGE_NAME="ark-llama:rocm"
 
 echo "==> Building $IMAGE_NAME from $CONTAINERFILE ..."
 

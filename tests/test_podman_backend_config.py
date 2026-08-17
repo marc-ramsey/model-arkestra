@@ -48,7 +48,7 @@ class TestBuildPodmanCmdNewArch:
     def mock_config_manager(self, monkeypatch):
         inner = MagicMock()
         inner.get_backend.return_value = {
-            "image": "llama-strix-halo:vulkan",
+            "image": "ark-llama:vulkan-radv",
             "devices": ["/dev/dri/card0:rwm", "/dev/dri/renderD128:rwm"],
             "env_container": {"GGML_VK_VISIBLE_DEVICES": "0"},
         }
