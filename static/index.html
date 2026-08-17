@@ -709,6 +709,12 @@
             const container = document.getElementById('model-accordion-items');
             if (!container) return;
 
+            // Preserve expansion state before rebuilding
+            const wasExpanded = new Set(
+                Array.from(container.querySelectorAll('.accordion-item:not(.collapsed)'))
+                    .map(el => el.id)
+            );
+
             // Build HTML for each model as an accordion item
             let html = '';
             for (const m of modelsCache) {
@@ -717,7 +723,7 @@
                 const stateKey = 'sec-model-' + name.replace(/[^a-zA-Z0-9_-]/g, '_');
                 html += '<section class="accordion-item collapsed" id="' + stateKey + '">'
                     + '  <h3 data-model="' + name + '">'
-                    + '    <span class="status-dot ' + statusClass + '"></span>'
+                    + '    <span class="status-dot ' + statusClass + '" id="dot-' + name.replace(/[^a-zA-Z0-9_-]/g, '_') + '"></span>'
                     + '    <span class="model-name" title="' + name + '">' + name + '</span>'
                     + '  </h3>'
                     + '  <div class="acc-body">'
@@ -729,6 +735,12 @@
                     + '</section>';
             }
             container.innerHTML = html;
+
+            // Restore previously-expanded items
+            for (const id of wasExpanded) {
+                const el = document.getElementById(id);
+                if (el) el.classList.remove('collapsed');
+            }
         }
 
         async function refreshModels() {
@@ -739,7 +751,12 @@
                     adminGet('/admin/config'),
                 ]);
 
+                let listChanged = false;
                 if (statusData && Array.isArray(statusData.models)) {
+                    const newNames = new Set(statusData.models.map(m => m.id));
+                    const oldNames = new Set(modelsCache.map(m => m.id));
+                    listChanged = newNames.size !== oldNames || ![...newNames].every(n => oldNames.has(n));
+
                     modelsCache = statusData.models;
                     backendOptions = statusData.backends || {};
                     runnerTypes = statusData.runner_types || [];
@@ -747,14 +764,28 @@
                     // Fallback: just names from config
                     updateModelCount();
                     buildAccordionItems();
+                    populateRightDropdowns();
                     return;
                 }
 
                 updateModelCount();
-                buildAccordionItems();
-
-                // Populate right-column dropdowns
                 populateRightDropdowns();
+
+                // Only rebuild DOM if models were added or removed
+                if (listChanged || !document.getElementById('model-accordion-items')) {
+                    buildAccordionItems();
+                } else {
+                    // Just update status dots in place
+                    for (const m of modelsCache) {
+                        const name = m.id;
+                        const dotId = 'dot-' + name.replace(/[^a-zA-Z0-9_-]/g, '_');
+                        const dot = document.getElementById(dotId);
+                        if (dot && m.status) {
+                            const statusClass = m.status.replace('runnerstate.', '').toLowerCase();
+                            dot.className = 'status-dot ' + statusClass;
+                        }
+                    }
+                }
 
             } catch (e) {
                 console.error('[admin] failed to refresh models:', e.message);
