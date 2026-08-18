@@ -55,7 +55,7 @@ class TestBuildPodmanCmdNewArch:
         runner = MagicMock()
         runner.cm = inner
         runner.broadcast_addr = "0.0.0.0"
-        runner.INSIDE_PORT = 9091
+        runner.INSIDE_PORT = 9090
         monkeypatch.setattr("model_arkestra.podman.build_model_args", MagicMock(return_value=([], "")))
         return runner
 
@@ -87,7 +87,7 @@ class TestBuildPodmanCmdNewArch:
     async def test_port_mapping(self, mock_config_manager, ctx):
         cmd_parts = _build_podman_cmd(mock_config_manager, ctx, {})
         assert "-p" in cmd_parts
-        assert "0.0.0.0:18003:9091" in cmd_parts
+        assert "0.0.0.0:18003:9090" in cmd_parts
 
     @pytest.mark.asyncio
     async def test_container_name(self, mock_config_manager, ctx):
@@ -111,10 +111,10 @@ class TestBuildPodmanCmdNewArch:
 
     @pytest.mark.asyncio
     async def test_custom_container_port(self, mock_config_manager, ctx):
-        model_data = {"container_port": 9091}
+        model_data = {"container_port": 9090}
         cmd_parts = _build_podman_cmd(mock_config_manager, ctx, model_data)
         assert "-p" in cmd_parts
-        assert "0.0.0.0:18003:9091" in cmd_parts
+        assert "0.0.0.0:18003:9090" in cmd_parts
 
 
 # ── Legacy fallback (no backends section) ───────────────────────────────────

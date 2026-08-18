@@ -25,7 +25,7 @@ backends:
   default: vulkan-radv
   vulkan-radv:
     binary_dir: /home/marc/local/llama.cpp/build-vulkan-radv/bin
-    binary: llama
+    binary: llama-server
     image: ark-llama:vulkan-radv
     env_container:
       ROCBLAS_USE_HIPBLASLT: "1"

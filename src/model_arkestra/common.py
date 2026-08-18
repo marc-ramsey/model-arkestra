@@ -185,12 +185,12 @@ def _dict_to_cli(args_dict: Dict[str, Any]) -> List[str]:
 
     Boolean True → ``--flag`` (presence-only).  False → omitted.
     All other values → ``--flag value``. Special key ``hf`` maps to ``-hf``
-    for HuggingFace repo specification in llama-server.
+    for HuggingFace repo specification in llama.cpp.
     """
     cli: List[str] = []
     for key, value in args_dict.items():
         if key == "hf":
-            # llama-server uses -hf (not --hf) for HuggingFace repos
+            # llama.cpp unified binary: -hf <repo> for HF model loading
             cli.extend(["-hf", str(value)])
         elif isinstance(value, bool):
             flag = f"--{key.replace('_', '-')}"

@@ -435,7 +435,7 @@ class ArkestraAdmin:
                               image_tag]}
             proc = subprocess.run(cmd.get(runtime_type, []), capture_output=True, text=True,
                                   timeout=10)
-            return image_tag in proc.stdout
+            return any(line.strip() == image_tag for line in proc.stdout.splitlines())
 
         @self._app.get("/admin/images")
         async def admin_images():

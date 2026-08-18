@@ -71,30 +71,32 @@ class ProcessModelRunner(BaseModelRunner):
         )
 
         # Start log capture: feed stdout/stderr lines into ctx._log_buffer ring buffer
-        async def _capture_logs(name: str, process: asyncio.subprocess.Process) -> None:
-            """Read stdout/stderr and append each line to the model's log buffer."""
-            for stream in (process.stdout, process.stderr):
-                if stream is None:
-                    continue
-                while True:
-                    try:
-                        raw = await stream.readline()
-                        if not raw:
-                            break
-                        ctx = self._models.get(name)
-                        if ctx and len(raw) > 0:
-                            line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
-                            if line:
-                                ctx._log_buffer.append(line)
-                    except asyncio.CancelledError:
-                        return
-                    except Exception:
+        async def _read_stream(stream: asyncio.Stream, model_name: str) -> None:
+            """Read one stream and append each line to the model's log buffer."""
+            while True:
+                try:
+                    raw = await stream.readline()
+                    if not raw:
                         break
+                    ctx = self._models.get(model_name)
+                    if ctx and len(raw) > 0:
+                        line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+                        if line:
+                            ctx._log_buffer.append(line)
+                except asyncio.CancelledError:
+                    return
+                except Exception:
+                    break
 
-        log_task = asyncio.create_task(_capture_logs(ctx.name, ctx.process))
+        log_task_stdout = asyncio.create_task(
+            _read_stream(ctx.process.stdout, ctx.name)
+        ) if ctx.process.stdout else None
+        log_task_stderr = asyncio.create_task(
+            _read_stream(ctx.process.stderr, ctx.name)
+        ) if ctx.process.stderr else None
         if not hasattr(self, '_log_tasks'):
             self._log_tasks = {}
-        self._log_tasks[ctx.name] = log_task
+        self._log_tasks[ctx.name] = (log_task_stdout, log_task_stderr)
 
     async def _stop_model_process(self, ctx: _ModelContext) -> None:
         """Kill model process group using mandated strategy: SIGHUP → wait 20s → SIGKILL."""

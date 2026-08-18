@@ -12,8 +12,9 @@ env:
   HF_HUB_CACHE: /home/lemonade/hub
   LLAMA_CACHE: /home/lemonade/hub
 
+images:
   rocm:
-    image: localhost/ark-llama:rocm
+    image: ark-llama:rocm
     containerfile: Containerfile.rocm
     default: false
   vulkan-radv:
@@ -38,7 +39,7 @@ backends:
     env_container:
       GGML_CUDA_ENABLE_UNIFIED_MEMORY: 'ON'
       ROCBLAS_USE_HIPBLASLT: '1'
-    image: localhost/ark-llama:rocm
+    image: ark-llama:rocm
   vulkan-radv:
     runner: process
     args:
