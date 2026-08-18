@@ -319,6 +319,7 @@ class ArkestraAdmin:
 
     def _add_start_route(self) -> None:
         from model_arkestra.types import RunnerState
+        from model_arkestra.base import BaseModelRunner
 
         @self._app.post("/admin/start/{model}")
         async def admin_start(model: str, body: Dict[str, Any] | None = None):
@@ -382,7 +383,7 @@ class ArkestraAdmin:
                         return
                     ctx = ctxs[0]
                     known_runner = None
-                    buffer_size = ctx._log_buffer.maxlen if hasattr(ctx, '_log_buffer') else 500
+                    buffer_size = ctx._log_buffer.maxlen if hasattr(ctx, '_log_buffer') else BaseModelRunner.LOG_BUFFER_DEFAULT
 
                     # Track position for new-line detection
                     last_count = len(ctx._log_buffer)

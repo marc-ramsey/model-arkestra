@@ -174,3 +174,11 @@ class PodmanModelRunner(ContainerModelRunner):
                 f"podman run failed for model '{ctx.name}': {err_msg}"
             )
         ctx.container_id = stdout.decode().strip()
+
+        # Start live log capture.
+        log_task = asyncio.create_task(
+            self._capture_container_logs(ctx.name, ctx.container_id)
+        )
+        if not hasattr(self, '_log_tasks'):
+            self._log_tasks = {}
+        self._log_tasks[ctx.name] = log_task

@@ -282,7 +282,7 @@ data: {"type":"line","lines":["new line 3"]}
 data: [DONE]
 ```
 
-Returns `404` if the model is not found in config. Uses the log buffer populated by either the process watcher (ProcessRunner) or the Docker log capture subprocess (`docker logs -f`), both feeding the same deque.
+Returns `404` if the model is not found in config. Uses the log buffer populated by live stream capture during execution — subprocess watchers (ProcessModelRunner) or container log streaming (`podman logs -f` / `docker logs -f`) feed lines into a shared ring buffer (`deque`, default 2000 lines, configurable via `log-buffer-size` key or `max_log_lines` kwarg). The buffer is allocated on first start, cleared on restart/re-start, and only re-allocated if the configured size changes.
 
 ### GET /admin/images
 

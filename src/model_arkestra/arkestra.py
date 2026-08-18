@@ -2,7 +2,7 @@
 from __future__ import annotations
 import asyncio
 import sys
-from typing import Any, AsyncIterator, Dict, Optional, Set
+from typing import Any, AsyncIterator, Dict, List, Optional, Set
 
 from llm_config_manager.config_manager import ConfigManager
 from model_arkestra.base import BaseModelRunner
@@ -321,3 +321,10 @@ class ModelArkestra:
     async def request(self, model_name: str, path: str, **kwargs: Any) -> Any:
         runner = self._get_runner(model_name, {}, None)
         return await runner.request(model_name, path, **kwargs)
+
+    async def get_logs(self, model_name: str, lines: int = 100) -> List[str]:
+        """Return the last N log lines for a model."""
+        for r in self._runners.values():
+            if model_name in r._models:  # noqa: SLF001
+                return await r.get_logs(model_name, lines)
+        return []

@@ -119,6 +119,26 @@ Each yielded dict is one of two forms:
 
 Low-level HTTP forwarder for custom server endpoints not covered by `ainvoke()` or `astream()`. Forwards *kwargs* as the request payload and returns the parsed JSON response (or raw bytes if the endpoint does not return JSON). Only sends POST requests with 15s timeout. Raises `RunnerError` on responses with status ≥ 400.
 
+### `async get_logs(model_name: str, lines: int = 100) -> list[str]`
+
+Returns the last *N* log lines for a model, delegated to whichever runner owns that model's context. Searches across all runners until it finds the matching `_ModelContext` (handles cases where a model was restarted on a different runner type).
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `model_name` | `str` | *(required)* | Model name to fetch logs for |
+| `lines` | `int` | `100` | Number of recent log lines to return |
+
+Returns a list of log line strings (empty list if model not found). The underlying source is the ring buffer — populated by live stream capture during execution:
+- **ProcessModelRunner**: reads from subprocess stdout/stderr pipes in real time.
+- **Container runners**: reads from `<podman\|docker> logs -f --tail 0` streaming into the same buffer.
+
+```python
+# Snapshot of last 50 lines
+lines = await arkestra.get_logs("qwen3-4b", lines=50)
+for line in lines:
+    print(line)
+```
+
 ## Properties
 
 ### `running_models: set[str]`
@@ -130,6 +150,8 @@ Read-only property returning the names of all models currently in `"running"` st
 ### `_get_model_contexts() -> list[_ModelContext]`
 
 Internal aggregation: returns every tracked `_ModelContext` across all runners. Each context carries `name`, `port`, `state` (`RunnerState` enum), `backend_id`, `runner_type`, `restart_count`, and `last_error`. Callers who need detailed runtime info should use this.
+
+Each `_ModelContext` also maintains a `_log_buffer: deque[str]` (ring buffer, default 2000 lines) — populated live by subprocess stream watchers (process runners) or container log streamers (podman/docker runners). Accessing it directly is discouraged; use `get_logs()` instead for proper buffering and line-limiting.
 
 ### `get_v1_models() -> dict`
 

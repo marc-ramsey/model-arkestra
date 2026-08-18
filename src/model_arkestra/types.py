@@ -22,7 +22,9 @@ class MaxRestartsExceeded(RunnerError): """Process has crashed too many times.""
 class ModelShutdown(RunnerError): """Request made after the model was stopped."""
 
 class _ModelContext:
-    def __init__(self, name: str, port: int, max_log_lines: int = 500):
+    DEFAULT_LOG_LINES = 2000
+
+    def __init__(self, name: str, port: int, max_log_lines: int = DEFAULT_LOG_LINES):
         self.name = name
         self.port = port
         self.runner_type: Optional[str] = None

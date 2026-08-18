@@ -222,6 +222,22 @@ Returns a dict with `"object": "list"` and a `"data"` array — one entry per co
 | `owned_by` | From config (`model_cfg.get("owned_by")`, default `"local"`) |
 | `status` | Lowercase state string (e.g. `"running"`, `"stopped"`, `"uncached"`) |
 
+## Log Retrieval
+
+Fetch the last N lines from a model's in-memory log buffer:
+
+```python
+# Default: last 100 lines
+lines = await runner.get_logs("qwen3-4b")
+for line in lines:
+    print(line)
+
+# Custom line count
+lines = await runner.get_logs("qwen3-4b", lines=50)
+```
+
+The buffer is a ring deque (default 2000 lines) populated by live stream watchers — subprocess pipes for `ProcessModelRunner`, or `<podman\|docker> logs -f` streaming for container runners. It is allocated on first start, cleared on restart/re-start, and only re-allocated if the configured size changes.
+
 ## Error Handling
 
 ```python

@@ -113,8 +113,8 @@ class ProcessModelRunner(BaseModelRunner):
                     except Exception:
                         pass
 
-    async def _before_restart(self, ctx: _ModelContext) -> bool:
+    async def _before_restart(self, ctx: _ModelContext, new_size=None) -> bool:
         """Reset process reference so the next ``_start_model_process`` call creates a fresh one."""
         if ctx.process is not None and ctx.process.returncode is not None:
             ctx.process = None  # replace stale process handle
-        return await super()._before_restart(ctx)
+        return await super()._before_restart(ctx, new_size)

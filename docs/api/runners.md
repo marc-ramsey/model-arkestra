@@ -20,6 +20,15 @@ Bound to a `ConfigManager` instance; does not launch any processes until `start(
 
 `restart_delay` and `restart_limit` control automatic restart behavior inherited from `BaseModelRunner`: when a managed process exits unexpectedly, the runner polls and attempts up to `restart_limit` restarts spaced by `restart_delay` seconds.
 
+### Log retrieval
+
+```python
+# Get last 50 lines for the model managed by this runner
+lines = await runner.get_logs("my-model", lines=50)
+```
+
+Returns the last *N* log lines from the model's in-memory ring buffer (`_log_buffer`). See [ModelArkestra API](./model-arkestra.md) for details on buffer lifecycle and population across runner types.
+
 ## ContainerModelRunner (Abstract Base)
 
 Container runners add port-drain logic. The `port_drain_timeout` parameter is used to wait for port listeners to drain before reassignment. It has no effect on direct subprocess execution.

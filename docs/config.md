@@ -146,7 +146,7 @@ models:
       ctx-size: 16384
       jinja: true
 
-    max_log_lines: 500        # non-arg — stays in admin context
+    max_log_lines: 500        # per-model override of the default 2000 (stored in admin context, not passed to subprocess)
     capabilities: ["chat"]     # non-arg — never reaches subprocess
 ```
 

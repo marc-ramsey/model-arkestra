@@ -170,11 +170,11 @@ class ContainerModelRunner(BaseModelRunner, ABC):
                 return
             await asyncio.sleep(0.2)
 
-    async def _before_restart(self, ctx: _ModelContext) -> bool:
+    async def _before_restart(self, ctx: _ModelContext, new_size=None) -> bool:
         """Cancel active log capture and clear stale container reference."""
         self._cancel_log_task(ctx)
         ctx.container_id = None
-        return await super()._before_restart(ctx)
+        return await super()._before_restart(ctx, new_size)
 
     async def shutdown(self) -> None:
         """Full teardown — stop models, force-remove containers, clear state."""
@@ -226,7 +226,40 @@ class ContainerModelRunner(BaseModelRunner, ABC):
                 )
                 continue
 
-    # ── Log capture helpers (Docker SDK follow-stream) ───────────
+    # ── Log capture helpers (container log streaming) ───────────
+
+    async def _capture_container_logs(
+        self, model_name: str, container_id: str
+    ) -> None:
+        """Stream container logs into ctx._log_buffer ring buffer."""
+        proc = await asyncio.create_subprocess_exec(
+            self._container_cmd(), "logs", "-f", "--tail", "0", container_id,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=SUBPROCESS_ENV,
+        )
+
+        async def _read_stream(stream):
+            while True:
+                raw = await stream.readline()
+                if not raw:
+                    break
+                ctx = self._models.get(model_name)
+                if ctx and raw:
+                    line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+                    if line:
+                        ctx._log_buffer.append(line)
+
+        tasks = []
+        for stream in (proc.stdout, proc.stderr):
+            if stream is not None:
+                tasks.append(asyncio.create_task(_read_stream(stream)))
+
+        try:
+            await asyncio.gather(*tasks)
+        except asyncio.CancelledError:
+            proc.kill()
+            raise
 
     def _cancel_log_task(self, ctx: _ModelContext) -> None:
         """Cancel the asyncio log-capture task(s) for a model (if any).

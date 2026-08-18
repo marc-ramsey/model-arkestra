@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 import logging
+from collections import deque
 import json
 import time
 import os
@@ -17,11 +18,14 @@ logger = logging.getLogger(__name__)
 
 
 class BaseModelRunner(ABC):
+    LOG_BUFFER_DEFAULT = 2000  # max lines in model log ring buffer
+
     def __init__(self, config_manager: Any, restart_delay: float = 5.0,
                  restart_limit: int = 4, shutdown_timeout: float = 20.0,
                  ready_timeout: float = 120.0, ready_poll_ms: float = 100.0,
                  warmup_delay: Optional[float] = None, port_drain_timeout: float = 20.0,
-                 broadcast_addr: str = "0.0.0.0"):
+                 broadcast_addr: str = "0.0.0.0",
+                 log_buffer_size: Optional[int] = None):
         self.cm = config_manager
         self.restart_delay = restart_delay
         self.restart_limit = restart_limit
@@ -33,6 +37,9 @@ class BaseModelRunner(ABC):
         # Resolve broadcast_addr: explicit param > config fallback > global default
         cfg_br = (self.cm.data.get("runners") or {}).get("broadcast_addr")
         self.broadcast_addr = broadcast_addr if broadcast_addr is not None else (cfg_br or "0.0.0.0")
+        # Resolve log_buffer_size: explicit param > config key > class default
+        cfg_lbs = self.cm.data.get('log-buffer-size')
+        self.log_buffer_size = log_buffer_size if log_buffer_size is not None else (cfg_lbs or self.LOG_BUFFER_DEFAULT)
         self._watchers: Dict[str, asyncio.Task] = {}
         self._inference_kwargs: Dict[str, Dict[str, Any]] = {}
         self._models: Dict[str, _ModelContext] = {}
@@ -148,10 +155,26 @@ class BaseModelRunner(ABC):
         except Exception as e:
             logger.error(f"Model {model_name}: restart failed — {e}")
 
-    async def _before_restart(self, ctx: _ModelContext) -> bool:
+    async def _before_restart(self, ctx: _ModelContext, new_size: Optional[int] = None) -> bool:
+        """Prepare context for restart: transition state and manage buffer."""
         if ctx.state in (RunnerState.STOPPED, RunnerState.STOPPING):
             return False
         ctx.state = RunnerState.LOADING
+
+        # Determine desired size; crash-restart path gets current size (no change).
+        if new_size is None:
+            new_size = getattr(ctx._log_buffer, 'maxlen', self.log_buffer_size)
+
+        if ctx._log_buffer.maxlen != new_size:
+            # Size changed — re-allocate preserving the last N lines that fit
+            buffer_list = list(ctx._log_buffer)
+            ctx._log_buffer = deque(maxlen=new_size)
+            for line in buffer_list:
+                ctx._log_buffer.append(line)  # auto-trims if too many
+        else:
+            # Same size — just clear (fast path).
+            ctx._log_buffer.clear()
+
         return True
 
     async def _watch_container(self, model_name: str, ctx: _ModelContext) -> None:
@@ -329,14 +352,9 @@ class BaseModelRunner(ABC):
 
         # ── Restart path: reuse existing port ────────────────────────
         if ctx and ctx.state in (RunnerState.STOPPED, RunnerState.STOPPING):
-            await self._before_restart(ctx)
+            new_size = inference_kwargs.get("max_log_lines", self.log_buffer_size)
+            await self._before_restart(ctx, new_size)
             eff_port = port if port is not None else ctx.port
-            new_size = inference_kwargs.get("max_log_lines")
-            if new_size is None:
-                new_size = self.cm.data.get('log-buffer-size', 500)
-            if len(ctx._log_buffer) > 0 and ctx._log_buffer.maxlen != new_size:
-                from collections import deque
-                ctx._log_buffer = deque(maxlen=new_size)
             model_data = None  # reset — will be fetched below
 
         # ── Already running: health-check shortcut ───────────────────
@@ -366,9 +384,7 @@ class BaseModelRunner(ABC):
                 raise ModelNotStarted(model_name)
 
             effective_backend = backend or model_data.get("backend")
-            log_size = inference_kwargs.get("max_log_lines")
-            if log_size is None:
-                log_size = self.cm.data.get('log-buffer-size', 500)
+            log_size = inference_kwargs.get("max_log_lines", self.log_buffer_size)
 
             ctx = _ModelContext(model_name, eff_port, max_log_lines=log_size)
             ctx.backend_id = effective_backend
