@@ -4,7 +4,7 @@ import os
 import shlex
 from typing import Any, Dict, List
 
-from model_arkestra.container_runner import ContainerModelRunner, _resolve_backend
+from model_arkestra.container_runner import ContainerModelRunner, _resolve_backend, _build_container_cmd
 from model_arkestra.common import SUBPROCESS_ENV, build_model_args, resolve_binary_from_backend, safe_container_name
 from model_arkestra.types import _ModelContext
 
