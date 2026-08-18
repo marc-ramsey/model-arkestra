@@ -38,6 +38,9 @@ Missing or incorrect keys return `401 Unauthorized`. Public paths (`/`, `/index.
 | `POST` | `/admin/stop/{model}` | Yes | Stop a running model |
 | `POST` | `/admin/eject/{model}` | Yes | Remove model from cache, clear contexts (no config change) |
 | `GET` | `/admin/log/{model}?lines=N&follow=true` | Yes | Log snapshot or SSE stream |
+| `GET` | `/admin/images` | Yes | List configured container images with runner type and availability |
+| `POST` | `/admin/images/build` | Yes | Build a single backend's image (body: `{"backend": "rocm"}`) |
+| `DELETE` | `/admin/images/{image_tag}` | Yes | Remove an image from the local store |
 | `POST` | `/admin/restart` | Yes | Stop all running models — models restart implicitly on next inference request |
 | `POST` | `/admin/shutdown` | Yes | Full server teardown — stops uvicorn and all models
 
@@ -280,6 +283,76 @@ data: [DONE]
 ```
 
 Returns `404` if the model is not found in config. Uses the log buffer populated by either the process watcher (ProcessRunner) or the Docker log capture subprocess (`docker logs -f`), both feeding the same deque.
+
+### GET /admin/images
+
+List all container images configured in the `images:` section of the config file, along with their runner type and availability status. Resolves each backend's runner through the config chain (backends.<id>.runner → runners.<type> → default).
+
+Returns a JSON array:
+```json
+[
+  {
+    "backend_id": "rocm",
+    "runner": "podman",
+    "runtime_detected": true,
+    "image": "ark-llama:rocm",
+    "containerfile": "Containerfile.rocm",
+    "available": false
+  }
+]
+```
+
+| Field | Description |
+|---|---|
+| `backend_id` | Backend identifier from the `images:` section |
+| `runner` | Resolved runner type (`podman`, `docker`, or `process`) |
+| `runtime_detected` | Whether the container runtime for this runner is available on PATH |
+| `image` | Full image tag configured for this backend |
+| `containerfile` | Name of the Containerfile (resolved to `tests/files/<name>`) |
+| `available` | Whether the image exists in the local container store (only checked when `runtime_detected` is true) |
+
+### POST /admin/images/build
+
+Build a single backend's container image. The `backend` key must be provided — no "build all" mode.
+
+Request body:
+```json
+{"backend": "rocm"}
+```
+
+The endpoint resolves the configured runner type for the backend, detects which runtime (podman or docker) is available on PATH, then runs the appropriate build command. If the configured runtime isn't present, returns gracefully:
+```json
+{"skipped": true, "reason": "runner=podman but no 'podman' binary found on PATH", "image": "ark-llama:rocm"}
+```
+
+On attempt (whether successful or not):
+```json
+{
+  "backend": "rocm",
+  "image": "ark-llama:rocm",
+  "success": false,
+  "runtime": "podman",
+  "output": "STEP 1/10: FROM ...\nError: ...",
+  "error": "Failed to resolve the transaction:\nNo match for argument: hip-runtime-rocm"
+}
+```
+
+Build runs synchronously with a 600s timeout. The full stdout/stderr from the container runtime is returned in `output`. Returns `400` if `backend` is missing from the body, or `404` if no Containerfile is found for the backend.
+
+### DELETE /admin/images/{image_tag}
+
+Remove an image tag from the local store. The tag must match one configured in a backend's `images:` entry.
+
+```json
+DELETE /admin/images/ark-llama:rocm
+```
+
+Returns:
+```json
+{"removed": true, "image": "ark-llama:rocm", "error": null}
+```
+
+Resolves the backend this image belongs to, determines its runner type, and runs `podman rmi -f` or `docker rmi -f` accordingly. Returns `404` if the tag isn't configured in any backend. Returns `{"skipped": true}` with a reason when the runtime isn't available.
 
 ## Admin Dashboard (`static/index.html`)
 
