@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 from typing import Any, Dict, List, Optional
 from model_arkestra.container_runner import ContainerModelRunner
 from model_arkestra.common import (
+    SUBPROCESS_ENV,
     build_model_args, resolve_binary_from_backend, safe_container_name
 )
 from model_arkestra.types import _ModelContext
@@ -39,7 +40,7 @@ class PodmanModelRunner(ContainerModelRunner):
                         "podman", "rm", "-f", cid,
                         stdout=asyncio.subprocess.DEVNULL,
                         stderr=asyncio.subprocess.DEVNULL,
-                        env=os.environ,
+                        env=SUBPROCESS_ENV,
                     )
                     await proc.wait()
                 except Exception:
@@ -55,7 +56,7 @@ class PodmanModelRunner(ContainerModelRunner):
             shlex.join(cmd_parts),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=os.environ,
+            env=SUBPROCESS_ENV,
         )
         stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
@@ -161,7 +162,7 @@ def _build_podman_cmd(
 
         # launcher.sh: first arg = binary, rest = --model etc.
         if binary_path:
-            parts.extend([image, binary_path] + fixed_args)
+            parts.extend([image] + fixed_args)
         else:
             parts.extend([image])
             parts.extend(["-c", f"/usr/local/bin/llama-launch.sh {' '.join(fixed_args)}"])

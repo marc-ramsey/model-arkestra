@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List
 
 from model_arkestra.base import BaseModelRunner
-from model_arkestra.common import INSPECT_RE
+from model_arkestra.common import INSPECT_RE, SUBPROCESS_ENV
 from model_arkestra.types import RunnerState, _ModelContext
 
 
@@ -40,7 +40,7 @@ class ContainerModelRunner(BaseModelRunner, ABC):
             *cmd_parts,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=os.environ,
+            env=SUBPROCESS_ENV,
         )
         stdout, _stderr = await proc.communicate()
         if proc.returncode != 0:
@@ -99,7 +99,7 @@ class ContainerModelRunner(BaseModelRunner, ABC):
                     self._container_cmd(), "inspect", cid, "--format", "{{.State.Status}}",
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                    env=os.environ,
+                    env=SUBPROCESS_ENV,
                 )
                 stdout, _ = await proc.communicate()
 
@@ -143,7 +143,7 @@ class ContainerModelRunner(BaseModelRunner, ABC):
                 self._container_cmd(), "stop", "--time", str(self.port_drain_timeout), cid,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=os.environ,
+                env=SUBPROCESS_ENV,
             )
             await stop.wait()
         except Exception:

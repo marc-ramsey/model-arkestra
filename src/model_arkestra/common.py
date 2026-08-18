@@ -4,6 +4,13 @@ import re
 import shlex
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+
+import os
+# Subprocess env — convert os.environ to plain dict for uvloop compatibility
+SUBPROCESS_ENV: Dict[str, str] = dict(os.environ)
+
+
+
 INSPECT_RE = re.compile(r"^(exited|dead|paused|removing)\s*$", re.IGNORECASE)
 
 # ── Known ROCm build directories, keyed by version string ────────────────
