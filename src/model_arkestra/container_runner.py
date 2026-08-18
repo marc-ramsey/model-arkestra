@@ -1,7 +1,8 @@
 """Intermediate base class for container-based runners (Podman / Docker).
 
 Contains shared logic for container lifecycle, health watching, restart behavior,
-and port release — eliminating near-duplicate code between docker.py and podman.py.
+port release, and command building — eliminating near-duplicate code between
+docker.py and podman.py.
 """
 from __future__ import annotations
 import asyncio
@@ -11,8 +12,120 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List
 
 from model_arkestra.base import BaseModelRunner
-from model_arkestra.common import INSPECT_RE, SUBPROCESS_ENV
+from model_arkestra.common import INSPECT_RE, SUBPROCESS_ENV, build_model_args, resolve_binary_from_backend, safe_container_name
 from model_arkestra.types import RunnerState, _ModelContext
+
+
+def _default_image(runner: Any) -> str:
+    """Resolve default image from runner config."""
+    data = runner.cm.data if hasattr(runner, "cm") and hasattr(runner.cm, "data") else {}
+    images = data.get("images") or {}
+    default = data.get("default-image")
+    for candidate in ["vulkan-radv", "rocm"]:
+        if candidate in images:
+            return images[candidate].get("image", default or "ark-llama:vulkan-radv")
+    return default or "ark-llama:vulkan-radv"
+
+
+def _resolve_backend(runner: Any, model_data: Dict[str, Any]) -> Any | None:
+    """Look up the effective backend dict for this model launch."""
+    backend_id = (getattr(runner, "_current_context", None)
+                  and getattr(runner._current_context, "backend_id", None)) \
+                 or model_data.get("backend")
+    if not backend_id:
+        backends = runner.cm.data.get("backends")
+        if isinstance(backends, dict):
+            backend_id = backends.get("default")
+        if not backend_id:
+            return None
+    return runner.cm.get_backend(backend_id)
+
+
+def _build_container_cmd(
+    cmd: str,
+    runner: Any,
+    model_name: str,
+    port: int,
+    broadcast_addr: str,
+    inside_port: int,
+    backend_config: Dict[str, Any],
+) -> List[str]:
+    """Build a container run command — shared by docker.py and podman.py.
+
+    `backend_config` is the model_data from start() containing at minimum
+    {"backend": <id>, ...}.  The backend ID is resolved here to get the full
+    backend dict (image, devices, env etc.).
+    """
+    # Resolve the full backend dict from the backend_id in model_data.
+    backend_id = backend_config.get("backend")
+    if not backend_id:
+        backends = runner.cm.data.get("backends", {})
+        if isinstance(backends, dict):
+            backend_id = backends.get("default")
+
+    full_backend: Dict[str, Any] = {}
+    if backend_id:
+        resolved = runner.cm.get_backend(backend_id) or {}
+        full_backend = dict(resolved)
+
+    image = str(full_backend.get("image") or _default_image(runner))
+    devices: List[str] = list(full_backend.get("devices", []))
+    container_env: Dict[str, str] = dict(full_backend.get("env_container", {}))
+    backend_runner_id: str | None = full_backend.get("runner") or ""
+
+    binary_info = resolve_binary_from_backend(full_backend)
+    binary_dir: str | None = None
+    if binary_info is not None:
+        binary_path, extra_devs = binary_info
+        if not devices:
+            devices = list(extra_devs)
+        binary_dir = os.path.dirname(binary_path) or binary_dir
+
+    parts: List[str] = [cmd, "run", "-d"]
+    parts.extend(["-e", f"PORT={port}"])
+    for k, v in container_env.items():
+        parts.extend(["-e", f"{k}={v}"])
+
+    ld = os.environ.get("LD_LIBRARY_PATH")
+    if ld:
+        parts.extend(["-e", f"LD_LIBRARY_PATH={ld}"])
+
+    parts.extend(["--name", safe_container_name(model_name, port)])
+    parts.extend(["-p", f"{broadcast_addr}:{port}:{inside_port}"])
+
+    # Devices
+    for dev in devices:
+        parts.extend(["--device", str(dev)])
+
+    # Mount host binary dir
+    if binary_dir and os.path.isdir(binary_dir):
+        parts.extend(["-v", f"{binary_dir}:{binary_dir}:ro"])
+
+    # Resolve llama-server args
+    result = build_model_args(
+        runner.cm, model_name,
+        env_vars={"PORT": str(port)},
+        override_backend=backend_id,
+        inference_kwargs=runner._inference_kwargs.get(model_name, {}),
+    )
+    arg_list: List[str] = list(result[0]) if result else []
+
+    # Fix --port → inside_port; ensure --host is present.
+    fixed: List[str] = []
+    i = 0
+    while i < len(arg_list):
+        if arg_list[i] == "--port" and i + 1 < len(arg_list):
+            fixed.extend(["--port", str(inside_port)])
+            i += 2
+        else:
+            fixed.append(arg_list[i])
+            i += 1
+    if not fixed or "--host" not in fixed:
+        fixed.extend(["--host", broadcast_addr])
+
+    # ENTRYPOINT (llama-launch.sh) has the binary baked in — pass CLI args only.
+    parts.extend([image] + fixed)
+    return parts
 
 
 class ContainerModelRunner(BaseModelRunner, ABC):
