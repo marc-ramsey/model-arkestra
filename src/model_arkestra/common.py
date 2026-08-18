@@ -93,7 +93,7 @@ def default_image_for_backend(backend_id: Optional[str]) -> str:
     # Try config first
     try:
         import yaml, os
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         for candidate in ["sample-config.yaml", "config.yaml"]:
             path = os.path.join(project_root, candidate)
             if os.path.isfile(path):
@@ -120,7 +120,7 @@ def containerfile_for_backend(backend_id: Optional[str]) -> Optional[str]:
     """
     try:
         import yaml, os
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         for candidate in ["sample-config.yaml", "config.yaml"]:
             path = os.path.join(project_root, candidate)
             if os.path.isfile(path):
@@ -134,6 +134,37 @@ def containerfile_for_backend(backend_id: Optional[str]) -> Optional[str]:
     except Exception:
         pass
     return None
+
+
+def image_and_runner_for_backend(cm_data, backend_id: str) -> tuple[str, str]:
+    """Resolve image tag and runner type for a backend from config.
+
+    Reads backends.<id>.image and backends.<id>.runner (or falls through to
+    default-image / runners.default). Returns (image_tag, runner_type).
+    Runner type is one of: "podman", "docker", or "process".
+    """
+    backends = cm_data.get("backends") or {}
+    runners_section = cm_data.get("runners") or {}
+    images = cm_data.get("images") or {}
+    default_image = cm_data.get("default-image")
+
+    backend = backends.get(backend_id) or {}
+
+    # Resolve image: explicit backend.image → image config → default-image
+    image_tag = backend.get("image")
+    if not image_tag and backend_id in images:
+        image_tag = images[backend_id].get("image", default_image)
+    image_tag = image_tag or default_image or "ark-llama:vulkan-radv"
+
+    # Resolve runner: explicit runner → runners section → process fallback
+    runner_type = backend.get("runner")
+    if not runner_type:
+        runner_type = runners_section.get("default", "ProcessModelRunner").lower()
+        # Map class name → runtime string
+        runner_map = {"processmodelrunner": "process", "podmanmodelrunner": "podman",
+                      "dockermodelrunner": "docker"}
+        runner_type = runner_map.get(runner_type, runner_type)
+    return image_tag, runner_type
 
 
 def safe_container_name(name: str, port: int) -> str:

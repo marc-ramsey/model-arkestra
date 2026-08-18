@@ -37,6 +37,7 @@ class ArkestraAdmin:
         self._add_start_route()
         self._add_eject_route()
         self._add_log_route()
+        self._add_images_route()
         self._installed = True
         return self
 
@@ -416,6 +417,120 @@ class ArkestraAdmin:
                         except Exception:
                             pass
                 return {"object": "log", "data": lines_data}
+
+    def _add_images_route(self) -> None:
+        import subprocess
+        import shutil
+
+        def _detect_runtime(runner_type: str) -> bool:
+            """Return True if the container runtime for this runner type is on PATH."""
+            binary = {"podman": "podman", "docker": "docker"}.get(runner_type)
+            return binary is not None and shutil.which(binary) is not None
+
+        def _image_exists(image_tag: str, runtime_type: str) -> bool:
+            """Check if an image tag exists in the local container store."""
+            cmd = {"podman": ["podman", "images", "--format", "{{.Repository}}:{{.Tag}}",
+                              image_tag],
+                   "docker": ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}",
+                              image_tag]}
+            proc = subprocess.run(cmd.get(runtime_type, []), capture_output=True, text=True,
+                                  timeout=10)
+            return image_tag in proc.stdout
+
+        @self._app.get("/admin/images")
+        async def admin_images():
+            cm_data = self.server._arkestra.cm.data
+            images_config = cm_data.get("images") or {}
+            if not images_config:
+                raise HTTPException(status_code=500,
+                                    detail="No images section in config")
+
+            results = []
+            for backend_id, img_cfg in images_config.items():
+                image_tag = img_cfg.get("image", "")
+                containerfile = img_cfg.get("containerfile", "")
+                from model_arkestra.common import image_and_runner_for_backend
+                _, runner_type = image_and_runner_for_backend(cm_data, backend_id)
+                runtime_detected = _detect_runtime(runner_type)
+                available = _image_exists(image_tag, runner_type) if runtime_detected else False
+                results.append({
+                    "backend_id": backend_id,
+                    "runner": runner_type,
+                    "runtime_detected": runtime_detected,
+                    "image": image_tag,
+                    "containerfile": containerfile,
+                    "available": available,
+                })
+            return results
+
+        @self._app.post("/admin/images/build")
+        async def admin_build_image(body: dict):
+            backend_id = body.get("backend")
+            if not backend_id:
+                raise HTTPException(status_code=400, detail="Missing 'backend' in request body")
+
+            cm_data = self.server._arkestra.cm.data
+            from model_arkestra.common import image_and_runner_for_backend, containerfile_for_backend
+            image_tag, runner_type = image_and_runner_for_backend(cm_data, backend_id)
+            containerfile_path = containerfile_for_backend(backend_id)
+
+            runtime_detected = _detect_runtime(runner_type)
+            if not runtime_detected:
+                return {"skipped": True, "reason": f"runner={runner_type} but no '{runner_type}' binary found on PATH", "image": image_tag}
+
+            if not containerfile_path:
+                raise HTTPException(status_code=404, detail=f"No containerfile found for backend '{backend_id}'")
+
+            # Resolve containerfile path relative to project root
+            import os
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            full_cf_path = os.path.join(project_root, containerfile_path)
+            if not os.path.isfile(full_cf_path):
+                raise HTTPException(status_code=404,
+                                    detail=f"Containerfile not found: {containerfile_path}")
+
+            cmd = {"podman": ["podman", "build", "-t", image_tag, "-f", full_cf_path, project_root],
+                   "docker": ["docker", "build", "-t", image_tag, "-f", full_cf_path, project_root]}
+            proc = subprocess.run(cmd[runner_type], capture_output=True, text=True, timeout=600)
+            success = proc.returncode == 0
+            return {
+                "backend": backend_id,
+                "image": image_tag,
+                "success": success,
+                "runtime": runner_type,
+                "output": proc.stdout + proc.stderr,
+                "error": None if success else proc.stderr or proc.stdout or "non-zero exit",
+            }
+
+        @self._app.delete("/admin/images/{image_tag}")
+        async def admin_remove_image(image_tag: str):
+            cm_data = self.server._arkestra.cm.data
+            images_config = cm_data.get("images") or {}
+
+            # Find which backend_id this image belongs to
+            found_backend = None
+            for bid, icfg in images_config.items():
+                if icfg.get("image") == image_tag:
+                    found_backend = bid
+                    break
+
+            if not found_backend:
+                raise HTTPException(status_code=404,
+                                    detail=f"Image '{image_tag}' not configured in any backend")
+
+            from model_arkestra.common import image_and_runner_for_backend
+            _, runner_type = image_and_runner_for_backend(cm_data, found_backend)
+            if not _detect_runtime(runner_type):
+                return {"skipped": True, "reason": f"runner={runner_type} but no '{runner_type}' binary found on PATH", "image": image_tag}
+
+            cmd = {"podman": ["podman", "rmi", "-f", image_tag],
+                   "docker": ["docker", "rmi", "-f", image_tag]}
+            proc = subprocess.run(cmd[runner_type], capture_output=True, text=True, timeout=30)
+            return {
+                "removed": proc.returncode == 0,
+                "image": image_tag,
+                "error": None if proc.returncode == 0 else proc.stderr,
+            }
 
     def _add_eject_route(self) -> None:
         import os
