@@ -555,7 +555,7 @@ class ArkestraAdmin:
                 return {"ok": True, "model": model}
 
             # 2. Find and delete cache entry under HF_HUB_CACHE
-            hf_cache = os.environ.get("HF_HUB_CACHE", os.environ.get("LLAMA_CACHE", "~/.cache/huggingface/hub"))
+            hf_cache = self._resolve_env("HF_HUB_CACHE") or self._resolve_env("LLAMA_CACHE") or "~/.cache/huggingface/hub"
             cache_dir = Path(hf_cache).expanduser() / f"models--{checkpoint.replace('/', '--')}"
             if cache_dir and cache_dir.exists():
                 import shutil
