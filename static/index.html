@@ -356,14 +356,7 @@
             word-break: break-all;
         }
 
-        .log-controls {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            margin-bottom: 6px;
-            font-size: 11px;
-        }
-        .log-controls label { cursor: pointer; display: flex; align-items: center; gap: 4px; }
+
 
         /* ── Chat ──────────────────────────────────────────────────── */
         .chat-messages {
@@ -653,9 +646,9 @@
         let isVDragging  = false;           // vertical (left/right) divider
         let isHDragging  = false;           // horizontal (logs/chat) divider
 
-        // Log streaming state
-        let logStreamCtrl    = null;        // AbortController for SSE log stream
-        let currentLogLines  = [];          // accumulated log lines
+        // Log polling state
+        let logPollTimer    = null;         // interval id for log polling
+        let logLastCount    = 0;            // last appended line count for diff
         let isChatStreaming  = false;       // true while a chat response is streaming
 
         // ── 1.3 Fetch Helpers ─────────────────────────────────────
@@ -1049,32 +1042,38 @@
 
         // ── 2.3 Model Selection ───────────────────────────────────
         async function selectModel(name) {
-            selectedModel = name;
-            renderModelList(document.getElementById('model-search')?.value || '');
-            stopLogFollow();          // clean up any active log stream
-            stopChatStream();         // cancel any active chat stream
-            clearChatHistory();       // reset conversation for new model
-            openEditForm(name);
-            restoreChatParams();      // load params for this model
+            stopChatStream();
+            clearChatHistory();
+            if (name && modelsCache.length > 0) {
+                loadLogSnapshot(name);
+                startLogPoll(name);
+            } else {
+                const display = document.getElementById('log-display');
+                if (display) {
+                    display.textContent = '';
+                    const ph = document.createElement('p');
+                    ph.className = 'placeholder-text';
+                    ph.textContent = 'Select a model to view logs.';
+                    display.appendChild(ph);
+                }
+            }
         }
 
         // ── 5. Logs pane functions ────────────────────────────────
-        function stopLogFollow() {
-            if (logStreamCtrl) {
-                logStreamCtrl.abort();
-                logStreamCtrl = null;
+        function stopLogPoll() {
+            if (logPollTimer) {
+                clearInterval(logPollTimer);
+                logPollTimer = null;
             }
-            currentLogLines = [];
-            // Also update the checkbox state to unchecked
-            const checkEl = document.getElementById('log-follow-cb');
-            if (checkEl) checkEl.checked = false;
+            logLastCount = 0;
         }
 
         async function loadLogSnapshot(modelName) {
+            stopLogPoll();
+
             const display = document.getElementById('log-display');
             if (!display) return;
             display.textContent = '';
-            currentLogLines = [];
 
             if (!modelName) {
                 const ph = document.createElement('p');
@@ -1086,7 +1085,15 @@
 
             try {
                 const data = await adminGet('/admin/log/' + encodeURIComponent(modelName), { lines: 200 });
-                if (data && data.data) appendLogLines(data.data);
+                if (data && data.data) {
+                    for (const line of data.data) {
+                        const div = document.createElement('div');
+                        div.className = 'log-line';
+                        div.textContent = line;
+                        display.appendChild(div);
+                    }
+                    logLastCount = data.data.length;
+                }
             } catch (e) {
                 console.error('[admin] log snapshot failed for ' + modelName + ':', e.message);
             }
@@ -1097,7 +1104,7 @@
             const display = document.getElementById('log-display');
             if (!display || !lines.length) return;
 
-            // Check if user is near bottom before appending
+            // Only auto-scroll if user is near bottom
             const nearBottom = display.scrollHeight - display.scrollTop <= display.clientHeight + 60;
 
             lines.forEach(line => {
@@ -1107,54 +1114,28 @@
                 display.appendChild(div);
             });
 
-            currentLogLines.push(...lines);
+            logLastCount += lines.length;
 
-            // Only auto-scroll if user was already at bottom
+            // Auto-scroll only if user is already at bottom
             if (nearBottom) display.scrollTop = display.scrollHeight;
         }
 
-
-        async function startLogFollow(modelName) {
-            stopLogFollow();                  // abort any prior stream
-            logStreamCtrl = new AbortController();
-
-            try {
-                const resp = await fetch(`${BASE_URL}/admin/log/${modelName}?follow=true`, {
-                    signal: logStreamCtrl.signal,
-                });
-                if (!resp.ok) throw new Error(`log stream ${resp.status}`);
-
-                const reader = resp.body.getReader();
-                const decoder = new TextDecoder();
-                let buf = '';
-
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-
-                    buf += decoder.decode(value, { stream: true });
-                    // Parse SSE frames
-                    const frames = buf.split('\n\n');
-                    buf = frames.pop();  // last partial frame stays in buffer
-
-                    for (const frame of frames) {
-                        if (!frame.startsWith('data: ')) continue;
-                        try {
-                            const msg = JSON.parse(frame.slice(6));
-                            if (msg.type === 'snapshot') {
-                                appendLogLines(msg.lines || []);
-                            } else if (msg.type === 'line') {
-                                appendLogLines(msg.lines || []);
-                            }
-                        } catch { /* skip malformed frames */ }
+        function startLogPoll(modelName) {
+            stopLogPoll();
+            const pollOne = async () => {
+                try {
+                    const data = await adminGet('/admin/log/' + encodeURIComponent(modelName), { lines: 200 });
+                    if (data && data.data) {
+                        const newLines = data.data.slice(logLastCount);
+                        if (newLines.length > 0) appendLogLines(newLines);
                     }
+                } catch (e) {
+                    // Silent fail — don't flood console on transient issues
                 }
-            } catch (err) {
-                if (err.name !== 'AbortError') console.error('[admin] log stream error:', err.message);
-            }
+            };
+            pollOne();          // fetch immediately
+            logPollTimer = setInterval(pollOne, POLL_INTERVAL);
         }
-
-        // (renderLogToDOM — kept for reference, uses appendLogLines which targets log-display)
 
         // ── 6. Chat pane functions ────────────────────────────────
         let chatHistory      = [];   // full conversation history for selected model
@@ -1275,7 +1256,7 @@
 
         // 6.4 Streaming response handler
         async function streamChatResponse(messages, modelName, onToken) {
-            stopLogFollow();    // ensure no log stream conflict
+            stopLogPoll();    // pause log polling during chat streaming
 
             chatAbortCtrl = new AbortController();
 
@@ -1461,14 +1442,14 @@
                 });
             }
 
-                        // ── Tab visibility: abort streams when hidden, reload on show ─
+                        // ── Tab visibility: reload on show ─
             document.addEventListener('visibilitychange', () => {
-                if (document.hidden) {
-                    stopLogFollow();
-                    stopChatStream();
-                } else {
+                if (!document.hidden) {
                     refreshModels();      // re-read model status on focus
-                    if (logModel) loadLogSnapshot(logModel);
+                    if (logModel && logPollTimer === null) {
+                        loadLogSnapshot(logModel);
+                        startLogPoll(logModel);
+                    }
                 }
             });
 
@@ -1552,8 +1533,27 @@
                 }
             });
 
-        // ── 5. Logs pane — stream + snapshot ──────────────────────
-            // (old log-follow wiring removed — new handler in DOMContentLoaded above)
+        // ── 5. Logs pane — polling on model select ────────────────
+            const logSelect = document.getElementById('log-model-select');
+            if (logSelect) {
+                logSelect.addEventListener('change', () => {
+                    logModel = logSelect.value;
+                    if (logModel) {
+                        loadLogSnapshot(logModel);
+                        startLogPoll(logModel);
+                    } else {
+                        stopLogPoll();
+                        const display = document.getElementById('log-display');
+                        if (display) {
+                            display.textContent = '';
+                            const ph = document.createElement('p');
+                            ph.className = 'placeholder-text';
+                            ph.textContent = 'Select a model to view logs.';
+                            display.appendChild(ph);
+                        }
+                    }
+                });
+            }
 
             // ── 6. Chat pane wireups ────────────────────────────────
             document.getElementById('right-chat-params-toggle')?.addEventListener('click', toggleChatParams);
@@ -1614,7 +1614,6 @@
                 <div class="pane-header">
                     <label>Select Model:</label>
                     <select id="log-model-select"></select>
-                    <label><input type="checkbox" id="log-follow-cb"> Follow</label>
                 </div>
                 <pre class="log-container" id="log-display"></pre>
             </div>
