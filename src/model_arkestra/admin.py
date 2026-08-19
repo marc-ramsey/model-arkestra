@@ -537,38 +537,20 @@ class ArkestraAdmin:
             }
 
     def _add_eject_route(self) -> None:
-        import os
-        from pathlib import Path
+        from fastapi.responses import JSONResponse
 
         @self._app.post("/admin/eject/{model}")
         async def admin_eject(model: str):
-            # 0. Stop the model if it's running
             try:
-                await self.server._arkestra.stop(model)
-            except Exception:
-                pass
-
-            # 1. Look up checkpoint in config
-            cfg = self.server._arkestra.cm.data.get("models") or {}
-            if model not in cfg:
-                raise HTTPException(status_code=404, detail=f"Model '{model}' not in config")
-
-            checkpoint = cfg[model].get("checkpoint", "")
-            if not checkpoint:
-                return {"ok": True, "model": model}
-
-            # 2. Find and delete cache entry under HF_HUB_CACHE
-            hf_cache = self._resolve_env("HF_HUB_CACHE") or self._resolve_env("LLAMA_CACHE") or "~/.cache/huggingface/hub"
-            cache_dir = Path(hf_cache).expanduser() / f"models--{checkpoint.replace('/', '--')}"
-            if cache_dir and cache_dir.exists():
-                import shutil
-                shutil.rmtree(cache_dir)
-
-            # 3. Clear all runner context entries for this model
-            for r in self.server._arkestra._runners.values():
-                r._models.pop(model, None)  # noqa: SLF001
-
-            return {"ok": True, "model": model}
+                result = await self.server._arkestra.eject(model)
+                return JSONResponse(status_code=200, content=result)
+            except ValueError as exc:
+                detail = str(exc)
+                # Not-in-config is 404; shared-cache conflict is 409
+                status = 404 if "not in config" in detail else 409
+                raise HTTPException(status_code=status, detail=detail)
+            except Exception as exc:
+                raise HTTPException(status_code=503, detail=f"Eject failed: {exc}")
 
 
 # Type hints — resolved at runtime via string ref

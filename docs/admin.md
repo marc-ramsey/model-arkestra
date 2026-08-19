@@ -256,13 +256,22 @@ This endpoint always returns `200 OK`. The response is sent before shutdown begi
 
 Removes a model from cache without modifying config. Stops the model first (if running), deletes its checkpoint files from the HF cache directory, and clears all runner context entries.
 
+**Safety check:** before deleting, if another *running* model shares the same underlying cache directory (same resolved checkpoint path under `HF_HUB_CACHE`), the eject is rejected:
 ```json
-{"ok": true, "model": "qwen3.5-4b"}
+{"detail": "Model 'qwen3.5-4b' is in use by other running runners: gemma-v2, llama-rdma"}
 ```
 
-The cache path is computed from `config.yaml`'s `env.HF_HUB_CACHE` (or `LLAMA_CACHE` fallback) using the standard HF Hub layout: `<cache>/models--{checkpoint.replace('/', '--')>`.
-
-Always returns `200 OK`. Returns `404` if the model doesn't exist in config. If a context has already been cleared by eject, subsequent `stop()` calls will return `404`.
+Returns `200 OK` with a detail report on success:
+```json
+{
+  "ok": true,
+  "model": "qwen3.5-4b",
+  "cache_deleted": true,
+  "cache_path": "/home/user/.cache/huggingface/hub/models--unsloth--Qwen3-4B-GGUF",
+  "contexts_cleared": 1
+}
+```
+If the model has no checkpoint configured, or the cache directory doesn't exist, `cache_deleted` is `false`. Returns `404` if the model doesn't exist in config. Returns `409 Conflict` when a shared-cache conflict prevents eject.
 
 ### GET /admin/log/{model}?lines=N&follow=true
 

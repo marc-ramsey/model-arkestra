@@ -1,7 +1,10 @@
 """Single entry point for all model operations — wraps ConfigManager + lazy runners."""
 from __future__ import annotations
 import asyncio
+import os
+import shutil
 import sys
+from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional, Set
 
 from llm_config_manager.config_manager import ConfigManager
@@ -181,7 +184,24 @@ class ModelArkestra:
             return default_type
         return "process"
 
-    # ── context manager ────────────────────────────────────────────────
+    # ── cache helpers ────────────────────────────────────────────────
+
+    def _cache_root(self) -> Path:
+        """Resolve HF_HUB_CACHE or LLAMA_CACHE env var to a root Path."""
+        for key in ("HF_HUB_CACHE", "LLAMA_CACHE"):
+            val = (self._cm.data.get("env") or {}).get(key)
+            if val:
+                return Path(val).expanduser()
+            val = os.environ.get(key)
+            if val:
+                return Path(val).expanduser()
+        return Path("~/.cache/huggingface/hub").expanduser()
+
+    def _cache_dir_for_checkpoint(self, checkpoint: str) -> Path:
+        """Return the cache directory path for a given checkpoint string."""
+        return self._cache_root() / f"models--{checkpoint.replace('/', '--')}"
+
+    # ── context manager ────────────────────────────────────────
 
     async def __aenter__(self) -> "ModelArkestra":
         return self
@@ -267,6 +287,69 @@ class ModelArkestra:
                 except Exception:
                     pass
                 return
+
+    async def eject(self, model_name: str) -> Dict[str, Any]:
+        """Stop a model and delete its cached checkpoint files.
+
+        Returns a dict with details about what was removed.  Raises ValueError
+        if other running models share the same underlying cache directory.
+        """
+        cfg = self._cm.data.get("models") or {}
+        if model_name not in cfg:
+            raise ValueError(f"Model '{model_name}' not in config")
+
+        checkpoint = cfg[model_name].get("checkpoint", "")
+        result: Dict[str, Any] = {
+            "ok": True,
+            "model": model_name,
+            "cache_deleted": False,
+            "contexts_cleared": 0,
+        }
+
+        # Stop the model first (always)
+        await self.stop(model_name)
+
+        if not checkpoint:
+            # No cache to clear — just record context cleanup and return
+            for r in self._runners.values():
+                if model_name in r._models:
+                    del r._models[model_name]
+                    result["contexts_cleared"] += 1
+            return result
+
+        cache_dir = self._cache_dir_for_checkpoint(checkpoint)
+
+        # Safety check: other running contexts sharing this cache?
+        if cache_dir.exists():
+            targets = [
+                ctx.name
+                for ctx in self._get_model_contexts()
+                if ctx.name != model_name
+                and ctx.state == RunnerState.RUNNING
+                and (
+                    cfg.get(ctx.name, {}).get("checkpoint", "")
+                    and self._cache_dir_for_checkpoint(cfg[ctx.name]["checkpoint"]).resolve()
+                    == cache_dir.resolve()
+                )
+            ]
+            if targets:
+                raise ValueError(
+                    f"Model '{model_name}' is in use by other running runners: "
+                    + ", ".join(targets)
+                )
+
+        # Delete cache, then clear contexts
+        if cache_dir.exists():
+            shutil.rmtree(cache_dir)
+            result["cache_deleted"] = True
+            result["cache_path"] = str(cache_dir)
+        for r in self._runners.values():
+            if model_name in r._models:
+                del r._models[model_name]
+                result["contexts_cleared"] += 1
+
+        return result
+
 
     async def restart(
         self,

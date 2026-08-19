@@ -52,6 +52,30 @@ Stops the model matching *model_name*. Sends the appropriate shutdown signal (se
 
 Stops the running instance and starts a new one on the **same port**. Infra keys (`backend`, `runner`) override routing. Everything else is an inference param.
 
+### `async eject(model_name: str) -> dict`
+
+Stops the model, deletes its checkpoint files from the HF cache directory, and clears all runner context entries. Returns a dict with details about what was removed.
+
+```json
+{
+  "ok": true,
+  "model": "qwen3.5-4b",
+  "cache_deleted": true,
+  "cache_path": "/home/user/.cache/huggingface/hub/models--unsloth--Qwen3-4B-GGUF",
+  "contexts_cleared": 1
+}
+```
+
+**Raises `ValueError`** in two cases:
+- Model not found in config → message: `"Model '<name>' not in config"`
+- Another running model shares the same underlying cache directory (same resolved checkpoint path) → message: `"Model '<name>' is in use by other running runners: <list>"` — the eject is aborted to prevent corrupting a shared model that's still serving inference requests.
+
+```python
+result = await arkestra.eject("qwen3.5-4b")
+if result["cache_deleted"]:
+    print(f"Deleted {result['cache_path']}")
+```
+
 ### `async stop_all() -> None`
 
 Stops all model processes. Model entries remain in `_models` with state `STOPPED` — calling `start()` again on a stopped model restarts it in-place on the same port. For container runners, containers are **not** removed (only force-removed during `shutdown()`).
