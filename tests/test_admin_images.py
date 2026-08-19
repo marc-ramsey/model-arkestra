@@ -30,7 +30,7 @@ def app_client():
     """Return a TestClient for the ArkestraAdmin app using sample-config.yaml.
 
     Does not start ModelArkestra — image endpoints only need config data and subprocess access.
-    Sets the ADMIN_KEY cookie so auth passes.
+    Sets the X-Admin-Key header so auth passes.
     """
     from model_arkestra.server import ArkestraServer
     server = ArkestraServer(
@@ -40,8 +40,8 @@ def app_client():
     )
     # Don't start the server — we only need the FastAPI app
     client = TestClient(server.get_app())
-    # Sample config has ADMIN_KEY: whatever, set the cookie for auth
-    client.cookies.set("admin_key", "whatever")
+    # Sample config has ADMIN_KEY: whatever, set the header for auth
+    client.headers["X-Admin-Key"] = "whatever"
     yield client
 
 

@@ -64,6 +64,13 @@ class ModelArkestra:
             contexts.extend(r._models.values())  # noqa: SLF001
         return contexts
 
+    def find_context(self, model_name: str) -> Optional[_ModelContext]:
+        """Return the _ModelContext for *model_name*, or None."""
+        for ctx in self._get_model_contexts():
+            if ctx.name == model_name:
+                return ctx
+        return None
+
     def get_v1_models(self) -> Dict[str, Any]:
         """OpenAI-compatible ``/v1/models`` response."""
         from time import time

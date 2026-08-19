@@ -53,6 +53,14 @@ class ArkestraAdmin:
         import os
         return os.environ.get(key, "")
 
+    def _backend_for_image(self, image_tag: str) -> Optional[str]:
+        """Return the backend_id whose ``image`` matches *image_tag*, or None."""
+        backends = self.server._arkestra.cm.data.get("backends", {}) or {}
+        for bid, be_cfg in backends.items():
+            if isinstance(be_cfg, dict) and str(be_cfg.get("image", "")) == image_tag:
+                return bid
+        return None
+
     def _add_root_route(self) -> None:
         from pathlib import Path
 
@@ -151,13 +159,12 @@ class ArkestraAdmin:
 
         @self._app.post("/admin/stop/{model}")
         async def admin_stop(model: str):
-            ctxs = list(self.server._arkestra._get_model_contexts())
-            matching = [c for c in ctxs if c.name == model]
-            if not matching:
+            ctx = self.server._arkestra.find_context(model)
+            if not ctx:
                 raise HTTPException(
                     status_code=404, detail=f"Model '{model}' not found in runners"
                 )
-            prev_state = matching[0].state
+            prev_state = ctx.state
             if prev_state in (RunnerState.STOPPED, RunnerState.STOPPING):
                 return {
                     "ok": True,
@@ -342,15 +349,13 @@ class ArkestraAdmin:
                         kw[key] = value
 
             # If model is already running with overrides, stop first then start fresh
-            if kw:
-                ctxs = [c for c in self.server._arkestra._get_model_contexts() if c.name == model]
-                if ctxs and ctxs[0].state == RunnerState.RUNNING:
-                    await self.server._arkestra.stop(model)
+            if kw and self.server._arkestra.find_context(model):
+                await self.server._arkestra.stop(model)
 
             try:
                 await self.server._arkestra.start(model, **kw)
-                ctxs = [c for c in self.server._arkestra._get_model_contexts() if c.name == model]
-                port = ctxs[0].port if ctxs else None
+                ctx = self.server._arkestra.find_context(model)
+                port = ctx.port if ctx else None
                 return {"ok": True, "model": model, "port": port}
             except Exception as exc:
                 raise HTTPException(status_code=503, detail=f"Start failed: {exc}")
@@ -375,11 +380,10 @@ class ArkestraAdmin:
 
                 async def log_stream():
                     """SSE stream of new log lines for a model."""
-                    ctxs = [c for c in self.server._arkestra._get_model_contexts() if c.name == model]
-                    if not ctxs:
+                    ctx = self.server._arkestra.find_context(model)
+                    if not ctx:
                         yield f"data: {json.dumps({'type': 'error', 'message': 'No context for this model'})}\n\n"
                         return
-                    ctx = ctxs[0]
                     known_runner = None
                     buffer_size = ctx._log_buffer.maxlen if hasattr(ctx, '_log_buffer') else BaseModelRunner.LOG_BUFFER_DEFAULT
 
@@ -506,22 +510,16 @@ class ArkestraAdmin:
 
         @self._app.delete("/admin/images/{image_tag}")
         async def admin_remove_image(image_tag: str):
-            cm_data = self.server._arkestra.cm.data
-            backends = cm_data.get("backends") or {}
-
-            # Find which backend_id this image belongs to
-            found_backend = None
-            for bid, be_cfg in backends.items():
-                if isinstance(be_cfg, dict) and str(be_cfg.get("image", "")) == image_tag:
-                    found_backend = bid
-                    break
+            found_backend = self._backend_for_image(image_tag)
 
             if not found_backend:
                 raise HTTPException(status_code=404,
                                     detail=f"Image '{image_tag}' not configured in any backend")
 
             from model_arkestra.common import image_and_runner_for_backend
-            _, runner_type = image_and_runner_for_backend(cm_data, found_backend)
+            _, runner_type = image_and_runner_for_backend(
+                self.server._arkestra.cm.data, found_backend
+            )
             if not _detect_runtime(runner_type):
                 return {"skipped": True, "reason": f"runner={runner_type} but no '{runner_type}' binary found on PATH", "image": image_tag}
 
