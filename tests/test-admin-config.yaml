@@ -1,0 +1,58 @@
+backends:
+  default: vulkan-radv
+  rocm:
+    args:
+      flash-attn: 'on'
+      hf: ${CHECKPOINT}
+      port: ${PORT}
+    binary_dir: /home/marc/local/llama.cpp/build-rocm/bin
+    container: Containerfile.rocm
+    devices:
+    - /dev/kfd
+    - /dev/dri
+    env_container:
+      GGML_CUDA_ENABLE_UNIFIED_MEMORY: 'ON'
+      ROCBLAS_USE_HIPBLASLT: '1'
+    image: ark-llama:rocm
+    runner: podman
+  vulkan-radv:
+    args:
+      flash-attn: 'on'
+      hf: ${CHECKPOINT}
+      port: ${PORT}
+    binary_dir: /home/marc/local/llama.cpp/build-vulkan-radv/bin
+    container: Containerfile.vulkan-radv
+    devices:
+    - /dev/dri/card0:rwm
+    - /dev/dri/renderD128:rwm
+    env_container:
+      GGML_CUDA_ENABLE_UNIFIED_MEMORY: 'ON'
+      ROCBLAS_USE_HIPBLASLT: '1'
+    image: ark-llama:vulkan-radv
+    runner: process
+default-image: ark-llama:vulkan-radv
+env:
+  ADMIN_KEY: test-admin-key
+  HF_HUB_CACHE: /home/lemonade/hub
+  LLAMA_CACHE: /home/lemonade/hub
+model-ports: 32
+models:
+  full-model:
+    args: --ctx 8192
+    backend: rocm
+    checkpoint: test/full-model:Q5
+    tags:
+    - chat
+    - reasoning
+  gemma-4-e2b:
+    args: --temp 0.7
+    checkpoint: unsloth/gemma-4-E2B-it-GGUF:Q4_K_M
+  new-model:
+    args: --temp 0.7
+    checkpoint: test/new-model:Q4
+  qwen3.5-4b:
+    args: --temp 0.8 --top-k 20
+    checkpoint: unsloth/Qwen3.5-4B-GGUF:Q4_K_M
+  voxtral-mini:
+    checkpoint: unsloth/Voxtral-Mini-3B-2507-GGUF:Q4_K_M
+models-start-port: 18000

@@ -27,14 +27,14 @@ def skip_if_no_runtime():
 
 @pytest.fixture()
 def app_client():
-    """Return a TestClient for the ArkestraAdmin app using sample-config.yaml.
+    """Return a TestClient for the ArkestraAdmin app.
 
-    Does not start ModelArkestra — image endpoints only need config data and subprocess access.
+    Uses tests/test-admin-config.yaml — isolated from sample-config.yaml.
     Reads ADMIN_KEY from config so it stays in sync.
     """
     from model_arkestra.server import ArkestraServer
     server = ArkestraServer(
-        config_path="sample-config.yaml",
+        config_path="tests/test-admin-config.yaml",
         port=18005,
         ready_timeout=5,
     )
@@ -54,7 +54,7 @@ class TestListImages:
         assert resp.status_code == 200
         data = resp.json()
         assert isinstance(data, list)
-        # sample-config.yaml defines images for rocm and vulkan-radv
+        # test-admin-config.yaml defines backends for rocm and vulkan-radv
         assert len(data) >= 1
         ids = {entry["backend_id"] for entry in data}
         assert "rocm" in ids or "vulkan-radv" in ids

@@ -1,6 +1,5 @@
 """Tests for ArkestraAdmin endpoints — live server, no mocks."""
 import copy
-import shutil
 from unittest.mock import patch, AsyncMock
 
 import pytest
@@ -9,18 +8,14 @@ from fastapi.testclient import TestClient
 from model_arkestra.server import ArkestraServer
 
 
-@pytest.fixture(autouse=True)
-def backup_config():
-    """Back up and restore sample-config.yaml around each test."""
-    shutil.copy("sample-config.yaml", ".sample-config.yaml.bak")
-    yield
-    shutil.move(".sample-config.yaml.bak", "sample-config.yaml")
-
-
 @pytest.fixture(scope="session")
 def live_server():
-    """Start a single ArkestraServer for the entire test session."""
-    server = ArkestraServer("sample-config.yaml", port=18005)
+    """Start a single ArkestraServer for the entire test session.
+
+    Uses tests/test-admin-config.yaml which is separate from
+    sample-config.yaml — test mutations are safely isolated.
+    """
+    server = ArkestraServer("tests/test-admin-config.yaml", port=18005)
     client = TestClient(server.get_app())
     return {"server": server, "client": client}
 
