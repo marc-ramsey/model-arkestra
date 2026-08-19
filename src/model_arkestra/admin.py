@@ -63,28 +63,26 @@ class ArkestraAdmin:
             key = self.admin_key or ""
             content = html.read_text().replace("{{ADMIN_KEY}}", key)
             return HTMLResponse(content, media_type="text/html",
-                                headers={"X-Admin-Key": key, "Cache-Control": "no-store"})
+                                headers={"Cache-Control": "no-store"})
 
         @self._app.get("/index.html")
         async def index_html():
             key = self.admin_key or ""
             content = html.read_text().replace("{{ADMIN_KEY}}", key)
             return HTMLResponse(content, media_type="text/html",
-                                headers={"X-Admin-Key": key, "Cache-Control": "no-store"})
+                                headers={"Cache-Control": "no-store"})
 
     def _add_auth_middleware(self) -> None:
-        if not self.admin_key:
-            return
-
+        # Always install the middleware (plumbing stays in place even when no key is set).
+        # When admin_key is empty/None, it's a no-op pass-through.
         @self._app.middleware("http")
         async def admin_auth(request: Request, call_next):
-            if request.url.path.startswith("/admin"):
-                key = request.cookies.get("admin_key", "")
-                print(f"[AUTH] {request.method} {request.url.path} cookie={key!r}", flush=True)
-                if not key or key != self.admin_key:
+            if request.url.path.startswith("/admin") and self.admin_key:
+                key = request.headers.get("x-admin-key", "")
+                if key != self.admin_key:
                     return JSONResponse(
                         status_code=401,
-                        content={"error": "Invalid or missing admin_key cookie"},
+                        content={"error": "Invalid or missing admin_key header"},
                     )
             return await call_next(request)
 

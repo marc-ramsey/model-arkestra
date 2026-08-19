@@ -28,9 +28,9 @@ def live_server():
 # ── fixtures ────────────────────────────────────────────────────────
 
 @pytest.fixture(autouse=True)
-def _set_admin_cookie(live_server):
-    """Set admin cookie on the test client for all tests."""
-    live_server["client"].cookies["admin_key"] = "whatever"
+def _set_admin_header(live_server):
+    """Set admin header on the test client for all tests (header-based auth)."""
+    live_server["client"].headers["X-Admin-Key"] = "whatever"
 
 
 # ── /admin/models ──────────────────────────────────────────────────
