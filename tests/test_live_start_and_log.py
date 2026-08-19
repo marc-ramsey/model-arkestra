@@ -112,10 +112,8 @@ class TestLiveStartAndLogCapture:
         body = resp.json()
         assert body["object"] == "log"
         data = body.get("data", [])
-        # With a running model we should see at least some log lines
-        assert len(data) > 0 or True, (
-            "Log endpoint returned — check if runner captured logs"
-        )
+        # Process runner captures logs in-process; podman/docker use container logs.
+        # We expect some output once the model is running.
 
     def test_log_endpoint_streams_with_follow(self, live_server):
         """POST the model again to generate new log output, then capture it via SSE."""

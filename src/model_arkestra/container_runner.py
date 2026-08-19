@@ -57,11 +57,9 @@ def _build_container_cmd(
     backend_config: Dict[str, Any],
     backend_id: Optional[str] = None,
 ) -> List[str]:
-    """Build a container run command for the *new* backend-config architecture.
+    """Build a container run command for the backend-config architecture.
 
     ``backend_config`` is the full backend dict (from ``cm.get_backend()``).
-    For legacy paths where no backend resolves, callers should build their own
-    command using ``model_data["image"]`` directly.
     """
     devices: List[str] = list(backend_config.get("devices", []))
     container_env: Dict[str, str] = dict(backend_config.get("env_container", {}))
@@ -149,10 +147,10 @@ class ContainerModelRunner(BaseModelRunner, ABC):
             stderr=asyncio.subprocess.PIPE,
             env=SUBPROCESS_ENV,
         )
-        stdout, _stderr = await proc.communicate()
+        stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
             return []
-        text = stdout.decode("utf-8", errors="replace")
+        text = stdout.decode("utf-8", errors="replace") + stderr.decode("utf-8", errors="replace")
         return [line for line in text.splitlines() if line]
 
     async def _release_port(self, port: int) -> None:

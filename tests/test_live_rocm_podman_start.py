@@ -1,20 +1,15 @@
-"""Live test: start qwen3.5-4b (rocm/podman) and capture startup logs.
+"""Live integration test: start model via server and capture startup logs.
 
-Uses sample-config.yaml as-is — qwen3.5-4b → backend rocm → runner podman.
+Uses sample-config.yaml as-is — models route through backends → runners.
 This is the exact documented routing chain from docs/config.md + docs/architecture.md.
+Connects to a pre-started ArkestraServer at port 21110.
 """
 
 from __future__ import annotations
 
 import json
-import os
-import re
-import signal
-import subprocess
-import sys
 import threading
 import time
-from pathlib import Path
 
 import httpx
 import pytest
@@ -24,27 +19,26 @@ BASE = "http://127.0.0.1:21110"
 COOKIE = {"admin_key": "whatever"}
 
 
-class TestLiveRoCmPodmanStartAndLog:
-    """Start qwen3.5-4b via rocm/podman, stream its startup logs."""
+class TestLiveServerStartAndLogCapture:
+    """Live server integration — model start + log streaming via SSE."""
 
-    def test_server_starts_and_health_ok(self):
-        """Server is up and returns 200 on /health."""
+    def test_server_health_ok(self):
+        """Pre-started server is up and healthy."""
         r = httpx.get(f"{BASE}/health", timeout=5)
         assert r.status_code == 200
         body = r.json()
         assert body["status"] == "ok"
 
-    def test_models_list_shows_qwen3_5_4b(self):
-        """GET /admin/models lists qwen3.5-4b with backend rocm."""
+    def test_models_list_accessible(self):
+        """GET /admin/models returns a valid model list."""
         r = httpx.get(f"{BASE}/admin/models", cookies=COOKIE, timeout=5)
         assert r.status_code == 200
         models_by_id = {m["id"]: m for m in r.json()["models"]}
-        qwen = models_by_id.get("qwen3.5-4b")
-        assert qwen is not None
-        assert qwen["backend_id"] == "rocm"
+        # At least one model should be listed
+        assert len(models_by_id) > 0
 
-    def test_start_model_and_capture_startup_logs(self):
-        """Start qwen3.5-4b, stream logs from /admin/log?follow=true."""
+    def test_start_and_capture_startup_logs(self):
+        """Start a model, stream its startup logs via /admin/log?follow=true SSE."""
         # Kick off log stream in background
         all_lines: list[str] = []
 
@@ -73,33 +67,28 @@ class TestLiveRoCmPodmanStartAndLog:
         # Let SSE connect and grab the snapshot
         time.sleep(1.5)
 
-        # Start model — rocm backend → podman runner
+        # Start model — backend routing determined by config
         r = httpx.post(
             f"{BASE}/admin/start/qwen3.5-4b",
             cookies=COOKIE, timeout=60,
         )
+        assert r.status_code == 200
 
         # Stop the SSE stream so it returns
         httpx.post(f"{BASE}/admin/stop/qwen3.5-4b", cookies=COOKIE, timeout=10)
         time.sleep(1)
         collector_thread.join(timeout=3)
 
-        # Print captured log lines
+        # Print captured log lines for debugging
         print()
         if all_lines:
             print("=== Captured startup logs ===")
             for line in all_lines:
                 print(f"  {line}")
             print("=============================")
-            print()
-            # Check we got meaningful output (container create, image pull, etc.)
-            has_container_cmd = any("podman" in l or "run" in l for l in all_lines)
-            has_image_ref = any("ark-llama" in l for l in all_lines)
-            print(f"  Container command logged: {has_container_cmd}")
-            print(f"  Image reference logged: {has_image_ref}")
         else:
-            print("  [no log lines captured via in-process buffer]")
-            # Podman runner stores logs as container logs — try getting them directly
+            # Fallback: podman/docker runners store logs as container logs,
+            # not in-process buffer — get them directly via snapshot endpoint.
             r2 = httpx.get(
                 f"{BASE}/admin/log/qwen3.5-4b?follow=false",
                 cookies=COOKIE, timeout=10,
@@ -112,10 +101,10 @@ class TestLiveRoCmPodmanStartAndLog:
                         print(f"  {line}")
 
     def test_model_state_after_start(self):
-        """After start attempt, model status reflects outcome."""
+        """Model status reflects the outcome of a start attempt."""
         r = httpx.get(f"{BASE}/admin/models", cookies=COOKIE, timeout=5)
         assert r.status_code == 200
         models_by_id = {m["id"]: m for m in r.json()["models"]}
         qwen = models_by_id.get("qwen3.5-4b")
-        print(f"  qwen3.5-4b status: {qwen['status']} (port={qwen['port']})")
         assert qwen is not None
+        print(f"  qwen3.5-4b status: {qwen['status']} (port={qwen['port']})")

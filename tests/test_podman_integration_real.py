@@ -94,7 +94,7 @@ class TestPodmanRunnerIntegration:
         assert len(response) > 0
         print(f"[<] Response: {response[:120]}…")
 
-    async def test_qwen3_4b_podman_stream(self, mr):
+    async def test_gemma_4_e2b_podman_stream(self, mr):
         """Start gemma-4-e2b in podman container → stream tokens → stop."""
         await mr.start("gemma-4-e2b", runner="podman")
 
@@ -110,3 +110,27 @@ class TestPodmanRunnerIntegration:
                 u = chunk["usage"]
                 print(f"Done ({u.get('total_tokens', '?')} tokens, {u.get('tokens_per_second', '?')} tok/s)")
         print()
+
+    async def test_podman_logs_captured(self, mr):
+        """Start qwen3.5-4b in podman → verify container logs are captured."""
+        await mr.start("qwen3.5-4b", runner="podman")
+
+        # Find the podman runner that hosts qwen
+        podman_runner = None
+        for r in mr._runners.values():
+            if "qwen3.5-4b" in r._models:
+                podman_runner = r
+                break
+        assert podman_runner, "Podman runner should have qwen3.5-4b"
+
+        logs = await podman_runner.get_logs("qwen3.5-4b", lines=100)
+        assert len(logs) > 0, "No log lines captured from podman container"
+        combined = "\n".join(logs).lower()
+        # Should contain podman/docker container runtime output
+        has_container_ref = any(
+            kw in combined for kw in ["podman", "docker", "ark-llama",
+                                       "image", "pull", "create"]
+        )
+        assert has_container_ref, (
+            f"No container/runtime output in logs: {logs[:5]}"
+        )

@@ -1,6 +1,5 @@
 from __future__ import annotations
 import asyncio
-import os
 import shlex
 from typing import Any, Dict, List
 
@@ -14,34 +13,6 @@ def _resolve_backend_for_docker(
 ) -> Dict[str, Any] | None:
     """Resolve the effective backend for docker (priority: ctx > model_data > config)."""
     return _resolve_backend(runner, ctx, model_data)
-
-
-def _build_docker_legacy(
-    runner: Any, ctx: _ModelContext, model_data: Dict[str, Any]
-) -> List[str]:
-    """Legacy docker run command using model_data["image"] directly (no backend config)."""
-    image = str(model_data.get("image", "ark-llama:vulkan-radv"))
-    cmd_str = str(model_data.get("cmd", ""))
-    arg_list = shlex.split(cmd_str) if cmd_str.strip() else []
-    fixed: List[str] = []
-    i = 0
-    while i < len(arg_list):
-        if arg_list[i] == "--port" and i + 1 < len(arg_list):
-            fixed.extend(["--port", str(ctx.port)])
-            i += 2
-        else:
-            fixed.append(arg_list[i])
-            i += 1
-    if not fixed or "--host" not in fixed:
-        fixed.extend(["--host", runner.broadcast_addr])
-
-    parts: List[str] = [
-        "docker", "run", "-d",
-        "-e", f"PORT={ctx.port}",
-        "--name", safe_container_name(ctx.name, ctx.port),
-        "-p", f"0.0.0.0:{ctx.port}:{ctx.port}",
-    ] + fixed + [image]
-    return parts
 
 
 class DockerModelRunner(ContainerModelRunner):
@@ -84,17 +55,19 @@ class DockerModelRunner(ContainerModelRunner):
             await proc.wait()
         except Exception:
             pass
-        # Resolve the full backend dict (new architecture) or fall back to legacy.
+
         be = _resolve_backend_for_docker(self, ctx, model_data)
-        if be is not None:
-            cmd_parts = _build_container_cmd(
-                "docker", self, ctx.name, ctx.port,
-                self.broadcast_addr, ctx.port,  # docker: same port in and out
-                be,
-                backend_id=ctx.backend_id,
+        if be is None:
+            raise RuntimeError(
+                f"No backend resolved for docker model '{ctx.name}' — "
+                "configure a backend with an 'image' key."
             )
-        else:
-            cmd_parts = _build_docker_legacy(self, ctx, model_data)
+        cmd_parts = _build_container_cmd(
+            "docker", self, ctx.name, ctx.port,
+            self.broadcast_addr, ctx.port,  # docker: same port in and out
+            be,
+            backend_id=ctx.backend_id,
+        )
 
         proc = await asyncio.create_subprocess_shell(
             shlex.join(cmd_parts),
