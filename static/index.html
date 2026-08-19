@@ -358,7 +358,7 @@
 
 
 
-        /* ── Chat ──────────────────────────────────────────────────── */
+        /* ── Chat messages — unified styles ──────────────────── */
         .chat-messages {
             flex: 1;
             overflow-y: auto;
@@ -368,30 +368,40 @@
             flex-direction: column;
             gap: 6px;
         }
-        .chat-msg {
-            padding: var(--padding) 10px;
-            border-radius: var(--radius);
-            max-width: 92%;
+        .message {
+            max-width: 90%;
+            padding: 6px 10px;
+            border-radius: 8px;
             font-size: 12.5px;
             line-height: 1.45;
+            word-wrap: break-word;
         }
-        .chat-msg.user {
+        .message.user {
             align-self: flex-end;
             background: var(--accent);
             color: #fff;
             border-bottom-right-radius: 2px;
         }
-        .chat-msg.assistant {
+        .message.assistant {
             align-self: flex-start;
             background: var(--surface-alt);
             border: 1px solid var(--border);
             border-bottom-left-radius: 2px;
         }
-        .chat-msg.error {
+        .message.error {
             align-self: center;
             background: var(--red-bg);
             color: var(--red);
             font-size: 11.5px;
+        }
+        .message.streaming .cursor {
+            display: inline-block;
+            width: 2px;
+            height: 1em;
+            background: currentColor;
+            margin-left: 2px;
+            animation: blink 0.6s infinite;
+            vertical-align: text-bottom;
         }
 
         .chat-form {
@@ -467,47 +477,7 @@
             font-family: var(--font);
         }
 
-        /* ── Chat messages ───────────────────────────────────── */
-        .chat-messages {
-            flex: 1;
-            overflow-y: auto;
-            padding: 8px;
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-            min-height: 0;
-        }
-        .message {
-            max-width: 90%;
-            padding: 6px 10px;
-            border-radius: 8px;
-            font-size: 0.85rem;
-            line-height: 1.4;
-            word-wrap: break-word;
-        }
-        .message.user {
-            align-self: flex-end;
-            background: var(--accent-light);
-            color: var(--text-dark);
-        }
-        .message.assistant {
-            align-self: flex-start;
-            background: var(--bg-tertiary);
-            color: var(--text);
-        }
-        .message.streaming .cursor {
-            display: inline-block;
-            width: 2px;
-            height: 1em;
-            background: currentColor;
-            margin-left: 2px;
-            animation: blink 0.6s infinite;
-            vertical-align: text-bottom;
-        }
-        @keyframes blink {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0; }
-        }
+
 
         /* ── Scrollbars (subtle) ───────────────────────────────────── */
         ::-webkit-scrollbar { width: 5px; height: 5px; }
@@ -791,9 +761,10 @@
             for (const id of ['log-model-select', 'chat-model-select']) {
                 const sel = document.getElementById(id);
                 if (!sel) continue;
+                const current = sel.value;          // preserve selection
                 let html = '<option value="">— none —</option>';
                 for (const m of modelsCache) {
-                    html += '<option value="' + m.id + '">' + m.id + '</option>';
+                    html += '<option value="' + m.id + '"' + (m.id === current ? ' selected' : '') + '>' + m.id + '</option>';
                 }
                 sel.innerHTML = html;
             }
@@ -1225,24 +1196,23 @@
 
             // Create assistant bubble (streaming)
             const assitDiv = appendMessageBubble('assistant', '', true);
-            let rawContent = '';
 
             isChatStreaming = true;
             document.getElementById('right-chat-send-btn').disabled = true;
 
             try {
                 await streamChatResponse(chatHistory, chatModel, (delta) => {
-                    rawContent += delta;
-                    assitDiv.textContent = rawContent + ' ';  // cursor handled by CSS class
+                    // Append token to text content during streaming
+                    assitDiv.textContent += delta;
                     const container = document.getElementById('chat-display');
                     if (container) container.scrollTop = container.scrollHeight;
                 });
 
-                // Stream complete — render markdown
+                // Stream complete — render markdown into the same element
                 isChatStreaming = false;
                 assitDiv.classList.remove('streaming');
-                assitDiv.textContent = '';  // clear plain text
-                await renderMarkdown(assitDiv, rawContent);
+                const fullText = assitDiv.textContent;
+                renderMarkdown(assitDiv, fullText);
             } catch (err) {
                 if (err.name !== 'AbortError') {
                     console.error('[chat] stream failed:', err.message);
@@ -1556,6 +1526,29 @@
             }
 
             // ── 6. Chat pane wireups ────────────────────────────────
+            const chatSelect = document.getElementById('chat-model-select');
+            if (chatSelect) {
+                chatSelect.addEventListener('change', () => {
+                    chatModel = chatSelect.value;
+                    // Always clear history and display when switching models
+                    const container = document.getElementById('chat-display');
+                    if (container) {
+                        container.textContent = '';
+                        chatHistory = [];
+                    }
+                    if (chatModel) {
+                        restoreChatParams();
+                    }
+                });
+            }
+
+            // Auto-select first model if available
+            if (!chatModel && modelsCache.length > 0 && chatSelect) {
+                chatModel = modelsCache[0].id;
+                chatSelect.value = chatModel;
+                restoreChatParams();
+            }
+
             document.getElementById('right-chat-params-toggle')?.addEventListener('click', toggleChatParams);
             document.getElementById('right-chat-form')?.addEventListener('submit', sendMessage);
 
