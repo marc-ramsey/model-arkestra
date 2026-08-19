@@ -55,6 +55,7 @@ def _build_container_cmd(
     broadcast_addr: str,
     inside_port: int,
     backend_config: Dict[str, Any],
+    backend_id: Optional[str] = None,
 ) -> List[str]:
     """Build a container run command for the *new* backend-config architecture.
 
@@ -75,6 +76,7 @@ def _build_container_cmd(
         binary_dir = os.path.dirname(binary_path) or binary_dir
 
     image = str(backend_config.get("image"))
+    image = runner._resolve_image(image)
 
     parts: List[str] = [cmd, "run", "-d"]
     parts.extend(["-e", f"PORT={port}"])
@@ -92,13 +94,13 @@ def _build_container_cmd(
         parts.extend(["--device", str(dev)])
 
     if binary_dir and os.path.isdir(binary_dir):
-        parts.extend(["-v", f"{binary_dir}:{binary_dir}:ro"])
+        parts.extend(["-v", f"{binary_dir}:/llm-server/bin:ro"])
 
     # Resolve llama-server CLI args from config.
     result = build_model_args(
         runner.cm, model_name,
         env_vars={"PORT": str(port)},
-        override_backend=backend_config.get("runner"),
+        override_backend=backend_id,
         inference_kwargs=runner._inference_kwargs.get(model_name, {}),
     )
     arg_list: List[str] = list(result[0]) if result else []
@@ -185,6 +187,9 @@ class ContainerModelRunner(BaseModelRunner, ABC):
     @abstractmethod
     def _container_cmd(self) -> str:
         """Return the container runtime command (e.g. 'docker', 'podman')."""
+
+    def _resolve_image(self, image: str) -> str:
+        return image
 
     @abstractmethod
     async def _remove_containers(self, cids: list) -> None:

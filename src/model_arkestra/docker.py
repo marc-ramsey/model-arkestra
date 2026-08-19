@@ -5,9 +5,7 @@ import shlex
 from typing import Any, Dict, List
 
 from model_arkestra.container_runner import ContainerModelRunner, _resolve_backend, _build_container_cmd
-from model_arkestra.common import (
-    SUBPROCESS_ENV, build_model_args, resolve_binary_from_backend, safe_container_name,
-)
+from model_arkestra.common import SUBPROCESS_ENV, safe_container_name
 from model_arkestra.types import _ModelContext
 
 
@@ -18,21 +16,10 @@ def _resolve_backend_for_docker(
     return _resolve_backend(runner, ctx, model_data)
 
 
-def _build_docker_cmd(
+def _build_docker_legacy(
     runner: Any, ctx: _ModelContext, model_data: Dict[str, Any]
 ) -> List[str]:
-    """Build a docker run command using the new backend-config architecture.
-
-    Docker maps host-to-host (same port in and out). Falls back to legacy
-    ``model_data["image"]`` when no backend resolves.
-    Global env vars are merged via setdefault (global loses if key already in container_env).
-    """
-    backend = _resolve_backend_for_docker(runner, ctx, model_data)
-
-    if backend is not None:
-        return _build_docker_cmd_new(runner, ctx, backend)
-
-    # Legacy fallback — image from model_data.
+    """Legacy docker run command using model_data["image"] directly (no backend config)."""
     image = str(model_data.get("image", "ark-llama:vulkan-radv"))
     cmd_str = str(model_data.get("cmd", ""))
     arg_list = shlex.split(cmd_str) if cmd_str.strip() else []
@@ -57,78 +44,16 @@ def _build_docker_cmd(
     return parts
 
 
-def _build_docker_cmd_new(
-    runner: Any, ctx: _ModelContext, backend: Dict[str, Any]
-) -> List[str]:
-    """Build docker command for a resolved backend (new architecture)."""
-    devices: List[str] = list(backend.get("devices", []))
-    container_env: Dict[str, str] = dict(backend.get("env_container", {}))
-
-    # Merge global env vars via setdefault (container wins)
-    global_env = (runner.cm.get_vector("env") or {}) if hasattr(runner.cm, "get_vector") else {}
-    for k, v in global_env.items():
-        container_env.setdefault(k, str(v))
-
-    binary_info = resolve_binary_from_backend(backend)
-    binary_dir: str | None = None
-    if binary_info is not None:
-        binary_path, extra_devs = binary_info
-        if not devices:
-            devices = list(extra_devs)
-        binary_dir = os.path.dirname(binary_path) or binary_dir
-
-    image = str(backend.get("image", "ark-llama:vulkan-radv"))
-    inside_port = ctx.port  # Docker: same port in and out
-
-    parts: List[str] = ["docker", "run", "-d"]
-    parts.extend(["-e", f"PORT={ctx.port}"])
-    for k, v in container_env.items():
-        parts.extend(["-e", f"{k}={v}"])
-
-    ld = os.environ.get("LD_LIBRARY_PATH")
-    if ld:
-        parts.extend(["-e", f"LD_LIBRARY_PATH={ld}"])
-
-    parts.extend(["--name", safe_container_name(ctx.name, ctx.port)])
-    parts.extend(["-p", f"{runner.broadcast_addr}:{ctx.port}:{inside_port}"])
-
-    for dev in devices:
-        parts.extend(["--device", str(dev)])
-
-    if binary_dir and os.path.isdir(binary_dir):
-        parts.extend(["-v", f"{binary_dir}:{binary_dir}:ro"])
-
-    # Resolve llama-server CLI args from config.
-    result = build_model_args(
-        runner.cm, ctx.name,
-        env_vars={"PORT": str(ctx.port)},
-        override_backend=backend.get("runner"),
-        inference_kwargs=runner._inference_kwargs.get(ctx.name, {}),
-    )
-    arg_list: List[str] = list(result[0]) if result else []
-
-    # Replace --port value with inside_port; ensure --host is present.
-    fixed: List[str] = []
-    i = 0
-    while i < len(arg_list):
-        if arg_list[i] == "--port" and i + 1 < len(arg_list):
-            fixed.extend(["--port", str(inside_port)])
-            i += 2
-        else:
-            fixed.append(arg_list[i])
-            i += 1
-    if not fixed or "--host" not in fixed:
-        fixed.extend(["--host", runner.broadcast_addr])
-
-    parts.extend([image] + fixed)
-    return parts
-
-
 class DockerModelRunner(ContainerModelRunner):
     INSIDE_PORT = 8080
 
     def _container_cmd(self) -> str:
         return "docker"
+
+    def _resolve_image(self, image: str) -> str:
+        if "/" not in image:
+            image = f"localhost/{image}"
+        return image
 
     async def _remove_containers(self, cids: list) -> None:
         for cid in cids:
@@ -160,15 +85,16 @@ class DockerModelRunner(ContainerModelRunner):
         except Exception:
             pass
         # Resolve the full backend dict (new architecture) or fall back to legacy.
-        backend = _resolve_backend_for_docker(self, ctx, model_data)
-        if backend is not None:
+        be = _resolve_backend_for_docker(self, ctx, model_data)
+        if be is not None:
             cmd_parts = _build_container_cmd(
                 "docker", self, ctx.name, ctx.port,
                 self.broadcast_addr, ctx.port,  # docker: same port in and out
-                backend,
+                be,
+                backend_id=ctx.backend_id,
             )
         else:
-            cmd_parts = _build_docker_cmd(self, ctx, model_data)
+            cmd_parts = _build_docker_legacy(self, ctx, model_data)
 
         proc = await asyncio.create_subprocess_shell(
             shlex.join(cmd_parts),
