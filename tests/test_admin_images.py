@@ -35,7 +35,7 @@ def app_client():
     from model_arkestra.server import ArkestraServer
     server = ArkestraServer(
         config_path="sample-config.yaml",
-        port=29000,
+        port=18005,
         ready_timeout=5,
     )
     # Don't start the server — we only need the FastAPI app

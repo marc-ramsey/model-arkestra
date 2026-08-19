@@ -20,7 +20,7 @@ def backup_config():
 @pytest.fixture(scope="session")
 def live_server():
     """Start a single ArkestraServer for the entire test session."""
-    server = ArkestraServer("sample-config.yaml", port=9100)
+    server = ArkestraServer("sample-config.yaml", port=18005)
     client = TestClient(server.get_app())
     return {"server": server, "client": client}
 

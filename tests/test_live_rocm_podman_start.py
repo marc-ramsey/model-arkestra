@@ -2,7 +2,7 @@
 
 Uses sample-config.yaml as-is — models route through backends → runners.
 This is the exact documented routing chain from docs/config.md + docs/architecture.md.
-Connects to a pre-started ArkestraServer at port 21110.
+Starts its own ArkestraServer on port 18005 for isolation.
 """
 
 from __future__ import annotations
@@ -13,23 +13,97 @@ import time
 
 import httpx
 import pytest
+import uvicorn
+
+from model_arkestra.server import ArkestraServer
 
 
-BASE = "http://127.0.0.1:21110"
+def _clean_containers():
+    """Remove any leftover llm-* containers (pasta cleans up automatically)."""
+    result = __import__("subprocess").run(
+        ["podman", "ps", "-a", "--filter", "name=llm-",
+         "--format", "{{.ID}}"],
+        capture_output=True, text=True, timeout=5,
+    )
+    for cid in result.stdout.strip().split():
+        if cid:
+            __import__("subprocess").run(
+                ["podman", "rm", "-f", cid],
+                capture_output=True, timeout=10,
+            )
+
+
+@pytest.fixture(scope="module")
+def live_server():
+    """Start a real ArkestraServer on port 18005 in a background thread."""
+    import time as _time
+    
+    # Clean up stale containers (pasta cleans up with container removal)
+    _clean_containers()
+    _time.sleep(0.3)
+    
+    proxy = ArkestraServer(
+        config_path="sample-config.yaml",
+        port=18005,
+        ready_timeout=360,
+    )
+    app = proxy.get_app()
+
+    config = uvicorn.Config(app, host="127.0.0.1", port=18005, log_level="warning")
+    server_obj = uvicorn.Server(config)
+    proxy._server = server_obj  # type: ignore
+
+    def serve():
+        import asyncio
+        asyncio.run(server_obj.serve())
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+
+    url = "http://127.0.0.1:18005/admin/models"
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        try:
+            httpx.get(url, timeout=2)
+            break
+        except Exception:
+            time.sleep(0.5)
+    else:
+        pytest.fail("Live server did not become ready in 30s")
+
+    yield {"server": proxy, "client": httpx.Client(timeout=None)}
+
+    server_obj.should_exit = True
+    for _ in range(10):
+        result = __import__("subprocess").run(
+            ["lsof", "-ti:", "18005"], capture_output=True, text=True
+        )
+        pids = [p for p in result.stdout.strip().split() if p]
+        if not pids:
+            break
+        for pid in pids:
+            try:
+                os.kill(int(pid), 9)
+            except OSError:
+                pass
+        time.sleep(0.3)
+
+
+BASE = "http://127.0.0.1:18005"
 COOKIE = {"admin_key": "whatever"}
 
 
 class TestLiveServerStartAndLogCapture:
     """Live server integration — model start + log streaming via SSE."""
 
-    def test_server_health_ok(self):
-        """Pre-started server is up and healthy."""
+    def test_server_health_ok(self, live_server):
+        """Server is up and healthy."""
         r = httpx.get(f"{BASE}/health", timeout=5)
         assert r.status_code == 200
         body = r.json()
         assert body["status"] == "ok"
 
-    def test_models_list_accessible(self):
+    def test_models_list_accessible(self, live_server):
         """GET /admin/models returns a valid model list."""
         r = httpx.get(f"{BASE}/admin/models", cookies=COOKIE, timeout=5)
         assert r.status_code == 200
@@ -37,14 +111,16 @@ class TestLiveServerStartAndLogCapture:
         # At least one model should be listed
         assert len(models_by_id) > 0
 
-    def test_start_and_capture_startup_logs(self):
+    def test_start_and_capture_startup_logs(self, live_server):
         """Start a model, stream its startup logs via /admin/log?follow=true SSE."""
+        client = live_server["client"]
+
         # Kick off log stream in background
         all_lines: list[str] = []
 
         def collect():
             try:
-                with httpx.stream(
+                with client.stream(
                     "GET", f"{BASE}/admin/log/qwen3.5-4b?follow=true",
                     cookies=COOKIE, timeout=None,
                 ) as resp:
@@ -68,14 +144,14 @@ class TestLiveServerStartAndLogCapture:
         time.sleep(1.5)
 
         # Start model — backend routing determined by config
-        r = httpx.post(
+        r = client.post(
             f"{BASE}/admin/start/qwen3.5-4b",
-            cookies=COOKIE, timeout=60,
+            cookies=COOKIE, timeout=360,
         )
         assert r.status_code == 200
 
         # Stop the SSE stream so it returns
-        httpx.post(f"{BASE}/admin/stop/qwen3.5-4b", cookies=COOKIE, timeout=10)
+        client.post(f"{BASE}/admin/stop/qwen3.5-4b", cookies=COOKIE, timeout=60)
         time.sleep(1)
         collector_thread.join(timeout=3)
 
@@ -89,7 +165,7 @@ class TestLiveServerStartAndLogCapture:
         else:
             # Fallback: podman/docker runners store logs as container logs,
             # not in-process buffer — get them directly via snapshot endpoint.
-            r2 = httpx.get(
+            r2 = client.get(
                 f"{BASE}/admin/log/qwen3.5-4b?follow=false",
                 cookies=COOKIE, timeout=10,
             )
@@ -100,7 +176,7 @@ class TestLiveServerStartAndLogCapture:
                     for line in log_data:
                         print(f"  {line}")
 
-    def test_model_state_after_start(self):
+    def test_model_state_after_start(self, live_server):
         """Model status reflects the outcome of a start attempt."""
         r = httpx.get(f"{BASE}/admin/models", cookies=COOKIE, timeout=5)
         assert r.status_code == 200

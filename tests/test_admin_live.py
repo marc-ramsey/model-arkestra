@@ -29,12 +29,12 @@ def live_admin_server():
     """Start a real ArkestraServer on a background thread for admin endpoint tests."""
     proxy = ArkestraServer(
         config_path="tests/test-config.yaml",
-        port=21100,
+        port=18005,
         ready_timeout=60,
     )
     app = proxy.get_app()
 
-    config = uvicorn.Config(app, host="127.0.0.1", port=21100, log_level="warning")
+    config = uvicorn.Config(app, host="127.0.0.1", port=18005, log_level="warning")
     server_obj = uvicorn.Server(config)
 
     # Wire it into proxy._server so shutdown route can shut down uvicorn cleanly
@@ -48,7 +48,7 @@ def live_admin_server():
     thread.start()
 
     # Wait for the server to accept connections
-    url = "http://127.0.0.1:21100/admin/models"
+    url = "http://127.0.0.1:18005/admin/models"
     deadline = time.time() + 30
     while time.time() < deadline:
         try:
@@ -65,7 +65,7 @@ def live_admin_server():
     server_obj.should_exit = True
     import subprocess as _sp, time as _time
     for _ in range(10):
-        result = _sp.run(["lsof", "-ti:", "21100"], capture_output=True, text=True)
+        result = _sp.run(["lsof", "-ti:", "18005"], capture_output=True, text=True)
         pids = [p for p in result.stdout.strip().split() if p]
         if not pids:
             break
@@ -77,7 +77,7 @@ def live_admin_server():
         _time.sleep(0.3)
 
 
-BASE = "http://127.0.0.1:21100"
+BASE = "http://127.0.0.1:18005"
 
 
 # ── Tests: /admin/restart ──────────────────────────────────────────────────

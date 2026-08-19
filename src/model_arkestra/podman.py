@@ -48,7 +48,7 @@ class PodmanModelRunner(ContainerModelRunner):
             )
         cmd_parts = _build_container_cmd(
             "podman", self, ctx.name, ctx.port,
-            self.broadcast_addr, PodmanModelRunner.INSIDE_PORT,
+            "0.0.0.0", PodmanModelRunner.INSIDE_PORT,
             backend,
             backend_id=ctx.backend_id,
         )

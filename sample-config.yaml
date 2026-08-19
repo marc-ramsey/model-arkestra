@@ -12,21 +12,11 @@ env:
   HF_HUB_CACHE: /home/lemonade/hub
   LLAMA_CACHE: /home/lemonade/hub
 
-images:
-  rocm:
-    image: ark-llama:rocm
-    containerfile: Containerfile.rocm
-    default: false
-  vulkan-radv:
-    image: ark-llama:vulkan-radv
-    containerfile: Containerfile.vulkan-radv
-    default: true
-
-default-image: ark-llama:vulkan-radv
-
 backends:
   default: vulkan-radv
   rocm:
+    image: ark-llama:rocm
+    container: Containerfile.rocm
     runner: podman
     args:
       flash-attn: "on"
@@ -39,8 +29,9 @@ backends:
     env_container:
       GGML_CUDA_ENABLE_UNIFIED_MEMORY: 'ON'
       ROCBLAS_USE_HIPBLASLT: '1'
-    image: ark-llama:rocm
   vulkan-radv:
+    image: ark-llama:vulkan-radv
+    container: Containerfile.vulkan-radv
     runner: process
     args:
       flash-attn: "on"
@@ -53,7 +44,6 @@ backends:
     env_container:
       GGML_CUDA_ENABLE_UNIFIED_MEMORY: 'ON'
       ROCBLAS_USE_HIPBLASLT: '1'
-    image: ark-llama:vulkan-radv
 
 runners:
   default: ProcessModelRunner

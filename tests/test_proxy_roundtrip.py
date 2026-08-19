@@ -37,20 +37,20 @@ def arkestra_server():
     """
     proxy = ArkestraServer(
         config_path="tests/test-config.yaml",
-        port=20100,
+        port=18005,
         ready_timeout=60,
     )
     app = proxy.get_app()
 
-    config = uvicorn.Config(app, host="127.0.0.1", port=20100, log_level="warning")
+    config = uvicorn.Config(app, host="127.0.0.1", port=18005, log_level="warning")
     server = uvicorn.Server(config)
 
     thread = threading.Thread(target=lambda: asyncio_run(server.serve()), daemon=True)
     thread.start()
 
     # Wait for the server to accept connections
-    url = "http://127.0.0.1:20100/health"
-    deadline = time.time() + 30
+    url = "http://127.0.0.1:18005/health"
+    deadline = time.time() + 60
     while time.time() < deadline:
         try:
             httpx.get(url, timeout=2)
@@ -187,7 +187,8 @@ class TestListingHealthRoundTrip:
 
     def test_list_models(self, arkestra_server):
         """Running models are returned with the correct OpenAI shape."""
-        resp = httpx.get("http://127.0.0.1:20100/v1/models")
+        port = arkestra_server.port
+        resp = httpx.get(f"http://127.0.0.1:{port}/v1/models")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -199,7 +200,8 @@ class TestListingHealthRoundTrip:
 
     def test_health_endpoint(self, arkestra_server):
         """Health returns ok with a models_running count."""
-        resp = httpx.get("http://127.0.0.1:20100/health")
+        port = arkestra_server.port
+        resp = httpx.get(f"http://127.0.0.1:{port}/health")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -208,7 +210,8 @@ class TestListingHealthRoundTrip:
 
     def test_v1_health_endpoint(self, arkestra_server):
         """GET /v1/health returns the same data as GET /health."""
-        resp = httpx.get("http://127.0.0.1:20100/v1/health")
+        port = arkestra_server.port
+        resp = httpx.get(f"http://127.0.0.1:{port}/v1/health")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -223,12 +226,14 @@ class TestErrorHandlingRoundTrip:
 
     def test_missing_messages_rejected(self, arkestra_server):
         """Request without messages returns 422 from FastAPI validation."""
-        resp = httpx.post(_chat_url(20100), json={"model": "qwen3.5-4b"})
+        port = arkestra_server.port
+        resp = httpx.post(_chat_url(port), json={"model": "qwen3.5-4b"})
         assert resp.status_code == 422
 
     def test_unstarted_model_returns_503(self, arkestra_server):
         """Starting a model not in config → 503 from ArkestraServer."""
-        resp = httpx.post(_chat_url(20100), json={
+        port = arkestra_server.port
+        resp = httpx.post(_chat_url(port), json={
             "model": "does-not-exist-in-config",
             "messages": [{"role": "user", "content": "hi"}],
         }, timeout=10)

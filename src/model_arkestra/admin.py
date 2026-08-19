@@ -441,25 +441,28 @@ class ArkestraAdmin:
         @self._app.get("/admin/images")
         async def admin_images():
             cm_data = self.server._arkestra.cm.data
-            images_config = cm_data.get("images") or {}
-            if not images_config:
+            backends = cm_data.get("backends") or {}
+            if not isinstance(backends, dict):
                 raise HTTPException(status_code=500,
-                                    detail="No images section in config")
+                                    detail="No backends section in config")
 
             results = []
-            for backend_id, img_cfg in images_config.items():
-                image_tag = img_cfg.get("image", "")
-                containerfile = img_cfg.get("containerfile", "")
+            for backend_id, be_cfg in backends.items():
+                # Skip 'default' — it's a key, not a backend definition
+                if backend_id == "default" or not isinstance(be_cfg, dict):
+                    continue
+                image_tag = str(be_cfg.get("image", ""))
+                container_path = be_cfg.get("container", "")
                 from model_arkestra.common import image_and_runner_for_backend
                 _, runner_type = image_and_runner_for_backend(cm_data, backend_id)
                 runtime_detected = _detect_runtime(runner_type)
-                available = _image_exists(image_tag, runner_type) if runtime_detected else False
+                available = _image_exists(image_tag, runner_type) if runtime_detected and image_tag else False
                 results.append({
                     "backend_id": backend_id,
                     "runner": runner_type,
                     "runtime_detected": runtime_detected,
                     "image": image_tag,
-                    "containerfile": containerfile,
+                    "containerfile": container_path,
                     "available": available,
                 })
             return results
@@ -506,12 +509,12 @@ class ArkestraAdmin:
         @self._app.delete("/admin/images/{image_tag}")
         async def admin_remove_image(image_tag: str):
             cm_data = self.server._arkestra.cm.data
-            images_config = cm_data.get("images") or {}
+            backends = cm_data.get("backends") or {}
 
             # Find which backend_id this image belongs to
             found_backend = None
-            for bid, icfg in images_config.items():
-                if icfg.get("image") == image_tag:
+            for bid, be_cfg in backends.items():
+                if isinstance(be_cfg, dict) and str(be_cfg.get("image", "")) == image_tag:
                     found_backend = bid
                     break
 

@@ -24,12 +24,12 @@ def live_server():
     """Start a real ArkestraServer on a background thread."""
     proxy = ArkestraServer(
         config_path="tests/test-config.yaml",
-        port=21101,
+        port=18005,
         ready_timeout=60,
     )
     app = proxy.get_app()
 
-    config = uvicorn.Config(app, host="127.0.0.1", port=21101, log_level="warning")
+    config = uvicorn.Config(app, host="127.0.0.1", port=18005, log_level="warning")
     server_obj = uvicorn.Server(config)
     proxy._server = server_obj  # type: ignore
 
@@ -40,7 +40,7 @@ def live_server():
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
 
-    url = "http://127.0.0.1:21101/admin/models"
+    url = "http://127.0.0.1:18005/admin/models"
     deadline = time.time() + 30
     while time.time() < deadline:
         try:
@@ -56,7 +56,7 @@ def live_server():
     server_obj.should_exit = True
     import subprocess as _sp
     for _ in range(10):
-        result = _sp.run(["lsof", "-ti:", "21101"], capture_output=True, text=True)
+        result = _sp.run(["lsof", "-ti:", "18005"], capture_output=True, text=True)
         pids = [p for p in result.stdout.strip().split() if p]
         if not pids:
             break
@@ -69,7 +69,7 @@ def live_server():
         time.sleep(0.3)
 
 
-BASE = "http://127.0.0.1:21101"
+BASE = "http://127.0.0.1:18005"
 COOKIE = {"admin_key": "whatever"}
 
 

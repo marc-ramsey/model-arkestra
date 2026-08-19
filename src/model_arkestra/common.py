@@ -94,10 +94,11 @@ def resolve_binary_from_backend(backend: Dict[str, Any]) -> Optional[tuple]:
 def default_image_for_backend(backend_id: Optional[str]) -> str:
     """Derive a default image tag from the backend identifier.
 
-    Reads from config 'images' section if available. Falls back to
-    hardcoded names for legacy / programmatic usage.
+    Resolution order:
+      1. backends.<id>.image              — explicit per-backend
+      2. backends.<default>.image         — global default backend
+      3. hardcoded fallback               — ark-llama:vulkan-radv
     """
-    # Try config first
     try:
         import yaml, os
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -106,11 +107,25 @@ def default_image_for_backend(backend_id: Optional[str]) -> str:
             if os.path.isfile(path):
                 with open(path) as f:
                     cfg = yaml.safe_load(f) or {}
-                images = cfg.get("images") or {}
-                default_image = cfg.get("default-image")
-                if backend_id and backend_id in images:
-                    return images[backend_id].get("image", default_image or _DEFAULT_IMAGE)
-                return default_image or _DEFAULT_IMAGE
+                backends = cfg.get("backends") or {}
+
+                # 1. Explicit per-backend image
+                if backend_id and isinstance(backends, dict):
+                    be = backends.get(backend_id)
+                    if isinstance(be, dict) and "image" in be:
+                        return str(be["image"])
+
+                    # 2. Global default backend's image
+                    default_be_id = backends.get("default")
+                    if default_be_id:
+                        default_be = backends.get(default_be_id)
+                        if isinstance(default_be, dict) and "image" in default_be:
+                            return str(default_be["image"])
+
+                # 3. Hardcoded fallbacks (legacy / programmatic usage)
+                if backend_id and any(k in backend_id.lower() for k in ("rocm", "hip", "opencl")):
+                    return "ark-llama:rocm"
+                return _DEFAULT_IMAGE
     except Exception:
         pass
     # Hardcoded fallbacks
@@ -120,9 +135,9 @@ def default_image_for_backend(backend_id: Optional[str]) -> str:
 
 
 def containerfile_for_backend(backend_id: Optional[str]) -> Optional[str]:
-    """Return the Containerfile path for building a backend's image.
+    """Return the container build file path for a backend's image.
 
-    Reads from config 'images' section. Returns None if not found.
+    Reads backends.<id>.container. Returns None if not found.
     The caller should resolve relative to the project root.
     """
     try:
@@ -133,11 +148,13 @@ def containerfile_for_backend(backend_id: Optional[str]) -> Optional[str]:
             if os.path.isfile(path):
                 with open(path) as f:
                     cfg = yaml.safe_load(f) or {}
-                images = cfg.get("images") or {}
-                if backend_id and backend_id in images:
-                    cf = images[backend_id].get("containerfile")
-                    if cf:
-                        return os.path.join("tests", "files", cf)
+                backends = cfg.get("backends") or {}
+                if isinstance(backends, dict) and backend_id:
+                    be = backends.get(backend_id)
+                    if isinstance(be, dict):
+                        cf = be.get("container")
+                        if cf:
+                            return os.path.join("tests", "files", cf)
     except Exception:
         pass
     return None
@@ -147,21 +164,27 @@ def image_and_runner_for_backend(cm_data, backend_id: str) -> tuple[str, str]:
     """Resolve image tag and runner type for a backend from config.
 
     Reads backends.<id>.image and backends.<id>.runner (or falls through to
-    default-image / runners.default). Returns (image_tag, runner_type).
+    backends.default.image). Returns (image_tag, runner_type).
     Runner type is one of: "podman", "docker", or "process".
     """
     backends = cm_data.get("backends") or {}
     runners_section = cm_data.get("runners") or {}
-    images = cm_data.get("images") or {}
-    default_image = cm_data.get("default-image")
 
-    backend = backends.get(backend_id) or {}
+    # Resolve backend entry (explicit ID or default backend)
+    be_id = backend_id if backend_id in (backends or {}) else backends.get("default", backend_id)
+    backend = backends.get(be_id, {}) if isinstance(backends, dict) else {}
+    if not isinstance(backend, dict):
+        backend = {}
 
-    # Resolve image: explicit backend.image → image config → default-image
+    # Resolve image: backend.image → default backend's image → hardcoded fallback
     image_tag = backend.get("image")
-    if not image_tag and backend_id in images:
-        image_tag = images[backend_id].get("image", default_image)
-    image_tag = image_tag or default_image or "ark-llama:vulkan-radv"
+    if not image_tag:
+        default_be_id = backends.get("default")
+        if default_be_id and isinstance(backends, dict):
+            default_be = backends.get(default_be_id)
+            if isinstance(default_be, dict) and "image" in default_be:
+                image_tag = str(default_be["image"])
+    image_tag = image_tag or _DEFAULT_IMAGE
 
     # Resolve runner: explicit runner → runners section → process fallback
     runner_type = backend.get("runner")
