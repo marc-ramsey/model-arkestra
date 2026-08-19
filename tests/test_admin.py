@@ -29,8 +29,12 @@ def live_server():
 
 @pytest.fixture(autouse=True)
 def _set_admin_header(live_server):
-    """Set admin header on the test client for all tests (header-based auth)."""
-    live_server["client"].headers["X-Admin-Key"] = "whatever"
+    """Set admin header on the test client for all tests (header-based auth).
+
+    Reads ADMIN_KEY from the actual config so it stays in sync.
+    """
+    key = live_server["server"]._arkestra.cm.data.get("env", {}).get("ADMIN_KEY") or ""
+    live_server["client"].headers["X-Admin-Key"] = key
 
 
 # ── /admin/models ──────────────────────────────────────────────────
