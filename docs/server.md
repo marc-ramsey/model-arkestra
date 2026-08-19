@@ -194,6 +194,30 @@ from model_arkestra.server import (
 | `ModelInfo` | Single model entry in `/v1/models` list |
 | `ListModelsResponse` | Wrapper for `/v1/models` with `object: "list"` |
 
+## Building Container Images
+
+Two shell scripts build the container images from the project root:
+
+### ROCm image
+
+```bash
+./scripts/build-ark-llama-rocm-container.sh           # uses podman (default)
+./scripts/build-ark-llama-rocm-container.sh docker     # explicit runtime
+```
+
+Builds from `tests/files/Containerfile.rocm` and tags it as `localhost/ark-llama:rocm`.
+
+### Vulkan (RADV) image
+
+```bash
+./scripts/build-ark-llama-vulkan-radv-container.sh     # uses podman (default)
+./scripts/build-ark-llama-vulkan-radv-container.sh docker  # explicit runtime
+```
+
+Builds from `tests/files/Containerfile.vulkan-radv` and tags it as `localhost/ark-llama:vulkan-radv`.
+
+Both scripts accept an optional first argument to select the container runtime (`podman` or `docker`). They exit with a clear error if the requested runtime isn't found on PATH.
+
 ## Related Documentation
 
 - [Admin API](./admin.md) — admin panel that extends the same FastAPI app
