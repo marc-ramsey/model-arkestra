@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -88,12 +89,11 @@ class ArkestraAdmin:
 
     def _add_root_route(self) -> None:
         html = Path(__file__).parent.parent.parent / "static" / "index.html"
+        content = html.read_text().replace("{{ADMIN_KEY}}", self.admin_key or "")
 
         @self._app.get("/")
         @self._app.get("/index.html")
         async def root():
-            key = self.admin_key or ""
-            content = html.read_text().replace("{{ADMIN_KEY}}", key)
             return HTMLResponse(content, media_type="text/html",
                                 headers={"Cache-Control": "no-store"})
 
@@ -231,7 +231,7 @@ class ArkestraAdmin:
                     print("[SHUTDOWN] uvicorn stopped.", flush=True)
                 else:
                     # CLI mode — no Server object to tell, just exit
-                    os._exit(0)
+                    sys.exit(0)
 
             task = asyncio.create_task(do_shutdown())
             if hasattr(self._app, "_shutdown_task"):
