@@ -41,7 +41,7 @@ Missing or incorrect keys return `401 Unauthorized`. Public paths (`/`, `/index.
 | `GET` | `/admin/images` | Yes | List configured container images with runner type and availability |
 | `POST` | `/admin/images/build` | Yes | Build a single backend's image (body: `{"backend": "rocm"}`) |
 | `DELETE` | `/admin/images/{image_tag}` | Yes | Remove an image from the local store |
-| `POST` | `/admin/restart` | Yes | Stop all running models — models restart implicitly on next inference request |
+| `POST` | `/admin/stop-all` | Yes | Stop all running models — models restart implicitly on next inference request |
 | `POST` | `/admin/shutdown` | Yes | Full server teardown — stops uvicorn and all models
 
 ### GET /admin/models
@@ -208,12 +208,12 @@ Stops the named model. Returns `202 Accepted` if the model is already stopped/st
 
 Returns `404` if the model is not found in any runner context.
 
-### POST /admin/restart
+### POST /admin/stop-all
 
 Stops all running models at once. Models remain configured and will **restart implicitly** on their next inference request (same lazy-start behavior as a cold server).
 
 ```bash
-curl -X POST 'http://localhost:8080/admin/restart' \
+curl -X POST 'http://localhost:8080/admin/stop-all' \
      -H 'X-Admin-Key: your-secret-key'
 ```
 
@@ -224,7 +224,7 @@ curl -X POST 'http://localhost:8080/admin/restart' \
 
 **When no models are running:**
 ```json
-{"ok": true, "message": "No models running — nothing to restart", "stopped": []}
+{"ok": true, "message": "No models running — nothing to stop", "stopped": []}
 ```
 
 Always returns `200 OK`. The HTTP server stays alive; only model runners are stopped.

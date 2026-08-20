@@ -67,24 +67,24 @@ def live_admin_server():
 BASE = "http://127.0.0.1:18005"
 
 
-# ── Tests: /admin/restart ──────────────────────────────────────────────────
+# ── Tests: /admin/stop-all ─────────────────────────────────────────────
 
 
-class TestRestartLive:
-    """POST /admin/restart — live HTTP, no mocks."""
+class TestStopAllLive:
+    """POST /admin/stop-all — live HTTP, no mocks."""
 
-    def test_restart_no_models_returns_200(self, live_admin_server):
+    def test_stop_all_no_models_returns_200(self, live_admin_server):
         """When no models are running, returns 200 with a message."""
-        resp = httpx.post(f"{BASE}/admin/restart", timeout=5)
+        resp = httpx.post(f"{BASE}/admin/stop-all", timeout=5)
         assert resp.status_code == 200
         body = resp.json()
         assert body["ok"] is True
-        assert "nothing to restart" in body["message"].lower()
+        assert "nothing to stop" in body["message"].lower()
         assert isinstance(body["stopped"], list)
         assert len(body["stopped"]) == 0
 
-    def test_restart_stops_model(self, live_admin_server):
-        """When a model is running, restart stops it and lists it."""
+    def test_stop_all_stops_model(self, live_admin_server):
+        """When a model is running, stop-all stops it and lists it."""
         # First start a model — use short timeout config for speed
         resp = httpx.post(
             f"{BASE}/admin/start/qwen3.5-4b",
@@ -96,8 +96,8 @@ class TestRestartLive:
         assert body["ok"] is True
         assert body["model"] == "qwen3.5-4b"
 
-        # Now restart — should stop the running model
-        resp = httpx.post(f"{BASE}/admin/restart", timeout=10)
+        # Now stop-all — should stop the running model
+        resp = httpx.post(f"{BASE}/admin/stop-all", timeout=10)
         assert resp.status_code == 200
         body = resp.json()
         assert body["ok"] is True
@@ -109,10 +109,10 @@ class TestRestartLive:
             if m["id"] == "qwen3.5-4b":
                 assert m["status"] == "stopped"
 
-    def test_restart_twice_is_safe(self, live_admin_server):
-        """Calling restart when already stopped returns clean response (idempotent)."""
-        httpx.post(f"{BASE}/admin/restart", timeout=5)
-        resp = httpx.post(f"{BASE}/admin/restart", timeout=5)
+    def test_stop_all_twice_is_safe(self, live_admin_server):
+        """Calling stop-all when already stopped returns clean response (idempotent)."""
+        httpx.post(f"{BASE}/admin/stop-all", timeout=5)
+        resp = httpx.post(f"{BASE}/admin/stop-all", timeout=5)
         assert resp.status_code == 200
         body = resp.json()
         assert body["ok"] is True

@@ -47,7 +47,7 @@ class ArkestraAdmin:
         self._add_models_route()
         self._add_config_routes()
         self._add_stop_route()
-        self._add_restart_route()
+        self._add_stop_all_route()
         self._add_shutdown_route()
         self._add_start_route()
         self._add_eject_route()
@@ -198,15 +198,15 @@ class ArkestraAdmin:
                 "previous_state": str(prev_state),
             }
 
-    def _add_restart_route(self) -> None:
-        @self._app.post("/admin/restart")
-        async def admin_restart():
+    def _add_stop_all_route(self) -> None:
+        @self._app.post("/admin/stop-all")
+        async def admin_stop_all():
             ctxs = list(self.server._arkestra._get_model_contexts())
             running = [c.name for c in ctxs if c.state not in (RunnerState.STOPPED, RunnerState.STOPPING)]
             if not running:
                 return JSONResponse(
                     status_code=200,
-                    content={"ok": True, "message": "No models running — nothing to restart", "stopped": []},
+                    content={"ok": True, "message": "No models running — nothing to stop", "stopped": []},
                 )
             await self.server._arkestra.stop_all()
             return JSONResponse(

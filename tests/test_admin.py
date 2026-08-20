@@ -243,24 +243,25 @@ class TestEjectModel:
         assert r.status_code == 404
 
 
-# ── /admin/restart ─────────────────────────────────────────────────
+# ── /admin/stop-all ────────────────────────────────────────────────
 
-class TestRestart:
-    """POST /admin/restart"""
+class TestStopAll:
+    """POST /admin/stop-all"""
 
-    def test_restart_no_models_returns_200(self, live_server):
+    def test_stop_all_no_models_returns_200(self, live_server):
         """When no models are running, returns 200 with a message."""
         client = live_server["client"]
-        r = client.post("/admin/restart")
+        r = client.post("/admin/stop-all")
         assert r.status_code == 200
         body = r.json()
         assert body["ok"] is True
-        assert "nothing to restart" in body["message"].lower()
+        assert "nothing to stop" in body["message"].lower()
+        assert isinstance(body["stopped"], list)
 
-    def test_restart_has_stopped_field(self, live_server):
+    def test_stop_all_has_stopped_field(self, live_server):
         """The response always includes the 'stopped' key (empty list when idle)."""
         client = live_server["client"]
-        r = client.post("/admin/restart")
+        r = client.post("/admin/stop-all")
         assert r.status_code == 200
         body = r.json()
         assert "stopped" in body
