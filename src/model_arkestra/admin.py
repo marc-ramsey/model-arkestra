@@ -53,6 +53,18 @@ class ArkestraAdmin:
 
     # ── helpers ────────────────────────────────────────────────────────
 
+    @property
+    def _config_data(self) -> dict:
+        return self.server._arkestra.cm.data
+
+    @property
+    def _models_cfg(self) -> Dict[str, Any]:
+        return self.server._arkestra.cm.data.get("models") or {}
+
+    @property
+    def _backends_cfg(self) -> Dict[str, Any]:
+        return self.server._arkestra.cm.data.get("backends") or {}
+
     def _resolve_env(self, key: str, explicit: Optional[str] = None) -> str:
         """Resolve an env var: method arg > config env > OS env."""
         if explicit is not None:
@@ -64,7 +76,7 @@ class ArkestraAdmin:
 
     def _backend_for_image(self, image_tag: str) -> Optional[str]:
         """Return the backend_id whose ``image`` matches *image_tag*, or None."""
-        backends = self.server._arkestra.cm.data.get("backends", {}) or {}
+        backends = self._backends_cfg
         for bid, be_cfg in backends.items():
             if isinstance(be_cfg, dict) and str(be_cfg.get("image", "")) == image_tag:
                 return bid
@@ -105,7 +117,7 @@ class ArkestraAdmin:
         @self._app.get("/admin/models")
         async def admin_models():
             try:
-                cfg = self.server._arkestra.cm.data.get("models") or {}
+                cfg = self._models_cfg
                 contexts_by_name = {ctx.name: ctx for ctx in self.server._arkestra._get_model_contexts()}
 
                 data = []
@@ -147,7 +159,7 @@ class ArkestraAdmin:
                     data.append(entry)
 
                 # Top-level metadata for dropdown options (static per-server)
-                backends = self.server._arkestra.cm.data.get("backends") or {}
+                backends = self._backends_cfg
                 runner_types = list(self.server._arkestra._runner_classes.keys()) if hasattr(self.server._arkestra, "_runner_classes") else []
 
                 return {
@@ -235,13 +247,13 @@ class ArkestraAdmin:
         @self._app.get("/admin/config")
         async def admin_config_list():
             """Return list of model names in config."""
-            cfg = self.server._arkestra.cm.data.get("models") or {}
+            cfg = self._models_cfg
             return {"models": list(cfg.keys())}
 
         @self._app.post("/admin/config")
         async def admin_config_create(body: Dict[str, Any]):
             """Create a new model entry in config. Requires at least 'checkpoint'."""
-            cfg = self.server._arkestra.cm.data.get("models") or {}
+            cfg = self._models_cfg
 
             # Validate required fields
             if not body.get("checkpoint"):
@@ -278,7 +290,7 @@ class ArkestraAdmin:
         @self._app.get("/admin/config/{model}")
         async def admin_config_get(model: str):
             """Return a single model's configuration."""
-            cfg = self.server._arkestra.cm.data.get("models") or {}
+            cfg = self._models_cfg
             if model not in cfg:
                 raise HTTPException(
                     status_code=404, detail=f"Model '{model}' not in config"
@@ -295,7 +307,7 @@ class ArkestraAdmin:
         @self._app.put("/admin/config/{model}")
         async def admin_config_update(model: str, body: Dict[str, Any]):
             """Update an existing model's configuration."""
-            cfg = self.server._arkestra.cm.data.get("models") or {}
+            cfg = self._models_cfg
             if model not in cfg:
                 raise HTTPException(
                     status_code=404, detail=f"Model '{model}' not in config"
@@ -317,7 +329,7 @@ class ArkestraAdmin:
     def _add_start_route(self) -> None:
         @self._app.post("/admin/start/{model}")
         async def admin_start(model: str, body: Dict[str, Any] | None = None):
-            cfg = self.server._arkestra.cm.data.get("models") or {}
+            cfg = self._models_cfg
             if model not in cfg:
                 raise HTTPException(status_code=404, detail=f"Model '{model}' not in config")
 
@@ -357,7 +369,7 @@ class ArkestraAdmin:
             follow: bool = False,
         ):
             # Validate model exists in config first
-            cfg = self.server._arkestra.cm.data.get("models") or {}
+            cfg = self._models_cfg
             if model not in cfg:
                 raise HTTPException(status_code=404, detail=f"Model '{model}' not in config")
 
@@ -447,8 +459,8 @@ class ArkestraAdmin:
 
         @self._app.get("/admin/images")
         async def admin_images():
-            cm_data = self.server._arkestra.cm.data
-            backends = cm_data.get("backends") or {}
+            cm_data = self._config_data
+            backends = self._backends_cfg
             if not isinstance(backends, dict):
                 raise HTTPException(status_code=500,
                                     detail="No backends section in config")
@@ -480,7 +492,7 @@ class ArkestraAdmin:
             if not backend_id:
                 raise HTTPException(status_code=400, detail="Missing 'backend' in request body")
 
-            cm_data = self.server._arkestra.cm.data
+            cm_data = self._config_data
             from model_arkestra.common import image_and_runner_for_backend, containerfile_for_backend
             image_tag, runner_type = image_and_runner_for_backend(cm_data, backend_id)
             containerfile_path = containerfile_for_backend(backend_id)
@@ -522,7 +534,7 @@ class ArkestraAdmin:
 
             from model_arkestra.common import image_and_runner_for_backend
             _, runner_type = image_and_runner_for_backend(
-                self.server._arkestra.cm.data, found_backend
+                self._config_data, found_backend
             )
             if not _detect_runtime(runner_type):
                 return {"skipped": True, "reason": f"runner={runner_type} but no '{runner_type}' binary found on PATH", "image": image_tag}

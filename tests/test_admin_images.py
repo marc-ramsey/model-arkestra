@@ -108,6 +108,7 @@ class TestBuildImage:
         # Unknown backend falls through to defaults — returns skipped (no runner binary)
         assert data.get("skipped") is True or data.get("error") is not None
 
+    @pytest.mark.slow
     @pytest.mark.skipif(not shutil.which("podman"), reason="podman not available")
     def test_build_rocm_resolves_correct_files(self, app_client):
         """When podman IS available, build should resolve containerfile and image from config.
