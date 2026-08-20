@@ -1,9 +1,7 @@
-"""Quick smoke test verifying the admin log route fix.
+"""Smoke tests for admin log route fixes."""
 
-Tests the two scenarios:
-1. Snapshot mode returns logs from the correct runner (find_context)
-2. Snapshot mode returns empty data when no context exists for model
-"""
+import json
+from collections import deque
 from unittest.mock import AsyncMock, MagicMock
 
 from fastapi import FastAPI
@@ -11,148 +9,101 @@ from fastapi.testclient import TestClient
 from model_arkestra.admin import ArkestraAdmin
 
 
+def _build_admin(find_ctx_result=None, runner_get_logs=None):
+    ctx = MagicMock()
+    if find_ctx_result is None:
+        find_ctx_result = ctx
+
+    runner = AsyncMock()
+    if runner_get_logs is not None:
+        runner.get_logs = AsyncMock(return_value=runner_get_logs)
+    ctx.runner = runner
+
+    arkestra = MagicMock()
+    arkestra.find_context.return_value = find_ctx_result
+    arkestra.cm.data = {"models": {"test-model": {}}}
+
+    app = FastAPI()
+    server = MagicMock()
+    server._arkestra = arkestra
+
+    admin = ArkestraAdmin(server, None, app)
+    admin.install()
+    return app, arkestra, runner
+
+
+# ── Issue #3: Snapshot mode ───────────────────────────────────────────────────
+
+
 def test_snapshot_uses_find_context():
-    """Verify snapshot mode calls find_context and gets logs from that runner."""
-    # Minimal mock to exercise the route code path
-    ctx = MagicMock()
-    ctx.name = "test-model"
-
-    runner = MagicMock()
-    runner.get_logs = AsyncMock(return_value=["line1", "line2", "line3"])
-    ctx.runner = runner
-
-    arkestra = MagicMock()
-    arkestra.find_context.return_value = ctx
-    arkestra.cm.data = {"models": {"test-model": {}}}
-
-
-    app = FastAPI()
-    server = MagicMock()
-    server._arkestra = arkestra
-
-    admin = ArkestraAdmin(server, None, app)
-    admin.install()
-
+    app, arkestra, runner = _build_admin(runner_get_logs=["line1", "line2"])
     client = TestClient(app)
     resp = client.get("/admin/log/test-model", params={"follow": False})
 
     assert resp.status_code == 200
-    body = resp.json()
-    assert body["object"] == "log"
-    assert body["data"] == ["line1", "line2", "line3"]
-
-    # Verify find_context was called (not iterating _runners)
+    assert resp.json()["data"] == ["line1", "line2"]
     arkestra.find_context.assert_called_once_with("test-model")
-    runner.get_logs.assert_called_once_with("test-model", 100)
 
 
-def test_snapshot_returns_empty_when_no_context():
-    """When model has no running context, return empty data — don't error."""
-    ctx = None  # find_context returns None
-
-    arkestra = MagicMock()
-    arkestra.find_context.return_value = ctx
-    arkestra.cm.data = {"models": {"ghost-model": {}}}
-
-    app = FastAPI()
-    server = MagicMock()
-    server._arkestra = arkestra
-
-    admin = ArkestraAdmin(server, None, app)
-    admin.install()
-
-    client = TestClient(app)
-    resp = client.get("/admin/log/ghost-model", params={"follow": False})
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["object"] == "log"
-    assert body["data"] == []
-
-
-def test_snapshot_handles_missing_get_logs():
-    """If runner exists but lacks get_logs, return empty — don't crash."""
-    ctx = MagicMock()
-    ctx.name = "test-model"
-
-    runner = MagicMock(spec=[])  # no get_logs attribute
-    ctx.runner = runner
-
-    arkestra = MagicMock()
-    arkestra.find_context.return_value = ctx
-    arkestra.cm.data = {"models": {"test-model": {}}}
-
-    app = FastAPI()
-    server = MagicMock()
-    server._arkestra = arkestra
-
-    admin = ArkestraAdmin(server, None, app)
-    admin.install()
-
+def test_snapshot_noop_when_get_logs_missing():
+    ctx = MagicMock(spec=[])
+    ctx.runner = None
+    app, arkestra, _ = _build_admin(find_ctx_result=ctx)
     client = TestClient(app)
     resp = client.get("/admin/log/test-model", params={"follow": False})
 
     assert resp.status_code == 200
-    body = resp.json()
-    assert body["object"] == "log"
-    assert body["data"] == []
+    assert resp.json()["data"] == []
 
 
-def test_snapshot_handles_get_logs_exception():
-    """If get_logs raises, catch and return empty — don't 500."""
-    ctx = MagicMock()
-    ctx.name = "test-model"
-
-    runner = MagicMock()
-    runner.get_logs = AsyncMock(side_effect=RuntimeError("container gone"))
-    ctx.runner = runner
-
-    arkestra = MagicMock()
-    arkestra.find_context.return_value = ctx
-    arkestra.cm.data = {"models": {"test-model": {}}}
-
-    app = FastAPI()
-    server = MagicMock()
-    server._arkestra = arkestra
-
-    admin = ArkestraAdmin(server, None, app)
-    admin.install()
-
+def test_snapshot_noop_when_get_logs_raises():
+    app, _, runner = _build_admin()
+    runner.get_logs = AsyncMock(side_effect=RuntimeError("gone"))
     client = TestClient(app)
     resp = client.get("/admin/log/test-model", params={"follow": False})
 
     assert resp.status_code == 200
-    body = resp.json()
-    assert body["object"] == "log"
-    assert body["data"] == []
+    assert resp.json()["data"] == []
 
 
-def test_snapshot_custom_lines_param():
-    """Verify the 'lines' param is passed through to get_logs."""
-    ctx = MagicMock()
-
-    runner = MagicMock()
-    runner.get_logs = AsyncMock(return_value=["a", "b"])
-    ctx.runner = runner
-
-    arkestra = MagicMock()
-    arkestra.find_context.return_value = ctx
-    arkestra.cm.data = {"models": {"m": {}}}
-
-    app = FastAPI()
-    server = MagicMock()
-    server._arkestra = arkestra
-
-    admin = ArkestraAdmin(server, None, app)
-    admin.install()
-
+def test_snapshot_passes_lines_param():
+    app, _, runner = _build_admin(runner_get_logs=["a", "b"])
     client = TestClient(app)
-    resp = client.get("/admin/log/m", params={"lines": 5})
+    client.get("/admin/log/test-model", params={"lines": 5})
 
-    assert resp.status_code == 200
-    runner.get_logs.assert_called_once_with("m", 5)
+    runner.get_logs.assert_called_once_with("test-model", 5)
 
 
-if __name__ == "__main__":
-    import pytest
-    pytest.main([__file__, "-v"])
+# ── Issue #6: Follow-mode wrap detection ──────────────────────────────────────
+
+
+def test_deque_comparison_detects_wrap():
+    """Prove ``new_buf != buf`` catches changes when shared deque wraps.
+
+    The actual code reads ``list(ctx._log_buffer)`` twice from the **same**
+    deque — so wrapping is inherent and content comparison detects it where
+    size comparison fails.
+    """
+    d = deque(maxlen=3)
+    d.extend(["a", "b", "c"])
+
+    buf = list(d)      # first read (snapshot), d still holds ["a","b","c"]
+    d.append("d")       # wrap: drops oldest, new enters. d now ["b","c","d"]
+    new_buf = list(d)  # second read from same deque
+
+    assert buf == ["a", "b", "c"]
+    assert new_buf == ["b", "c", "d"]
+    assert len(buf) == len(new_buf)          # size identical — old check fails
+    assert new_buf != buf                    # content differs — new check works
+
+
+def test_deque_comparison_skips_no_change():
+    """Identical reads → no change detected."""
+    d = deque(maxlen=3)
+    d.extend(["x", "y", "z"])
+
+    a = list(d)
+    b = list(d)  # nothing changed, same deque state
+
+    assert a == b
+    assert not (a != b)

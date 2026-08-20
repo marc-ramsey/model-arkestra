@@ -20,7 +20,6 @@ try:
 except ImportError:
     raise RuntimeError("model_arkestra.admin requires fastapi")
 
-from model_arkestra.base import BaseModelRunner
 from model_arkestra.common import default_cache_root
 from model_arkestra.types import RunnerState
 
@@ -372,22 +371,17 @@ class ArkestraAdmin:
                         yield f"data: {json.dumps({'type': 'error', 'message': 'No context for this model'})}\n\n"
                         return
                     known_runner = None
-                    buffer_size = ctx._log_buffer.maxlen if hasattr(ctx, '_log_buffer') else BaseModelRunner.LOG_BUFFER_DEFAULT
 
-                    # Track position for new-line detection
-                    last_count = len(ctx._log_buffer)
-
-                    # Send current tail
+                    # Send current tail as snapshot
                     buf = list(ctx._log_buffer)
                     yield f"data: {json.dumps({'type': 'snapshot', 'lines': buf[-lines:]})}\n\n"
 
                     while True:
                         await asyncio.sleep(0.1)
                         new_buf = list(ctx._log_buffer)
-                        if len(new_buf) > last_count:
-                            new_lines = new_buf[last_count:]
-                            last_count = len(new_buf)
-                            yield f"data: {json.dumps({'type': 'line', 'lines': new_lines})}\n\n"
+                        if new_buf != buf:           # deque wraps correctly; content changed
+                            yield f"data: {json.dumps({'type': 'line', 'lines': new_buf[-lines:]})}\n\n"
+                            buf = new_buf
                 
                 return StreamingResponse(
                     log_stream(),
