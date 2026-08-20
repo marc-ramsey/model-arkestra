@@ -395,15 +395,16 @@ class ArkestraAdmin:
                     headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
                 )
             else:
-                # Snapshot mode
+                # Snapshot mode — find the runner that owns this model's context
                 lines_data = []
-                for runner in self.server._arkestra._runners.values():
+                ctx = self.server._arkestra.find_context(model)
+                if ctx:
+                    runner = ctx.runner  # type: ignore[attr-defined]
                     if hasattr(runner, 'get_logs'):
                         try:
                             result = await runner.get_logs(model, lines)
                             if result:
                                 lines_data = result
-                                break
                         except Exception:
                             pass
                 return {"object": "log", "data": lines_data}
