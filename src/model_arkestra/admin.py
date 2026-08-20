@@ -5,13 +5,23 @@ installs admin endpoints (GET /, GET/POST /admin/*) onto the same FastAPI app.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+import asyncio
+import copy
+import json
+import os
+import shutil
+import subprocess
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 try:
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.responses import JSONResponse, HTMLResponse
 except ImportError:
     raise RuntimeError("model_arkestra.admin requires fastapi")
+
+from model_arkestra.base import BaseModelRunner
+from model_arkestra.types import RunnerState
 
 
 class ArkestraAdmin:
@@ -50,7 +60,6 @@ class ArkestraAdmin:
         cfg_env = self.server._arkestra.cm.data.get("env", {})
         if key in cfg_env and cfg_env[key]:
             return str(cfg_env[key])
-        import os
         return os.environ.get(key, "")
 
     def _backend_for_image(self, image_tag: str) -> Optional[str]:
@@ -62,8 +71,6 @@ class ArkestraAdmin:
         return None
 
     def _add_root_route(self) -> None:
-        from pathlib import Path
-
         html = Path(__file__).parent.parent.parent / "static" / "index.html"
 
         @self._app.get("/")
@@ -95,9 +102,6 @@ class ArkestraAdmin:
             return await call_next(request)
 
     def _add_models_route(self) -> None:
-        import os
-        from pathlib import Path
-
         @self._app.get("/admin/models")
         async def admin_models():
             try:
@@ -155,8 +159,6 @@ class ArkestraAdmin:
                 raise HTTPException(status_code=503, detail=str(e))
 
     def _add_stop_route(self) -> None:
-        from model_arkestra.types import RunnerState
-
         @self._app.post("/admin/stop/{model}")
         async def admin_stop(model: str):
             ctx = self.server._arkestra.find_context(model)
@@ -179,10 +181,6 @@ class ArkestraAdmin:
             }
 
     def _add_restart_route(self) -> None:
-        from model_arkestra.types import RunnerState
-        from fastapi.responses import JSONResponse
-        import asyncio
-
         @self._app.post("/admin/restart")
         async def admin_restart():
             ctxs = list(self.server._arkestra._get_model_contexts())
@@ -203,10 +201,6 @@ class ArkestraAdmin:
             )
 
     def _add_shutdown_route(self) -> None:
-        from fastapi.responses import JSONResponse
-        import asyncio
-        import os
-
         @self._app.post("/admin/shutdown")
         async def admin_shutdown():
             result = {"ok": True, "message": "Server shutting down"}
@@ -236,8 +230,6 @@ class ArkestraAdmin:
             return JSONResponse(status_code=200, content=result)
 
     def _add_config_routes(self) -> None:
-        import copy
-
         KNOWN_KEYS = {"args", "checkpoint", "backend", "capabilities", "runner", "tags"}
 
         @self._app.get("/admin/config")
@@ -323,9 +315,6 @@ class ArkestraAdmin:
                 raise HTTPException(status_code=500, detail=f"Save failed: {exc}")
 
     def _add_start_route(self) -> None:
-        from model_arkestra.types import RunnerState
-        from model_arkestra.base import BaseModelRunner
-
         @self._app.post("/admin/start/{model}")
         async def admin_start(model: str, body: Dict[str, Any] | None = None):
             cfg = self.server._arkestra.cm.data.get("models") or {}
@@ -361,9 +350,6 @@ class ArkestraAdmin:
                 raise HTTPException(status_code=503, detail=f"Start failed: {exc}")
 
     def _add_log_route(self) -> None:
-        import asyncio
-        import json
-
         @self._app.get("/admin/log/{model}")
         async def admin_log(
             model: str,
@@ -422,22 +408,45 @@ class ArkestraAdmin:
                 return {"object": "log", "data": lines_data}
 
     def _add_images_route(self) -> None:
-        import subprocess
-        import shutil
+        def _subprocess_run(cmd: list, timeout: int = 30) -> subprocess.CompletedProcess:
+            """Run a subprocess call — must be invoked via asyncio.to_thread.
+
+            Uses DEVNULL for stdin and temp files for stdout/stderr to avoid pipe
+            inheritance deadlocks with podman/buildah nested child processes.
+            """
+            import tempfile as _tempfile
+            with _tempfile.TemporaryDirectory() as tmpdir:
+                stdout_path = os.path.join(tmpdir, "stdout")
+                stderr_path = os.path.join(tmpdir, "stderr")
+                proc = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.DEVNULL,
+                    stdout=open(stdout_path, "w"),
+                    stderr=open(stderr_path, "w"),
+                )
+                try:
+                    proc.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=5)
+                with open(stdout_path) as f:
+                    stdout = f.read()
+                with open(stderr_path) as f:
+                    stderr = f.read()
+            return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
         def _detect_runtime(runner_type: str) -> bool:
             """Return True if the container runtime for this runner type is on PATH."""
             binary = {"podman": "podman", "docker": "docker"}.get(runner_type)
             return binary is not None and shutil.which(binary) is not None
 
-        def _image_exists(image_tag: str, runtime_type: str) -> bool:
+        async def _image_exists(image_tag: str, runtime_type: str) -> bool:
             """Check if an image tag exists in the local container store."""
             cmd = {"podman": ["podman", "images", "--format", "{{.Repository}}:{{.Tag}}",
                               image_tag],
                    "docker": ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}",
                               image_tag]}
-            proc = subprocess.run(cmd.get(runtime_type, []), capture_output=True, text=True,
-                                  timeout=10)
+            proc = await asyncio.to_thread(_subprocess_run, cmd.get(runtime_type, []), 10)
             return any(line.strip() == image_tag for line in proc.stdout.splitlines())
 
         @self._app.get("/admin/images")
@@ -458,7 +467,7 @@ class ArkestraAdmin:
                 from model_arkestra.common import image_and_runner_for_backend
                 _, runner_type = image_and_runner_for_backend(cm_data, backend_id)
                 runtime_detected = _detect_runtime(runner_type)
-                available = _image_exists(image_tag, runner_type) if runtime_detected and image_tag else False
+                available = await _image_exists(image_tag, runner_type) if runtime_detected and image_tag else False
                 results.append({
                     "backend_id": backend_id,
                     "runner": runner_type,
@@ -488,7 +497,6 @@ class ArkestraAdmin:
                 raise HTTPException(status_code=404, detail=f"No containerfile found for backend '{backend_id}'")
 
             # Resolve containerfile path relative to project root
-            import os
             project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             full_cf_path = os.path.join(project_root, containerfile_path)
             if not os.path.isfile(full_cf_path):
@@ -497,7 +505,7 @@ class ArkestraAdmin:
 
             cmd = {"podman": ["podman", "build", "-t", image_tag, "-f", full_cf_path, project_root],
                    "docker": ["docker", "build", "-t", image_tag, "-f", full_cf_path, project_root]}
-            proc = subprocess.run(cmd[runner_type], capture_output=True, text=True, timeout=600)
+            proc = await asyncio.to_thread(_subprocess_run, cmd[runner_type], 600)
             success = proc.returncode == 0
             return {
                 "backend": backend_id,
@@ -525,7 +533,7 @@ class ArkestraAdmin:
 
             cmd = {"podman": ["podman", "rmi", "-f", image_tag],
                    "docker": ["docker", "rmi", "-f", image_tag]}
-            proc = subprocess.run(cmd[runner_type], capture_output=True, text=True, timeout=30)
+            proc = await asyncio.to_thread(_subprocess_run, cmd[runner_type], 30)
             return {
                 "removed": proc.returncode == 0,
                 "image": image_tag,
@@ -533,8 +541,6 @@ class ArkestraAdmin:
             }
 
     def _add_eject_route(self) -> None:
-        from fastapi.responses import JSONResponse
-
         @self._app.post("/admin/eject/{model}")
         async def admin_eject(model: str):
             try:

@@ -290,7 +290,7 @@ def backup_config():
 def live_server():
     server = ArkestraServer(
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "test-config.yaml"),
-        port=18025,
+        port=18006,
     )
     client = TestClient(server.get_app())
     return {"server": server, "client": client}
