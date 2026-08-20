@@ -34,6 +34,7 @@ class _ModelContext:
         self.port = port
         self.runner_type: Optional[str] = None
         self.backend_id: Optional[str] = None
+        self._runner: Optional[BaseModelRunner] = None
         self.process: Optional[asyncio.subprocess.Process] = None
         self.container_id: Optional[str] = None
         self.state = RunnerState.STOPPED

@@ -19,6 +19,33 @@ logger = logging.getLogger(__name__)
 
 class BaseModelRunner(ABC):
     LOG_BUFFER_DEFAULT = 2000  # max lines in model log ring buffer
+    _DEFAULT_BACKEND = "vulkan-radv"
+    _DEFAULT_RUNNER = "process"
+
+    @classmethod
+    def resolve_defaults(cls, backends_cfg: Dict | None, runners_cfg: Dict | None,
+                         model: Dict | None = None) -> tuple[str, str]:
+        """Resolve effective (backend_id, runner_type) with hardwired fallbacks.
+
+        Backend priority: explicit `model["backend"]` → backends.default → _DEFAULT_BACKEND.
+        Runner priority: backend.runner → runners.default → _DEFAULT_RUNNER.
+        """
+        backends_cfg = backends_cfg or {}
+        runners_cfg = runners_cfg or {}
+        model = model or {}
+
+        # Backend resolution
+        if model.get("backend"):
+            backend_id = str(model["backend"])
+        else:
+            backend_id = str(backends_cfg.get("default") or cls._DEFAULT_BACKEND)
+
+        # Runner resolution
+        backend_data = backends_cfg.get(backend_id, {})
+        runner_type = backend_data.get("runner")
+        if not runner_type:
+            runner_type = runners_cfg.get("default", "process")
+        return str(backend_id), str(runner_type or cls._DEFAULT_RUNNER)
 
     def __init__(self, config_manager: Any, restart_delay: float = 5.0,
                  restart_limit: int = 4, shutdown_timeout: float = 20.0,

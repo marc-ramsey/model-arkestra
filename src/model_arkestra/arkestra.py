@@ -267,6 +267,7 @@ class ModelArkestra:
             await inst.start(model_name, port=port, backend=backend, **inference_kwargs)
             ctx = inst._models[model_name]
             ctx.runner_type = runner_type_override
+            ctx._runner = inst
             return
 
         # Resolve backend + runner type from config
@@ -284,6 +285,7 @@ class ModelArkestra:
         await runner.start(model_name, port=port, backend=backend, **inference_kwargs)
         ctx = runner._models[model_name]
         ctx.runner_type = resolved_runner
+        ctx._runner = runner
 
     async def stop(self, model_name: str) -> None:
         """Stop the named model."""

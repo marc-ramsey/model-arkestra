@@ -415,8 +415,8 @@ class ArkestraAdmin:
                 # Snapshot mode — find the runner that owns this model's context
                 lines_data = []
                 ctx = self.server._arkestra.find_context(model)
-                if ctx:
-                    runner = ctx.runner  # type: ignore[attr-defined]
+                if ctx and ctx._runner:
+                    runner = ctx._runner
                     if hasattr(runner, 'get_logs'):
                         try:
                             result = await runner.get_logs(model, lines)
