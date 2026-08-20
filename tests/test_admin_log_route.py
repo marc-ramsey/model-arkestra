@@ -17,7 +17,7 @@ def _build_admin(find_ctx_result=None, runner_get_logs=None):
     runner = AsyncMock()
     if runner_get_logs is not None:
         runner.get_logs = AsyncMock(return_value=runner_get_logs)
-    ctx.runner = runner
+    ctx._runner = runner
 
     arkestra = MagicMock()
     arkestra.find_context.return_value = find_ctx_result
@@ -47,7 +47,7 @@ def test_snapshot_uses_find_context():
 
 def test_snapshot_noop_when_get_logs_missing():
     ctx = MagicMock(spec=[])
-    ctx.runner = None
+    ctx._runner = None
     app, arkestra, _ = _build_admin(find_ctx_result=ctx)
     client = TestClient(app)
     resp = client.get("/admin/log/test-model", params={"follow": False})
