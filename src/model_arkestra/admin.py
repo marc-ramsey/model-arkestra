@@ -178,11 +178,14 @@ class ArkestraAdmin:
                 )
             prev_state = ctx.state
             if prev_state in (RunnerState.STOPPED, RunnerState.STOPPING):
-                return {
-                    "ok": True,
-                    "model": model,
-                    "previous_state": str(prev_state),
-                }, 202
+                return JSONResponse(
+                    status_code=202,
+                    content={
+                        "ok": True,
+                        "model": model,
+                        "previous_state": str(prev_state),
+                    },
+                )
             await self.server._arkestra.stop(model)
             return {
                 "ok": True,
