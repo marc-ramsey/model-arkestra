@@ -32,6 +32,15 @@ import yaml
 
 from model_arkestra.arkestra import ModelArkestra
 
+# ── Global environment variables (must be set before any test imports) ───────
+# BUILDAH_TMPDIR redirects Podman/Buildah layer caches from /var/tmp (on root)
+# to the system tmpfs, preventing disk bloat on the root partition.
+#
+# Users can override both vars via their shell profile or .env file.
+
+os.environ.setdefault("BUILDAH_TMPDIR", "/tmp")
+
+
 # ── Port range (computed once from the test config at module load) ───────────
 
 _test_cfg_path = os.path.join(
@@ -122,16 +131,41 @@ def graceful_server_teardown(fixture_dict_or_proxy) -> None:
 
 
 def _kill_port(port: int) -> None:
-    """Kill any process listening on *port* using ``lsof``."""
+    """Kill any process listening on *port* using multiple strategies.
+
+    Tries os.kill first (fast), falls back to fuser/kill command for edge cases
+    where the process is owned by root or os.kill silently fails.
+    """
+    # Strategy 1: lsof + os.kill (fast path)
+    pids = []
     result = subprocess.run(
         ["lsof", f"-ti:{port}"], capture_output=True, text=True
     )
     for pid in result.stdout.strip().split():
         if pid:
-            try:
-                os.kill(int(pid), 9)
-            except OSError:
-                pass
+            pids.append(int(pid))
+
+    for pid in list(pids):
+        try:
+            os.kill(pid, 9)
+        except OSError:
+            pass  # may be root-owned or already dead
+
+    # Strategy 2: fuser -k as fallback (handles permission edge cases)
+    if pids:
+        subprocess.run(["fuser", "-k", "-9", f"{port}/tcp"],
+                       capture_output=True, timeout=5)
+
+    # Strategy 3: broad llama-server cleanup on this port (zombie orphans)
+    result = subprocess.run(
+        ["pgrep", "-f", f"llama-server.*port.*{port}"],
+        capture_output=True, text=True
+    )
+    for pid in result.stdout.strip().split():
+        try:
+            os.kill(int(pid), 9)
+        except OSError:
+            pass
 
 
 def _wait_for_port_free(port: int, timeout: float = 10.0) -> bool:
@@ -211,6 +245,31 @@ def mr() -> ModelArkestra:
 # ── Per-test isolation (ensures clean state between every test method) ──────
 
 
+def _cleanup_buildah() -> None:
+    """Remove Podman/Buildah leftover temp directories from root filesystem.
+
+    When podman builds images or runs containers, Buildah creates temporary
+    directories in ``/var/tmp/buildah*`` that can consume gigabytes of space.
+    These must be cleaned up after tests to prevent the root partition from
+    filling up.  The ``mnt`` subdirectory sometimes has restricted permissions
+    and needs a ``chmod`` first.
+    """
+    import glob as _glob
+    for buildah_dir in _glob.glob("/var/tmp/buildah*"):
+        mnt_path = os.path.join(buildah_dir, "mnt")
+        if os.path.isdir(mnt_path):
+            try:
+                os.chmod(mnt_path, 0o700)
+            except OSError:
+                pass
+        try:
+            subprocess.run(
+                ["rm", "-rf", buildah_dir], capture_output=True, timeout=30
+            )
+        except Exception:
+            pass
+
+
 @pytest.fixture(autouse=True)
 async def _cleanup_after_test(mr: ModelArkestra) -> None:
     """Guarantee that models are stopped after each test, regardless of outcome.
@@ -243,7 +302,10 @@ async def _cleanup_after_test(mr: ModelArkestra) -> None:
             for port in list(_CLEANUP_PORTS) + list(_EXTRA_PORTS):
                 _wait_for_port_free(port, timeout=5.0)
         except RuntimeError:
-            pass  # event loop may be closed — nothing we can do
+            pass
+        finally:
+            # Clean Podman/Buildah temp directories — always runs even on errors.
+            _cleanup_buildah()
 
 
 # ── Port-level safety net (kills lingering listeners before/after a module) ─
@@ -251,7 +313,12 @@ async def _cleanup_after_test(mr: ModelArkestra) -> None:
 
 @pytest.fixture(autouse=True, scope="module")
 def _cleanup_ports() -> None:
-    """Kill any process on the configured port range before and after each module."""
+    """Kill any process on the configured port range before and after each module.
+
+    Also kills orphaned llama-server processes on test ports — these can survive
+    pytest shutdown (e.g. if the main process is SIGKILL'd), and will cause silent
+    failures in subsequent test modules.
+    """
     for port in _CLEANUP_PORTS:
         _kill_port(port)
     for port in _EXTRA_PORTS:
@@ -265,6 +332,14 @@ def _cleanup_ports() -> None:
         _kill_port(port)
     for port in _EXTRA_PORTS:
         _kill_port(port)
+
+    # Final sweep: kill any remaining llama-server on test ports that survived
+    # all other cleanup strategies (zombie, root-owned, etc.).
+    for port in list(_CLEANUP_PORTS) + list(_EXTRA_PORTS):
+        subprocess.run(
+            ["pkill", "-9", "-f", f"llama-server.*port.*{port}"],
+            capture_output=True, timeout=5
+        )
 
 
 # ── Podman test resource tracker (guaranteed teardown via fixture) ───────────

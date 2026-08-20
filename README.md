@@ -91,3 +91,13 @@ from model_arkestra import ModelNotStarted, MaxRestartsExceeded, ModelShutdown
 - [Error Hierarchy](./docs/errors.md)
 - [HTTP Client](./docs/http-client.md)
 - [Contributing & Tests](./docs/contributing.md)
+
+## Running tests
+
+Always use the wrapper script — it guarantees cleanup of ports, buildah dirs, and llama-server processes even if pytest is killed mid-run:
+
+```bash
+./tests/run-tests.sh -v              # unit + integration (excludes slow)
+./tests/run-tests.sh --all           # includes slow tests  
+./tests/run-tests.sh -m "not slow"   # same as default
+```

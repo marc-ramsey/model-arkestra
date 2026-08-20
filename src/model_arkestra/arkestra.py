@@ -9,7 +9,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Set
 
 from llm_config_manager.config_manager import ConfigManager
 from model_arkestra.base import BaseModelRunner
-from model_arkestra.common import _resolve_backend
+from model_arkestra.common import _resolve_backend, default_cache_root
 from model_arkestra.docker import DockerModelRunner
 from model_arkestra.podman import PodmanModelRunner
 from model_arkestra.process import ProcessModelRunner
@@ -202,7 +202,7 @@ class ModelArkestra:
             val = os.environ.get(key)
             if val:
                 return Path(val).expanduser()
-        return Path("~/.cache/huggingface/hub").expanduser()
+        return default_cache_root()
 
     def _cache_dir_for_checkpoint(self, checkpoint: str) -> Path:
         """Return the cache directory path for a given checkpoint string."""

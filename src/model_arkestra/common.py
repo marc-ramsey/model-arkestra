@@ -6,8 +6,31 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 
 import os
+from pathlib import Path
 # Subprocess env — convert os.environ to plain dict for uvloop compatibility
 SUBPROCESS_ENV: Dict[str, str] = dict(os.environ)
+
+
+def default_cache_root() -> Path:
+    """Return a sensible default HuggingFace / GGUF model cache directory.
+
+    Resolution order (avoids filling the root filesystem):
+      1. ``HF_HUB_CACHE`` or ``LLAMA_CACHE`` environment variable
+      2. ``$XDG_CACHE_HOME/huggingface`` (typically on a large data partition)
+      3. ``/tmp/huggingface`` (on tmpfs — RAM disk, won't bloat root)
+
+    Users can override entirely by setting the env var before starting the server.
+    """
+    for key in ("HF_HUB_CACHE", "LLAMA_CACHE"):
+        val = os.environ.get(key)
+        if val:
+            return Path(val).expanduser()
+
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    if xdg:
+        return Path(xdg) / "huggingface"
+
+    return Path("/tmp/huggingface")
 
 
 

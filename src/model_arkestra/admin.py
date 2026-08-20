@@ -21,6 +21,7 @@ except ImportError:
     raise RuntimeError("model_arkestra.admin requires fastapi")
 
 from model_arkestra.base import BaseModelRunner
+from model_arkestra.common import default_cache_root
 from model_arkestra.types import RunnerState
 
 
@@ -130,7 +131,7 @@ class ArkestraAdmin:
                         # Strip revision tag (e.g. :Q4_K_M) — HF Hub directories
                         # store models under the base name only.
                         base_checkpoint = checkpoint.split(":")[0] if ":" in checkpoint else checkpoint
-                        hf_cache = self._resolve_env("HF_HUB_CACHE") or self._resolve_env("LLAMA_CACHE") or "~/.cache/huggingface/hub"
+                        hf_cache = self._resolve_env("HF_HUB_CACHE") or self._resolve_env("LLAMA_CACHE") or str(default_cache_root())
                         cache_path = Path(hf_cache).expanduser() / f"models--{base_checkpoint.replace('/', '--')}" if base_checkpoint else None
                         is_cached = cache_path.exists() if cache_path else False
 

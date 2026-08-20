@@ -97,7 +97,7 @@ class TestLiveServerStartAndLogCapture:
 
     def test_models_list_accessible(self, live_server):
         """GET /admin/models returns a valid model list."""
-        r = httpx.get(f"{BASE}/admin/models", timeout=5)
+        r = live_server["client"].get(f"{BASE}/admin/models", timeout=5)
         assert r.status_code == 200
         models_by_id = {m["id"]: m for m in r.json()["models"]}
         # At least one model should be listed
@@ -170,7 +170,7 @@ class TestLiveServerStartAndLogCapture:
 
     def test_model_state_after_start(self, live_server):
         """Model status reflects the outcome of a start attempt."""
-        r = httpx.get(f"{BASE}/admin/models", timeout=5)
+        r = live_server["client"].get(f"{BASE}/admin/models", timeout=5)
         assert r.status_code == 200
         models_by_id = {m["id"]: m for m in r.json()["models"]}
         qwen = models_by_id.get("qwen3.5-4b")
