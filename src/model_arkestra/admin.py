@@ -86,14 +86,8 @@ class ArkestraAdmin:
         html = Path(__file__).parent.parent.parent / "static" / "index.html"
 
         @self._app.get("/")
-        async def root():
-            key = self.admin_key or ""
-            content = html.read_text().replace("{{ADMIN_KEY}}", key)
-            return HTMLResponse(content, media_type="text/html",
-                                headers={"Cache-Control": "no-store"})
-
         @self._app.get("/index.html")
-        async def index_html():
+        async def root():
             key = self.admin_key or ""
             content = html.read_text().replace("{{ADMIN_KEY}}", key)
             return HTMLResponse(content, media_type="text/html",
