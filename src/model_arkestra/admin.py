@@ -423,36 +423,49 @@ class ArkestraAdmin:
     def _add_images_route(self) -> None:
         @self._app.get("/admin/images")
         async def admin_images():
+            from model_arkestra.common import (
+                _runtime_binary,
+                image_and_runner_for_backend,
+                image_exists as _image_exists,
+            )
+
             cm_data = self._config_data
             backends = self._backends_cfg
             if not isinstance(backends, dict):
                 raise HTTPException(status_code=500,
                                     detail="No backends section in config")
 
-            results = []
-            for backend_id, be_cfg in backends.items():
-                # Skip 'default' — it's a key, not a backend definition
+            # First pass: build metadata list with defaults.
+            entries: list[dict] = []
+            for idx, (backend_id, be_cfg) in enumerate(backends.items()):
                 if backend_id == "default" or not isinstance(be_cfg, dict):
                     continue
                 image_tag = str(be_cfg.get("image", ""))
                 container_path = be_cfg.get("container", "")
-                from model_arkestra.common import (
-                    _runtime_binary,
-                    image_and_runner_for_backend,
-                    image_exists as _image_exists,
-                )
                 _, runner_type = image_and_runner_for_backend(cm_data, backend_id)
                 runtime_detected = _runtime_binary(runner_type) is not None
-                available = await asyncio.to_thread(_image_exists, runner_type, image_tag) if runtime_detected and image_tag else False
-                results.append({
+                entries.append({
                     "backend_id": backend_id,
                     "runner": runner_type,
                     "runtime_detected": runtime_detected,
                     "image": image_tag,
                     "containerfile": container_path,
-                    "available": available,
+                    "available": False,  # default; may be overwritten below
                 })
-            return results
+
+            # Parallel check — all _image_exists calls run concurrently.
+            checks: list = []  # (index,) -> coroutine
+            coros: list = []
+            for idx, e in enumerate(entries):
+                if e["runtime_detected"] and e["image"]:
+                    _, rt = image_and_runner_for_backend(cm_data, e["backend_id"])
+                    checks.append(idx)
+                    coros.append(asyncio.to_thread(_image_exists, rt, e["image"]))
+            if coros:
+                for idx, available in zip(checks, await asyncio.gather(*coros)):
+                    entries[idx]["available"] = available
+
+            return entries
 
         @self._app.post("/admin/images/build")
         async def admin_build_image(body: dict):
