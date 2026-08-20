@@ -23,6 +23,10 @@ except ImportError:
 from model_arkestra.common import default_cache_root
 from model_arkestra.types import RunnerState
 
+# ── Model config field definitions (single source of truth) ─────────────
+MODEL_CONFIG_FIELDS = frozenset({"args", "checkpoint", "backend", "capabilities", "runner", "tags", "max_log_lines"})
+INFRA_KEYS = frozenset({"args", "checkpoint", "backend", "runner", "max_log_lines"})
+
 
 class ArkestraAdmin:
     """Admin subcomponent that installs routes on an ArkestraServer's app."""
@@ -236,8 +240,6 @@ class ArkestraAdmin:
             return JSONResponse(status_code=200, content=result)
 
     def _add_config_routes(self) -> None:
-        KNOWN_KEYS = {"args", "checkpoint", "backend", "capabilities", "runner", "tags"}
-
         @self._app.get("/admin/config")
         async def admin_config_list():
             """Return list of model names in config."""
@@ -270,7 +272,7 @@ class ArkestraAdmin:
             new_model: Dict[str, Any] = {
                 "checkpoint": str(body["checkpoint"]),
             }
-            for key in ("args", "backend", "capabilities", "runner", "tags"):
+            for key in MODEL_CONFIG_FIELDS:
                 if key in body and body[key] is not None:
                     new_model[key] = body[key]
 
@@ -312,7 +314,7 @@ class ArkestraAdmin:
 
             try:
                 for key, value in body.items():
-                    if key in KNOWN_KEYS or key == "max_log_lines":
+                    if key in MODEL_CONFIG_FIELDS:
                         cfg[model][key] = value
                 self.server._arkestra.cm.export(self.server._arkestra.cm.config_path)
                 return {"ok": True, "model": model}
@@ -329,18 +331,19 @@ class ArkestraAdmin:
 
             # Build raw kwargs — infra keys handled by ModelArkestra, rest are inference params
             kw = {}
-            for key in ("args", "checkpoint", "backend", "runner"):
+            for key in INFRA_KEYS:
                 if body and key in body and body[key] is not None:
-                    kw[key] = body[key]
-            if body and "max_log_lines" in body and body["max_log_lines"] is not None:
-                try:
-                    kw["max_log_lines"] = int(body["max_log_lines"])
-                except (ValueError, TypeError):
-                    pass
+                    val = body[key]
+                    if key == "max_log_lines":
+                        try:
+                            val = int(val)
+                        except (ValueError, TypeError):
+                            continue
+                    kw[key] = val
             # Any other keys in body are inference params — pass through as-is
             if body:
                 for key, value in body.items():
-                    if key not in ("args", "checkpoint", "backend", "runner", "max_log_lines") and value is not None:
+                    if key not in INFRA_KEYS and value is not None:
                         kw[key] = value
 
             # If model is already running with overrides, stop first then start fresh
