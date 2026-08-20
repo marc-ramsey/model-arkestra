@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import subprocess
 import threading
 import time
 
@@ -20,7 +21,7 @@ from model_arkestra.server import ArkestraServer
 from tests.conftest import graceful_server_teardown
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def live_server():
     """Start a real ArkestraServer on a background thread."""
     proxy = ArkestraServer(
@@ -57,6 +58,36 @@ def live_server():
 
 
 BASE = "http://127.0.0.1:18005"
+
+
+def _stop_all_models_and_clean(server_dict):
+    """Stop every model on the live server and remove any leftover podman containers."""
+    client = server_dict["client"]
+    # Stop all models via the stop-all endpoint
+    try:
+        client.post(f"{BASE}/admin/stop-all", timeout=30)
+    except Exception:
+        pass
+    # Remove any leftover llm-* containers from this session
+    result = subprocess.run(
+        ["podman", "ps", "-a", "--filter", "name=llm-",
+         "--format", "{{.ID}}"],
+        capture_output=True, text=True, timeout=5,
+    )
+    for cid in result.stdout.strip().split():
+        if cid:
+            subprocess.run(["podman", "rm", "-f", cid], capture_output=True, timeout=5)
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_live_models(live_server):
+    """After each test in this module, stop all models and clean containers.
+
+    This prevents model processes + podman containers from accumulating memory
+    across the hundreds of other tests that run before/after these live tests.
+    """
+    yield
+    _stop_all_models_and_clean(live_server)
 
 
 class TestLiveStartAndLogCapture:

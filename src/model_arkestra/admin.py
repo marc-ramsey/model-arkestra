@@ -190,7 +190,7 @@ class ArkestraAdmin:
                     status_code=404, detail=f"Model '{model}' not found in runners"
                 )
             prev_state = ctx.state
-            if prev_state in (RunnerState.STOPPED, RunnerState.STOPPING):
+            if prev_state.is_terminal:
                 return JSONResponse(
                     status_code=202,
                     content={
@@ -210,7 +210,7 @@ class ArkestraAdmin:
         @self._app.post("/admin/stop-all")
         async def admin_stop_all():
             ctxs = list(self.server._arkestra._get_model_contexts())
-            running = [c.name for c in ctxs if c.state not in (RunnerState.STOPPED, RunnerState.STOPPING)]
+            running = [c.name for c in ctxs if not c.state.is_terminal]
             if not running:
                 return JSONResponse(
                     status_code=200,
@@ -480,7 +480,8 @@ class ArkestraAdmin:
             if _runtime_binary(runner_type) is None:
                 return {"skipped": True,
                         "reason": f"runner={runner_type} but no '{runner_type}' binary found on PATH",
-                        "image": image_tag}
+                        "image": image_tag,
+                        "runtime": runner_type}
 
             if not containerfile_path:
                 raise HTTPException(status_code=404,
@@ -497,6 +498,7 @@ class ArkestraAdmin:
             return {
                 "backend": backend_id,
                 "image": image_tag,
+                "runtime": runner_type,
                 **result,
             }
 

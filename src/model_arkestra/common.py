@@ -406,6 +406,7 @@ def build_model_args(
     resolve_macros = dict(cm.data.get("macros", {}))
     resolve_macros["CHECKPOINT"] = checkpoint
     resolve_macros["PORT"] = port
+    resolve_macros["NPROC"] = str(os.cpu_count())
 
     # 4. Resolve backend args — handle both string template and flat dict
     backend_args_raw = backend.get("args")

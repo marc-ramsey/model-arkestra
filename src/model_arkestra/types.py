@@ -15,6 +15,11 @@ class RunnerState(Enum):
     STOPPING = auto()  # stop() called — do not restart
     UNCACHED = auto()  # checkpoint not yet downloaded
 
+    @property
+    def is_terminal(self) -> bool:
+        """True when the model is not currently active (stopped, stopping)."""
+        return self in (RunnerState.STOPPED, RunnerState.STOPPING)
+
 class RunnerError(Exception): """Base exception for all ProcessModelRunner failures."""
 class ServerReadyTimeout(RunnerError): """Server did not become ready within timeout."""
 class ModelNotStarted(RunnerError): """Request on a model that hasn't been started."""

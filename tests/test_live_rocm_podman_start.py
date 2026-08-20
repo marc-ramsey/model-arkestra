@@ -8,6 +8,7 @@ Starts its own ArkestraServer on port 18005 for isolation.
 from __future__ import annotations
 
 import json
+import subprocess
 import threading
 import time
 
@@ -34,7 +35,7 @@ def _clean_containers():
             )
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def live_server():
     """Start a real ArkestraServer on port 18005 in a background thread."""
     import time as _time
@@ -45,12 +46,12 @@ def live_server():
     
     proxy = ArkestraServer(
         config_path="tests/test-integration-config.yaml",
-        port=18005,
+        port=18006,
         ready_timeout=360,
     )
     app = proxy.get_app()
 
-    config = uvicorn.Config(app, host="127.0.0.1", port=18005, log_level="warning")
+    config = uvicorn.Config(app, host="127.0.0.1", port=18006, log_level="warning")
     server_obj = uvicorn.Server(config)
     proxy._server = server_obj  # type: ignore
 
@@ -61,7 +62,7 @@ def live_server():
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
 
-    url = "http://127.0.0.1:18005/admin/models"
+    url = "http://127.0.0.1:18006/admin/models"
     deadline = time.time() + 30
     while time.time() < deadline:
         try:
@@ -82,7 +83,37 @@ def live_server():
     graceful_server_teardown({"server": proxy})
 
 
-BASE = "http://127.0.0.1:18005"
+BASE = "http://127.0.0.1:18006"
+
+
+def _stop_all_models_and_clean(server_dict):
+    """Stop every model on the live server and remove any leftover podman containers."""
+    client = server_dict["client"]
+    # Stop all models via the stop-all endpoint
+    try:
+        client.post(f"{BASE}/admin/stop-all", timeout=30)
+    except Exception:
+        pass
+    # Remove any leftover llm-* containers from this session
+    result = subprocess.run(
+        ["podman", "ps", "-a", "--filter", "name=llm-",
+         "--format", "{{.ID}}"],
+        capture_output=True, text=True, timeout=5,
+    )
+    for cid in result.stdout.strip().split():
+        if cid:
+            subprocess.run(["podman", "rm", "-f", cid], capture_output=True, timeout=5)
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_live_models(live_server):
+    """After each test in this module, stop all models and clean containers.
+
+    This prevents model processes + podman containers from accumulating memory
+    across the hundreds of other tests that run before/after these live tests.
+    """
+    yield
+    _stop_all_models_and_clean(live_server)
 
 
 class TestLiveServerStartAndLogCapture:

@@ -223,7 +223,7 @@ def shutdown_runner(runner: Any) -> None:
 # ── Shared infrastructure (one ModelArkestra per module) ────────────────────
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def mr() -> ModelArkestra:
     """Shared ``ModelArkestra`` instance for all tests in a module.
 
