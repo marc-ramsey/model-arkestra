@@ -102,7 +102,9 @@ class ArkestraAdmin:
         # When admin_key is empty/None, it's a no-op pass-through.
         @self._app.middleware("http")
         async def admin_auth(request: Request, call_next):
-            if request.url.path.startswith("/admin") and self.admin_key:
+            path = request.url.path
+            is_admin = path == "/admin" or path.startswith("/admin/")
+            if is_admin and self.admin_key:
                 key = request.headers.get("x-admin-key", "")
                 if key != self.admin_key:
                     return JSONResponse(
