@@ -2,6 +2,7 @@
 from __future__ import annotations
 import re
 import shlex
+import subprocess as _subprocess
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 
@@ -218,6 +219,105 @@ def image_and_runner_for_backend(cm_data, backend_id: str) -> tuple[str, str]:
                       "dockermodelrunner": "docker"}
         runner_type = runner_map.get(runner_type, runner_type)
     return image_tag, runner_type
+
+
+def _run_subprocess(cmd: list, timeout: int = 30) -> _subprocess.CompletedProcess:
+    """Run a subprocess call via asyncio.to_thread.
+
+    Uses DEVNULL for stdin and temp files for stdout/stderr to avoid pipe
+    inheritance deadlocks with podman/buildah nested child processes.
+    """
+    import tempfile as _tempfile
+    with _tempfile.TemporaryDirectory() as tmpdir:
+        stdout_path = os.path.join(tmpdir, "stdout")
+        stderr_path = os.path.join(tmpdir, "stderr")
+        proc = _subprocess.Popen(
+            cmd,
+            stdin=_subprocess.DEVNULL,
+            stdout=open(stdout_path, "w"),
+            stderr=open(stderr_path, "w"),
+        )
+        try:
+            proc.wait(timeout=timeout)
+        except _subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+        with open(stdout_path) as f:
+            stdout = f.read()
+        with open(stderr_path) as f:
+            stderr = f.read()
+    return _subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+
+
+def _runtime_binary(runner_type: str) -> Optional[str]:
+    """Return the CLI binary name for a runner type, or None."""
+    return {"podman": "podman", "docker": "docker"}.get(runner_type)
+
+
+def image_exists(runner: str, tag: str) -> bool:
+    """Check if a container image exists locally for the given runner.
+
+    Args:
+        runner: "podman" or "docker"
+        tag: full image tag (e.g. "ark-llama:rocm")
+
+    Returns:
+        True if the image is present in the local store.
+    """
+    cmd = f"{runner} images --format '{{{{.Repository}}}}:{{{{.Tag}}}}' {tag}".split()
+    proc = _run_subprocess(cmd, timeout=10)
+    return any(line.strip() == tag for line in proc.stdout.splitlines())
+
+
+def build_image(
+    runner: str,
+    image_tag: str,
+    containerfile: str,
+    context_dir: str,
+    timeout: int = 600,
+) -> Dict[str, Any]:
+    """Build a container image for the given runner.
+
+    Args:
+        runner: "podman" or "docker"
+        image_tag: target image tag (e.g. "ark-llama:rocm")
+        containerfile: path to Containerfile/Dockerfile
+        context_dir: build context directory
+        timeout: max seconds to wait
+
+    Returns:
+        Dict with success status and combined stdout/stderr output.
+    """
+    cmd = f"{runner} build -t {image_tag} -f {containerfile} {context_dir}".split()
+    proc = _run_subprocess(cmd, timeout=timeout)
+    return {
+        "success": proc.returncode == 0,
+        "output": proc.stdout + proc.stderr,
+        "error": None if proc.returncode == 0 else proc.stderr or proc.stdout or "non-zero exit",
+    }
+
+
+def remove_image(
+    runner: str,
+    tag: str,
+    timeout: int = 30,
+) -> Dict[str, Any]:
+    """Remove a container image for the given runner.
+
+    Args:
+        runner: "podman" or "docker"
+        tag: image tag to remove (e.g. "ark-llama:rocm")
+        timeout: max seconds to wait
+
+    Returns:
+        Dict with removed status and any error output.
+    """
+    cmd = f"{runner} rmi -f {tag}".split()
+    proc = _run_subprocess(cmd, timeout=timeout)
+    return {
+        "removed": proc.returncode == 0,
+        "error": None if proc.returncode == 0 else proc.stderr,
+    }
 
 
 def safe_container_name(name: str, port: int) -> str:

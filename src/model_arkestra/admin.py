@@ -410,47 +410,6 @@ class ArkestraAdmin:
                 return {"object": "log", "data": lines_data}
 
     def _add_images_route(self) -> None:
-        def _subprocess_run(cmd: list, timeout: int = 30) -> subprocess.CompletedProcess:
-            """Run a subprocess call — must be invoked via asyncio.to_thread.
-
-            Uses DEVNULL for stdin and temp files for stdout/stderr to avoid pipe
-            inheritance deadlocks with podman/buildah nested child processes.
-            """
-            import tempfile as _tempfile
-            with _tempfile.TemporaryDirectory() as tmpdir:
-                stdout_path = os.path.join(tmpdir, "stdout")
-                stderr_path = os.path.join(tmpdir, "stderr")
-                proc = subprocess.Popen(
-                    cmd,
-                    stdin=subprocess.DEVNULL,
-                    stdout=open(stdout_path, "w"),
-                    stderr=open(stderr_path, "w"),
-                )
-                try:
-                    proc.wait(timeout=timeout)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait(timeout=5)
-                with open(stdout_path) as f:
-                    stdout = f.read()
-                with open(stderr_path) as f:
-                    stderr = f.read()
-            return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
-
-        def _detect_runtime(runner_type: str) -> bool:
-            """Return True if the container runtime for this runner type is on PATH."""
-            binary = {"podman": "podman", "docker": "docker"}.get(runner_type)
-            return binary is not None and shutil.which(binary) is not None
-
-        async def _image_exists(image_tag: str, runtime_type: str) -> bool:
-            """Check if an image tag exists in the local container store."""
-            cmd = {"podman": ["podman", "images", "--format", "{{.Repository}}:{{.Tag}}",
-                              image_tag],
-                   "docker": ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}",
-                              image_tag]}
-            proc = await asyncio.to_thread(_subprocess_run, cmd.get(runtime_type, []), 10)
-            return any(line.strip() == image_tag for line in proc.stdout.splitlines())
-
         @self._app.get("/admin/images")
         async def admin_images():
             cm_data = self._config_data
@@ -466,10 +425,14 @@ class ArkestraAdmin:
                     continue
                 image_tag = str(be_cfg.get("image", ""))
                 container_path = be_cfg.get("container", "")
-                from model_arkestra.common import image_and_runner_for_backend
+                from model_arkestra.common import (
+                    _runtime_binary,
+                    image_and_runner_for_backend,
+                    image_exists as _image_exists,
+                )
                 _, runner_type = image_and_runner_for_backend(cm_data, backend_id)
-                runtime_detected = _detect_runtime(runner_type)
-                available = await _image_exists(image_tag, runner_type) if runtime_detected and image_tag else False
+                runtime_detected = _runtime_binary(runner_type) is not None
+                available = await asyncio.to_thread(_image_exists, runner_type, image_tag) if runtime_detected and image_tag else False
                 results.append({
                     "backend_id": backend_id,
                     "runner": runner_type,
@@ -482,21 +445,29 @@ class ArkestraAdmin:
 
         @self._app.post("/admin/images/build")
         async def admin_build_image(body: dict):
+            from model_arkestra.common import (
+                _runtime_binary,
+                build_image as _build_image,
+                containerfile_for_backend,
+                image_and_runner_for_backend,
+            )
+
             backend_id = body.get("backend")
             if not backend_id:
                 raise HTTPException(status_code=400, detail="Missing 'backend' in request body")
 
             cm_data = self._config_data
-            from model_arkestra.common import image_and_runner_for_backend, containerfile_for_backend
             image_tag, runner_type = image_and_runner_for_backend(cm_data, backend_id)
             containerfile_path = containerfile_for_backend(backend_id)
 
-            runtime_detected = _detect_runtime(runner_type)
-            if not runtime_detected:
-                return {"skipped": True, "reason": f"runner={runner_type} but no '{runner_type}' binary found on PATH", "image": image_tag}
+            if _runtime_binary(runner_type) is None:
+                return {"skipped": True,
+                        "reason": f"runner={runner_type} but no '{runner_type}' binary found on PATH",
+                        "image": image_tag}
 
             if not containerfile_path:
-                raise HTTPException(status_code=404, detail=f"No containerfile found for backend '{backend_id}'")
+                raise HTTPException(status_code=404,
+                                    detail=f"No containerfile found for backend '{backend_id}'")
 
             # Resolve containerfile path relative to project root
             project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -505,41 +476,40 @@ class ArkestraAdmin:
                 raise HTTPException(status_code=404,
                                     detail=f"Containerfile not found: {containerfile_path}")
 
-            cmd = {"podman": ["podman", "build", "-t", image_tag, "-f", full_cf_path, project_root],
-                   "docker": ["docker", "build", "-t", image_tag, "-f", full_cf_path, project_root]}
-            proc = await asyncio.to_thread(_subprocess_run, cmd[runner_type], 600)
-            success = proc.returncode == 0
+            result = await asyncio.to_thread(_build_image, runner_type, image_tag, full_cf_path, project_root)
             return {
                 "backend": backend_id,
                 "image": image_tag,
-                "success": success,
-                "runtime": runner_type,
-                "output": proc.stdout + proc.stderr,
-                "error": None if success else proc.stderr or proc.stdout or "non-zero exit",
+                **result,
             }
 
         @self._app.delete("/admin/images/{image_tag}")
         async def admin_remove_image(image_tag: str):
+            from model_arkestra.common import (
+                _runtime_binary,
+                image_and_runner_for_backend,
+                remove_image as _remove_image,
+            )
+
             found_backend = self._backend_for_image(image_tag)
 
             if not found_backend:
                 raise HTTPException(status_code=404,
                                     detail=f"Image '{image_tag}' not configured in any backend")
 
-            from model_arkestra.common import image_and_runner_for_backend
             _, runner_type = image_and_runner_for_backend(
                 self._config_data, found_backend
             )
-            if not _detect_runtime(runner_type):
-                return {"skipped": True, "reason": f"runner={runner_type} but no '{runner_type}' binary found on PATH", "image": image_tag}
+            if _runtime_binary(runner_type) is None:
+                return {"skipped": True,
+                        "reason": f"runner={runner_type} but no '{runner_type}' binary found on PATH",
+                        "image": image_tag}
 
-            cmd = {"podman": ["podman", "rmi", "-f", image_tag],
-                   "docker": ["docker", "rmi", "-f", image_tag]}
-            proc = await asyncio.to_thread(_subprocess_run, cmd[runner_type], 30)
+            result = await asyncio.to_thread(_remove_image, runner_type, image_tag)
             return {
-                "removed": proc.returncode == 0,
+                "removed": result["removed"],
                 "image": image_tag,
-                "error": None if proc.returncode == 0 else proc.stderr,
+                "error": result.get("error"),
             }
 
     def _add_eject_route(self) -> None:
