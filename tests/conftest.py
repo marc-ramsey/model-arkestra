@@ -47,8 +47,78 @@ _CLEANUP_PORTS = tuple(range(_START_PORT, _START_PORT + _NUM_PORTS))
 # Also cover proxy test ports (e.g. 20100)
 _EXTRA_PORTS = tuple(range(20090, 20110))
 
-
 # ── Port / process helpers (reusable by test modules) ────────────────────────
+
+
+def graceful_server_teardown(fixture_dict_or_proxy) -> None:
+    """Gracefully shut down a live server fixture and release all test ports.
+
+    Releases ports **18000–18009** — the full range live fixtures may use
+    (server port + child model ports).
+
+    Usage::
+
+        yield {"server": proxy, "client": client}
+        graceful_server_teardown(live_server)
+
+    Or::
+
+        yield proxy
+        graceful_server_teardown(proxy)
+
+    Waits up to **20 seconds** at 0.5 s intervals for ports to become free.
+    Only after the full wait is exhausted is *kill -9* used as a last resort.
+    """
+    # Accept either the fixture dict or the raw proxy object
+    if isinstance(fixture_dict_or_proxy, dict):
+        proxy = fixture_dict_or_proxy["server"]
+    else:
+        proxy = fixture_dict_or_proxy
+
+    server_obj = getattr(proxy, "_server", None)
+    arkestra = getattr(proxy, "_arkestra", None)
+
+    # 1. Stop all running models gracefully (if available)
+    if arkestra is not None and hasattr(arkestra, "shutdown"):
+        try:
+            asyncio.run(arkestra.shutdown())
+        except Exception:
+            pass
+
+    # 2. Signal uvicorn to shut down
+    if server_obj is not None:
+        server_obj.should_exit = True
+
+    ports = tuple(range(18000, 18010))
+
+    # 3. Wait for all ports release: 0.5 s × 40 iterations = 20 seconds max
+    poll_interval = 0.5
+    max_polls = 40  # 20 seconds total
+
+    for _ in range(max_polls):
+        all_free = True
+        for p in ports:
+            result = subprocess.run(
+                ["lsof", f"-ti:{p}"], capture_output=True, text=True
+            )
+            if result.stdout.strip():
+                all_free = False
+                break
+        if all_free:
+            return  # all ports free — done
+        time.sleep(poll_interval)
+
+    # Port(s) still occupied after 20 s → force kill as last resort
+    for p in ports:
+        result = subprocess.run(
+            ["lsof", f"-ti:{p}"], capture_output=True, text=True
+        )
+        for pid in result.stdout.strip().split():
+            if pid:
+                try:
+                    os.kill(int(pid), 9)
+                except OSError:
+                    pass
 
 
 def _kill_port(port: int) -> None:

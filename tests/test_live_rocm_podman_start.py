@@ -16,6 +16,7 @@ import pytest
 import uvicorn
 
 from model_arkestra.server import ArkestraServer
+from tests.conftest import graceful_server_teardown
 
 
 def _clean_containers():
@@ -43,7 +44,7 @@ def live_server():
     _time.sleep(0.3)
     
     proxy = ArkestraServer(
-        config_path="sample-config.yaml",
+        config_path="tests/test-integration-config.yaml",
         port=18005,
         ready_timeout=360,
     )
@@ -71,26 +72,17 @@ def live_server():
     else:
         pytest.fail("Live server did not become ready in 30s")
 
-    yield {"server": proxy, "client": httpx.Client(timeout=None)}
+    key = proxy._arkestra.cm.data.get("env", {}).get("ADMIN_KEY") or ""
+    client_headers = {"X-Admin-Key": key} if key else {}
 
-    server_obj.should_exit = True
-    for _ in range(10):
-        result = __import__("subprocess").run(
-            ["lsof", "-ti:", "18005"], capture_output=True, text=True
-        )
-        pids = [p for p in result.stdout.strip().split() if p]
-        if not pids:
-            break
-        for pid in pids:
-            try:
-                os.kill(int(pid), 9)
-            except OSError:
-                pass
-        time.sleep(0.3)
+    yield {
+        "server": proxy,
+        "client": httpx.Client(timeout=None, headers=client_headers),
+    }
+    graceful_server_teardown({"server": proxy})
 
 
 BASE = "http://127.0.0.1:18005"
-COOKIE = {"admin_key": "whatever"}
 
 
 class TestLiveServerStartAndLogCapture:
@@ -105,7 +97,7 @@ class TestLiveServerStartAndLogCapture:
 
     def test_models_list_accessible(self, live_server):
         """GET /admin/models returns a valid model list."""
-        r = httpx.get(f"{BASE}/admin/models", cookies=COOKIE, timeout=5)
+        r = httpx.get(f"{BASE}/admin/models", timeout=5)
         assert r.status_code == 200
         models_by_id = {m["id"]: m for m in r.json()["models"]}
         # At least one model should be listed
@@ -122,7 +114,7 @@ class TestLiveServerStartAndLogCapture:
             try:
                 with client.stream(
                     "GET", f"{BASE}/admin/log/qwen3.5-4b?follow=true",
-                    cookies=COOKIE, timeout=None,
+                    timeout=None,
                 ) as resp:
                     assert resp.status_code == 200
                     for line in resp.iter_lines():
@@ -146,12 +138,12 @@ class TestLiveServerStartAndLogCapture:
         # Start model — backend routing determined by config
         r = client.post(
             f"{BASE}/admin/start/qwen3.5-4b",
-            cookies=COOKIE, timeout=360,
+            timeout=360,
         )
         assert r.status_code == 200
 
         # Stop the SSE stream so it returns
-        client.post(f"{BASE}/admin/stop/qwen3.5-4b", cookies=COOKIE, timeout=60)
+        client.post(f"{BASE}/admin/stop/qwen3.5-4b", timeout=60)
         time.sleep(1)
         collector_thread.join(timeout=3)
 
@@ -167,7 +159,7 @@ class TestLiveServerStartAndLogCapture:
             # not in-process buffer — get them directly via snapshot endpoint.
             r2 = client.get(
                 f"{BASE}/admin/log/qwen3.5-4b?follow=false",
-                cookies=COOKIE, timeout=10,
+                timeout=10,
             )
             if r2.status_code == 200:
                 log_data = r2.json().get("data", [])
@@ -178,7 +170,7 @@ class TestLiveServerStartAndLogCapture:
 
     def test_model_state_after_start(self, live_server):
         """Model status reflects the outcome of a start attempt."""
-        r = httpx.get(f"{BASE}/admin/models", cookies=COOKIE, timeout=5)
+        r = httpx.get(f"{BASE}/admin/models", timeout=5)
         assert r.status_code == 200
         models_by_id = {m["id"]: m for m in r.json()["models"]}
         qwen = models_by_id.get("qwen3.5-4b")

@@ -1,26 +1,35 @@
 """Tests for ArkestraAdmin endpoints — live server, no mocks."""
 import copy
+import tempfile
+import os
 from unittest.mock import patch, AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.conftest import graceful_server_teardown
 
 from model_arkestra.server import ArkestraServer
+
+# ── separate config copy so mutations never touch base file ────
+_BASE_CFG = "tests/test-admin-config.yaml"
+_copy_fd, _TEST_CFG = tempfile.mkstemp(suffix=".yaml")
+os.close(_copy_fd)
+import shutil
+shutil.copy2(_BASE_CFG, _TEST_CFG)
 
 
 @pytest.fixture(scope="session")
 def live_server():
     """Start a single ArkestraServer for the entire test session.
 
-    Uses tests/test-admin-config.yaml which is separate from
-    sample-config.yaml — test mutations are safely isolated.
+    Uses a separate copy of tests/test-admin-config.yaml so mutations
+    from POST /admin/config never touch the base file or sample-config.yaml.
     """
-    server = ArkestraServer("tests/test-admin-config.yaml", port=18005)
+    server = ArkestraServer(_TEST_CFG, port=18005)
     client = TestClient(server.get_app())
-    return {"server": server, "client": client}
-
-
-# ── fixtures ────────────────────────────────────────────────────────
+    result = {"server": server, "client": client}
+    yield result
+    graceful_server_teardown(result)
 
 @pytest.fixture(autouse=True)
 def _set_admin_header(live_server):

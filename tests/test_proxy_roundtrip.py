@@ -23,6 +23,7 @@ import pytest
 import uvicorn
 
 from model_arkestra.server import ArkestraServer
+from tests.conftest import graceful_server_teardown
 
 
 # ── Fixtures ───────────────────────────────────────────────────────────────
@@ -61,22 +62,7 @@ def arkestra_server():
         pytest.fail("ArkestraServer did not become ready in 30s")
 
     yield proxy
-
-    # Shutdown — stop all model processes and exit uvicorn
-    server.should_exit = True
-    # Wait for process to drain port, then force-kill anything left
-    import subprocess as _sp, time as _time
-    for _ in range(10):
-        result = _sp.run(["lsof", "-ti:", "18000"], capture_output=True, text=True)
-        pids = [p for p in result.stdout.strip().split() if p]
-        if not pids:
-            break
-        for pid in pids:
-            try:
-                os.kill(int(pid), 9)
-            except OSError:
-                pass
-        _time.sleep(0.3)
+    graceful_server_teardown(proxy)
 
 
 def asyncio_run(coro):

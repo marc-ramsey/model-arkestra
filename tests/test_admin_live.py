@@ -19,6 +19,7 @@ import pytest
 import uvicorn
 
 from model_arkestra.server import ArkestraServer
+from tests.conftest import graceful_server_teardown
 
 
 # ── Fixtures ───────────────────────────────────────────────────────────────
@@ -60,21 +61,7 @@ def live_admin_server():
         pytest.fail("Live admin server did not become ready in 30s")
 
     yield proxy
-
-    # Shutdown — stop all model processes and exit uvicorn
-    server_obj.should_exit = True
-    import subprocess as _sp, time as _time
-    for _ in range(10):
-        result = _sp.run(["lsof", "-ti:", "18005"], capture_output=True, text=True)
-        pids = [p for p in result.stdout.strip().split() if p]
-        if not pids:
-            break
-        for pid in pids:
-            try:
-                os.kill(int(pid), 9)
-            except OSError:
-                pass
-        _time.sleep(0.3)
+    graceful_server_teardown(proxy)
 
 
 BASE = "http://127.0.0.1:18005"

@@ -17,6 +17,7 @@ import pytest
 import uvicorn
 
 from model_arkestra.server import ArkestraServer
+from tests.conftest import graceful_server_teardown
 
 
 @pytest.fixture(scope="module")
@@ -52,25 +53,10 @@ def live_server():
         pytest.fail("Live server did not become ready in 30s")
 
     yield {"server": proxy, "client": httpx.Client(timeout=None)}
-
-    server_obj.should_exit = True
-    import subprocess as _sp
-    for _ in range(10):
-        result = _sp.run(["lsof", "-ti:", "18005"], capture_output=True, text=True)
-        pids = [p for p in result.stdout.strip().split() if p]
-        if not pids:
-            break
-        for pid in pids:
-            try:
-                import os
-                os.kill(int(pid), 9)
-            except OSError:
-                pass
-        time.sleep(0.3)
+    graceful_server_teardown({"server": proxy, "client": httpx.Client(timeout=None)})
 
 
 BASE = "http://127.0.0.1:18005"
-COOKIE = {"admin_key": "whatever"}
 
 
 class TestLiveStartAndLogCapture:
@@ -80,7 +66,6 @@ class TestLiveStartAndLogCapture:
         """POST /admin/start/qwen3.5-4b should return 200 with ok=True."""
         resp = live_server["client"].post(
             f"{BASE}/admin/start/qwen3.5-4b",
-            cookies=COOKIE,
             timeout=180,
         )
         assert resp.status_code == 200
@@ -92,7 +77,7 @@ class TestLiveStartAndLogCapture:
 
         # Model should show as running now
         models_resp = live_server["client"].get(
-            f"{BASE}/admin/models", cookies=COOKIE, timeout=10
+            f"{BASE}/admin/models", timeout=10
         )
         for m in models_resp.json()["models"]:
             if m["id"] == "qwen3.5-4b":
@@ -105,7 +90,6 @@ class TestLiveStartAndLogCapture:
         resp = live_server["client"].get(
             f"{BASE}/admin/log/qwen3.5-4b",
             params={"lines": 20},
-            cookies=COOKIE,
             timeout=10,
         )
         assert resp.status_code == 200
@@ -119,7 +103,7 @@ class TestLiveStartAndLogCapture:
         """POST the model again to generate new log output, then capture it via SSE."""
         # Stop first so restart produces fresh logs
         live_server["client"].post(
-            f"{BASE}/admin/stop/qwen3.5-4b", cookies=COOKIE, timeout=10
+            f"{BASE}/admin/stop/qwen3.5-4b", timeout=10
         )
 
         # Kick off log stream in background
@@ -131,8 +115,7 @@ class TestLiveStartAndLogCapture:
                 with live_server["client"].stream(
                     "GET",
                     f"{BASE}/admin/log/qwen3.5-4b?follow=true",
-                    cookies=COOKIE,
-                ) as resp:
+                        ) as resp:
                     assert resp.status_code == 200
                     for line in resp.iter_lines():
                         line = line.strip()
@@ -158,7 +141,6 @@ class TestLiveStartAndLogCapture:
         # Start model — this should produce new log lines
         resp = live_server["client"].post(
             f"{BASE}/admin/start/qwen3.5-4b",
-            cookies=COOKIE,
             timeout=180,
         )
         assert resp.status_code == 200
@@ -185,7 +167,6 @@ class TestLiveStartAndLogCapture:
         """
         with live_server["client"].stream(
             "GET", f"{BASE}/admin/log/qwen3.5-4b?follow=true",
-            cookies=COOKIE,
         ) as resp:
             assert resp.status_code == 200
             # Read the initial snapshot event
@@ -199,13 +180,13 @@ class TestLiveStartAndLogCapture:
     def test_model_stops_cleanly(self, live_server):
         """Stop the model and verify it stops."""
         resp = live_server["client"].post(
-            f"{BASE}/admin/stop/qwen3.5-4b", cookies=COOKIE, timeout=10
+            f"{BASE}/admin/stop/qwen3.5-4b", timeout=10
         )
         assert resp.status_code == 200
 
         # Verify stopped
         models_resp = live_server["client"].get(
-            f"{BASE}/admin/models", cookies=COOKIE, timeout=10
+            f"{BASE}/admin/models", timeout=10
         )
         for m in models_resp.json()["models"]:
             if m["id"] == "qwen3.5-4b":
