@@ -21,7 +21,15 @@ try:
 except ImportError:
     raise RuntimeError("model_arkestra.admin requires fastapi")
 
-from model_arkestra.common import default_cache_root
+from model_arkestra.common import (
+    _runtime_binary,
+    build_image,
+    containerfile_for_backend,
+    default_cache_root,
+    image_and_runner_for_backend,
+    image_exists as _image_exists,
+    remove_image,
+)
 from model_arkestra.types import RunnerState
 
 # ── Model config field definitions (single source of truth) ─────────────
@@ -423,12 +431,6 @@ class ArkestraAdmin:
     def _add_images_route(self) -> None:
         @self._app.get("/admin/images")
         async def admin_images():
-            from model_arkestra.common import (
-                _runtime_binary,
-                image_and_runner_for_backend,
-                image_exists as _image_exists,
-            )
-
             cm_data = self._config_data
             backends = self._backends_cfg
             if not isinstance(backends, dict):
@@ -469,13 +471,6 @@ class ArkestraAdmin:
 
         @self._app.post("/admin/images/build")
         async def admin_build_image(body: dict):
-            from model_arkestra.common import (
-                _runtime_binary,
-                build_image as _build_image,
-                containerfile_for_backend,
-                image_and_runner_for_backend,
-            )
-
             backend_id = body.get("backend")
             if not backend_id:
                 raise HTTPException(status_code=400, detail="Missing 'backend' in request body")
@@ -500,7 +495,7 @@ class ArkestraAdmin:
                 raise HTTPException(status_code=404,
                                     detail=f"Containerfile not found: {containerfile_path}")
 
-            result = await asyncio.to_thread(_build_image, runner_type, image_tag, full_cf_path, project_root)
+            result = await asyncio.to_thread(build_image, runner_type, image_tag, full_cf_path, project_root)
             return {
                 "backend": backend_id,
                 "image": image_tag,
@@ -509,12 +504,6 @@ class ArkestraAdmin:
 
         @self._app.delete("/admin/images/{image_tag}")
         async def admin_remove_image(image_tag: str):
-            from model_arkestra.common import (
-                _runtime_binary,
-                image_and_runner_for_backend,
-                remove_image as _remove_image,
-            )
-
             found_backend = self._backend_for_image(image_tag)
 
             if not found_backend:
@@ -529,7 +518,7 @@ class ArkestraAdmin:
                         "reason": f"runner={runner_type} but no '{runner_type}' binary found on PATH",
                         "image": image_tag}
 
-            result = await asyncio.to_thread(_remove_image, runner_type, image_tag)
+            result = await asyncio.to_thread(remove_image, runner_type, image_tag)
             return {
                 "removed": result["removed"],
                 "image": image_tag,
