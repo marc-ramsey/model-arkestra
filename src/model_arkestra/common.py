@@ -257,6 +257,8 @@ def _runtime_binary(runner_type: str) -> Optional[str]:
 def image_exists(runner: str, tag: str) -> bool:
     """Check if a container image exists locally for the given runner.
 
+    Uses runtime-native existence check (exit 0 = present).
+
     Args:
         runner: "podman" or "docker"
         tag: full image tag (e.g. "ark-llama:rocm")
@@ -264,9 +266,10 @@ def image_exists(runner: str, tag: str) -> bool:
     Returns:
         True if the image is present in the local store.
     """
-    cmd = f"{runner} images --format '{{{{.Repository}}}}:{{{{.Tag}}}}' {tag}".split()
+    cmd = {"podman": ["podman", "image", "exists", tag],
+           "docker": ["docker", "inspect", tag]}.get(runner, [])
     proc = _run_subprocess(cmd, timeout=10)
-    return any(line.strip() == tag for line in proc.stdout.splitlines())
+    return proc.returncode == 0
 
 
 def build_image(
