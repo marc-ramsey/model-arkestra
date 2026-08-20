@@ -308,11 +308,9 @@ class ArkestraAdmin:
                     status_code=404, detail=f"Model '{model}' not in config"
                 )
             # Also resolve current runtime status if the model is loaded
-            status = None
-            for ctx in self.server._arkestra._get_model_contexts():
-                if ctx.name == model:
-                    status = str(ctx.state).lower().replace("runnerstate.", "")
-                    break
+            contexts = {ctx.name: ctx for ctx in self.server._arkestra._get_model_contexts()}
+            ctx = contexts.get(model)
+            status = str(ctx.state).lower().replace("runnerstate.", "") if ctx else None
 
             return {"ok": True, "model": model, "config": copy.deepcopy(cfg[model]), "status": status}
 
