@@ -145,14 +145,17 @@ def _start_server(port: int, admin_key: str = "test-e2e-key") -> tuple[ArkestraS
 
 
 def _stop_server(proxy: ArkestraServer, client: httpx.Client, port: int) -> None:
-    """Tear down server and all its models."""
-    # 1. Stop all running models first
+    """Tear down server and all its models with guaranteed cleanup."""
+    # 1. Shut down via the built-in /admin/shutdown endpoint — this
+    #    coordinates model stopping + watcher cancellation + uvicorn shutdown
+    #    in a single async task (no orphaned tasks or stale runner refs).
     try:
-        client.post(f"http://127.0.0.1:{port}/admin/stop-all", timeout=30)
+        client.post(f"http://127.0.0.1:{port}/admin/shutdown", timeout=120)
     except Exception:
-        pass
+        pass  # connection may already be torn down
 
-    # 2. Remove any leftover containers (podman + docker)
+    # 2. Remove any leftover containers (podman + docker) — safety net for
+    #    containers that didn't exit cleanly during uvicorn shutdown.
     for cmd in (["podman", "ps", "-a", "--filter", "name=llm-", "--format", "{{.ID}}"],
                 ["docker", "ps", "-a", "--filter", "name=llm-", "--format", "{{.ID}}"]):
         try:
@@ -164,15 +167,10 @@ def _stop_server(proxy: ArkestraServer, client: httpx.Client, port: int) -> None
         except Exception:
             pass
 
-    # 3. Shut down uvicorn
-    server_obj = getattr(proxy, "_server", None)
-    if server_obj is not None:
-        server_obj.should_exit = True
+    # 3. Wait for port to be free
+    _wait_port_free(port, timeout=30)
 
-    # 4. Wait for port to be free
-    _wait_port_free(port, timeout=20)
-
-    # 5. Close client
+    # 4. Close client
     try:
         client.close()
     except Exception:
