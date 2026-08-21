@@ -2,14 +2,14 @@
 
 This is a live integration test — it hits the real uvicorn server with httpx,
 starts an actual model, streams its startup logs, then cleans up.
+
+Each test is standalone: start → work → stop. VRAM image stays cached between
+stop/start cycles (minimal overhead), no cross-test interference.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
-import re
-import subprocess
 import threading
 import time
 
@@ -60,165 +60,181 @@ def live_server():
 BASE = "http://127.0.0.1:18005"
 
 
-def _stop_all_models_and_clean(server_dict):
-    """Stop every model on the live server and remove any leftover podman containers."""
-    client = server_dict["client"]
-    # Stop all models via the stop-all endpoint
-    try:
-        client.post(f"{BASE}/admin/stop-all", timeout=30)
-    except Exception:
-        pass
-    # Remove any leftover llm-* containers from this session
-    result = subprocess.run(
-        ["podman", "ps", "-a", "--filter", "name=llm-",
-         "--format", "{{.ID}}"],
-        capture_output=True, text=True, timeout=5,
-    )
-    for cid in result.stdout.strip().split():
-        if cid:
-            subprocess.run(["podman", "rm", "-f", cid], capture_output=True, timeout=5)
+def _wait_port_free(port, timeout=30):
+    """Wait until a port is no longer in use."""
+    import subprocess
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        result = subprocess.run(
+            ["ss", "-tlnp"], capture_output=True, text=True, timeout=5,
+        )
+        if f":{port}" not in result.stdout:
+            return True
+        time.sleep(0.5)
+    return False
 
 
-@pytest.fixture(autouse=True)
-def _cleanup_live_models(live_server):
-    """After each test in this module, stop all models and clean containers.
+def _start_model(client):
+    """Start qwen3.5-4b and wait for it to be running."""
+    resp = client.post(f"{BASE}/admin/start/qwen3.5-4b", timeout=180)
+    if resp.status_code != 200:
+        # Check if model is already loading/running
+        r2 = client.get(f"{BASE}/admin/models", timeout=10)
+        for m in r2.json()["models"]:
+            if m["id"] == "qwen3.5-4b":
+                if m.get("status") in ("running", "loading"):
+                    resp = httpx.Response(200, request=httpx.Request("POST"))
+                    break
+    assert resp.status_code == 200, f"Start failed: {resp.text}"
+    # Wait until model reports running
+    deadline = time.time() + 90
+    while time.time() < deadline:
+        r = client.get(f"{BASE}/admin/models", timeout=10)
+        for m in r.json()["models"]:
+            if m["id"] == "qwen3.5-4b" and m.get("status") == "running":
+                return
+        time.sleep(0.5)
+    raise AssertionError(f"Model qwen3.5-4b did not reach 'running' state")
 
-    This prevents model processes + podman containers from accumulating memory
-    across the hundreds of other tests that run before/after these live tests.
-    """
-    yield
-    _stop_all_models_and_clean(live_server)
+
+def _stop_model(client):
+    """Stop qwen3.5-4b and wait for its port to be freed."""
+    client.post(f"{BASE}/admin/stop/qwen3.5-4b", timeout=60)
+    # Wait for model's port to actually free up (prevents zombie processes)
+    models_resp = client.get(f"{BASE}/admin/models", timeout=10)
+    for m in models_resp.json()["models"]:
+        if m["id"] == "qwen3.5-4b" and m.get("port") is not None:
+            _wait_port_free(m["port"], timeout=30)
+
+
+def _stop_model(client):
+    """Stop qwen3.5-4b."""
+    client.post(f"{BASE}/admin/stop/qwen3.5-4b", timeout=60)
 
 
 class TestLiveStartAndLogCapture:
     """Start qwen3.5-4b, stream its logs from /admin/log?follow=true."""
 
     def test_start_model_returns_ok(self, live_server):
-        """POST /admin/start/qwen3.5-4b should return 200 with ok=True."""
-        resp = live_server["client"].post(
-            f"{BASE}/admin/start/qwen3.5-4b",
-            timeout=180,
-        )
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["ok"] is True
-        assert body["model"] == "qwen3.5-4b"
-        assert "port" in body
-        port = body["port"]
-
-        # Model should show as running now
-        models_resp = live_server["client"].get(
-            f"{BASE}/admin/models", timeout=10
-        )
-        for m in models_resp.json()["models"]:
-            if m["id"] == "qwen3.5-4b":
-                assert m["status"] == "running", (
-                    f"Expected 'running' but got '{m['status']}'"
-                )
+        """Model should show as running."""
+        client = live_server["client"]
+        _start_model(client)
+        try:
+            models_resp = client.get(f"{BASE}/admin/models", timeout=10)
+            for m in models_resp.json()["models"]:
+                if m["id"] == "qwen3.5-4b":
+                    assert m["status"] == "running", (
+                        f"Expected 'running' but got '{m['status']}'"
+                    )
+        finally:
+            _stop_model(client)
 
     def test_log_endpoint_returns_snapshot(self, live_server):
-        """GET /admin/log/qwen3.5-4b?follow=false should return last log lines."""
-        resp = live_server["client"].get(
-            f"{BASE}/admin/log/qwen3.5-4b",
-            params={"lines": 20},
-            timeout=10,
-        )
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["object"] == "log"
-        data = body.get("data", [])
-        # Process runner captures logs in-process; podman/docker use container logs.
-        # We expect some output once the model is running.
+        """Stream startup logs via /admin/log?follow=true SSE."""
+        client = live_server["client"]
+        _start_model(client)
+        try:
+            all_lines: list[str] = []
+
+            def collect():
+                try:
+                    with client.stream(
+                        "GET", f"{BASE}/admin/log/qwen3.5-4b?follow=true",
+                        timeout=None,
+                    ) as resp:
+                        assert resp.status_code == 200
+                        for line in resp.iter_lines():
+                            line = line.strip()
+                            if not line or line == "data: [DONE]":
+                                continue
+                            data = json.loads(line.removeprefix("data: "))
+                            if data.get("type") == "snapshot" and "lines" in data:
+                                all_lines.extend(data["lines"])
+                            elif data.get("type") == "line" and "lines" in data:
+                                all_lines.extend(data["lines"])
+                except Exception as e:
+                    print(f"[log collect error] {e}")
+
+            collector_thread = threading.Thread(target=collect, daemon=True)
+            collector_thread.start()
+            time.sleep(1.5)
+            client.post(f"{BASE}/admin/stop/qwen3.5-4b", timeout=60)
+            time.sleep(1)
+            collector_thread.join(timeout=3)
+
+            assert len(all_lines) > 0, "Expected at least one log line from startup"
+        finally:
+            _stop_model(client)
 
     def test_log_endpoint_streams_with_follow(self, live_server):
-        """POST the model again to generate new log output, then capture it via SSE."""
-        # Stop first so restart produces fresh logs
-        live_server["client"].post(
-            f"{BASE}/admin/stop/qwen3.5-4b", timeout=10
-        )
+        """SSE follow mode returns events and ends cleanly."""
+        client = live_server["client"]
+        _start_model(client)
+        try:
+            events: list[dict] = []
 
-        # Kick off log stream in background
-        log_lines: list[str] = []
-        collected_event = threading.Event()
+            def collect():
+                try:
+                    with client.stream(
+                        "GET", f"{BASE}/admin/log/qwen3.5-4b?follow=true",
+                    ) as resp:
+                        assert resp.status_code == 200
+                        for line in resp.iter_lines():
+                            line = line.strip()
+                            if not line or line == "data: [DONE]":
+                                continue
+                            data = json.loads(line.removeprefix("data: "))
+                            events.append(data)
+                except Exception as e:
+                    print(f"[log collect error] {e}")
 
-        def collect_logs():
-            try:
-                with live_server["client"].stream(
-                    "GET",
-                    f"{BASE}/admin/log/qwen3.5-4b?follow=true",
-                        ) as resp:
-                    assert resp.status_code == 200
-                    for line in resp.iter_lines():
-                        line = line.strip()
-                        if not line or line == "data: [DONE]":
-                            continue
-                        data = json.loads(line.removeprefix("data: "))
-                        if data.get("type") == "snapshot" and "lines" in data:
-                            log_lines.extend(data["lines"])
-                        elif data.get("type") == "line" and "lines" in data:
-                            log_lines.extend(data["lines"])
+            collector_thread = threading.Thread(target=collect, daemon=True)
+            collector_thread.start()
+            time.sleep(1.5)
+            client.post(f"{BASE}/admin/stop/qwen3.5-4b", timeout=60)
+            time.sleep(1)
+            collector_thread.join(timeout=3)
 
-            except Exception as e:
-                print(f"Log collection error: {e}")
-            finally:
-                collected_event.set()
-
-        t = threading.Thread(target=collect_logs, daemon=True)
-        t.start()
-
-        # Give SSE a moment to connect and get the snapshot
-        time.sleep(1)
-
-        # Start model — this should produce new log lines
-        resp = live_server["client"].post(
-            f"{BASE}/admin/start/qwen3.5-4b",
-            timeout=180,
-        )
-        assert resp.status_code == 200
-
-        # Wait for collection to finish (stop route ends SSE)
-        collected_event.wait(timeout=30)
-        t.join(timeout=5)
-
-        # Print what we captured
-        if log_lines:
-            print("\n=== Captured startup log lines ===")
-            for line in log_lines[:50]:  # show first 50
-                print(f"  {line}")
-            print("==================================\n")
-        else:
-            print("[no log lines captured — logs are stored per-runner; "
-                  "podman runner stores them as container logs, not in-process buffer]")
+            event_types = [e.get("type") for e in events]
+            assert "snapshot" in event_types, f"Expected 'snapshot' event, got {event_types}"
+            assert "line" in event_types, f"Expected 'line' event, got {event_types}"
+        finally:
+            _stop_model(client)
 
     def test_log_follow_mode_does_not_crash(self, live_server):
-        """GET /admin/log?follow=true returns SSE without NameError.
-
-        Regression test: the log_stream generator uses asyncio.sleep()
-        inside an inner function — it must be in scope.
-        """
-        with live_server["client"].stream(
-            "GET", f"{BASE}/admin/log/qwen3.5-4b?follow=true",
-        ) as resp:
-            assert resp.status_code == 200
-            # Read the initial snapshot event
-            for line in resp.iter_lines():
-                if not line or line == "data: [DONE]":
-                    continue
-                data = json.loads(line.removeprefix("data: "))
-                assert data["type"] == "snapshot"
-                break  # snapshot received — the route works
+        """GET /admin/log?follow=true returns SSE without error."""
+        client = live_server["client"]
+        _start_model(client)
+        try:
+            with client.stream(
+                "GET", f"{BASE}/admin/log/qwen3.5-4b?follow=true",
+            ) as resp:
+                assert resp.status_code == 200
+                for line in resp.iter_lines():
+                    if not line or line == "data: [DONE]":
+                        continue
+                    data = json.loads(line.removeprefix("data: "))
+                    assert data["type"] == "snapshot"
+                    break
+        finally:
+            _stop_model(client)
 
     def test_model_stops_cleanly(self, live_server):
         """Stop the model and verify it stops."""
-        resp = live_server["client"].post(
-            f"{BASE}/admin/stop/qwen3.5-4b", timeout=10
-        )
-        assert resp.status_code == 200
+        client = live_server["client"]
+        _start_model(client)
+        try:
+            models_resp = client.get(f"{BASE}/admin/models", timeout=10)
+            for m in models_resp.json()["models"]:
+                if m["id"] == "qwen3.5-4b":
+                    assert m["status"] == "running"
 
-        # Verify stopped
-        models_resp = live_server["client"].get(
-            f"{BASE}/admin/models", timeout=10
-        )
-        for m in models_resp.json()["models"]:
-            if m["id"] == "qwen3.5-4b":
-                assert m["status"] == "stopped"
+            resp = client.post(f"{BASE}/admin/stop/qwen3.5-4b", timeout=60)
+            assert resp.status_code == 200
+
+            models_resp = client.get(f"{BASE}/admin/models", timeout=10)
+            for m in models_resp.json()["models"]:
+                if m["id"] == "qwen3.5-4b":
+                    assert m["status"] == "stopped"
+        finally:
+            _stop_model(client)

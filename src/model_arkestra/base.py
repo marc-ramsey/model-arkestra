@@ -9,6 +9,7 @@ import socket
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator, Dict, Optional, Iterator, Set
 import aiohttp
+from model_arkestra.common import default_cache_root
 from model_arkestra.types import (
     RunnerState, RunnerError, ServerReadyTimeout, 
     ModelNotStarted, MaxRestartsExceeded, ModelShutdown, _ModelContext
@@ -416,6 +417,12 @@ class BaseModelRunner(ABC):
             ctx = _ModelContext(model_name, eff_port, max_log_lines=log_size)
             ctx.backend_id = effective_backend
             ctx.broadcast_addr = self.broadcast_addr
+            # Resolve cache directory — private attr, never serialized
+            chk = model_data.get("checkpoint")
+            if chk:
+                cache_root = os.environ.get("HF_HUB_CACHE") or os.environ.get("LLAMA_CACHE") or default_cache_root()
+                ctx._cache_dir = cache_root / f"models--{chk.replace('/', '--')}"
+                os.makedirs(ctx._cache_dir, exist_ok=True)
             self._models[model_name] = ctx
             ctx.state = RunnerState.LOADING
 

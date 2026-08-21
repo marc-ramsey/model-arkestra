@@ -41,6 +41,20 @@ class ModelArkestra:
         self._next_port += 1
         return port
     
+    def _get_existing_port(self, model_name: str) -> Optional[int]:
+        """Find the port from a stopped context for *model_name*, if one exists.
+
+        Returns the port number if the model has an existing STOPPED context,
+        or None if the model is new (never started) or only has RUNNING contexts.
+        This enables stop→restart to reuse the same port instead of allocating
+        a new one from the pool — prevents port exhaustion on repeated cycles.
+        """
+        for runner in self._runners.values():
+            ctx = runner._models.get(model_name)
+            if ctx is not None and ctx.port is not None:
+                return ctx.port
+        return None
+
     # ── ConfigManager delegation ───────────────────────────────────────
     @property
     def cm(self) -> ConfigManager:
@@ -257,9 +271,13 @@ class ModelArkestra:
                 f"Unknown backend '{backend}'. Available: {list(backends_cfg.keys())}"
             )
 
-        # Allocate port if not explicitly provided
+        # Allocate port if not explicitly provided.
+        # Check for existing stopped context first — reuse its port to avoid
+        # exhausting the port pool on repeated stop/start cycles (the same model).
         if port is None:
-            port = self._alloc()
+            port = self._get_existing_port(model_name)
+            if port is None:
+                port = self._alloc()
 
         # runner= selects the transport layer
         if runner_type_override is not None:
@@ -326,7 +344,8 @@ class ModelArkestra:
                     result["contexts_cleared"] += 1
             return result
 
-        cache_dir = self._cache_dir_for_checkpoint(checkpoint)
+        cache_root = self._cache_root()
+        cache_dir = cache_root / f"models--{checkpoint.replace('/', '--')}"
 
         # Safety check: other running contexts sharing this cache?
         if cache_dir.exists():

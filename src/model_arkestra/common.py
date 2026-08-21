@@ -18,7 +18,8 @@ def default_cache_root() -> Path:
     Resolution order (avoids filling the root filesystem):
       1. ``HF_HUB_CACHE`` or ``LLAMA_CACHE`` environment variable
       2. ``$XDG_CACHE_HOME/huggingface`` (typically on a large data partition)
-      3. ``/tmp/huggingface`` (on tmpfs — RAM disk, won't bloat root)
+      3. ``~/.cache/huggingface/hub`` (standard user cache directory)
+      4. ``/tmp/huggingface`` (on tmpfs — RAM disk, won't bloat root)
 
     Users can override entirely by setting the env var before starting the server.
     """
@@ -31,7 +32,9 @@ def default_cache_root() -> Path:
     if xdg:
         return Path(xdg) / "huggingface"
 
-    return Path("/tmp/huggingface")
+    # Standard user cache directory fallback
+    home = Path.home()
+    return home / ".cache" / "huggingface" / "hub"
 
 
 
@@ -332,22 +335,36 @@ def safe_container_name(name: str, port: int) -> str:
 def _dict_to_cli(args_dict: Dict[str, Any]) -> List[str]:
     """Convert a flat args dict to CLI flag list (snake_case → kebab-case).
 
-    Boolean True → ``--flag`` (presence-only).  False → omitted.
-    All other values → ``--flag value``. Special key ``hf`` maps to ``-hf``
-    for HuggingFace repo specification in llama.cpp.
+    Boolean True → ``-flag`` or ``--flag`` (presence-only).  False → omitted.
+    All other values → ``-flag value`` or ``--flag value``.
+    Keys in _LLAMA_SHORT_FLAGS get a single `-`; everything else gets `--`.
     """
+    # Set of config keys whose llama.cpp flag is -x (single dash), not --x
+    _LLAMA_SHORT_FLAGS = {
+        'c', 't', 'tb', 'fa', 'e', 'kvo',
+        'ctk', 'ctv', 'dt', 'dio', 'lm', 'dev',
+        'ot', 'cmoe', 'ncmoe',
+        'ngl', 'sm', 'ts', 'mg', 'fit', 'fitt',
+        'fitc', 'b', 'ub', 'hf', 'hff', 'hft',
+        'dr', 'mu', 'cl',
+        'a', 'ag', 'mm', 'mmu',
+        's', 'l', 'j', 'jf',
+        'bs', 'lcs', 'lcd',
+        'ctxcp', 'cms', 'cram',
+        'kvu', 'r', 'sp',
+        'np', 'cb', 'to',
+        'rea', 'sps', 'v', 'lv', 'm',
+    }
+
     cli: List[str] = []
     for key, value in args_dict.items():
-        if key == "hf":
-            # llama.cpp unified binary: -hf <repo> for HF model loading
-            cli.extend(["-hf", str(value)])
-        elif isinstance(value, bool):
-            flag = f"--{key.replace('_', '-')}"
+        kebab = key.replace('_', '-')
+        prefix = '-' if kebab in _LLAMA_SHORT_FLAGS else '--'
+        if isinstance(value, bool):
             if value:
-                cli.append(flag)
+                cli.append(f"{prefix}{kebab}")
         else:
-            flag = f"--{key.replace('_', '-')}"
-            cli.extend([flag, str(value)])
+            cli.extend([f"{prefix}{kebab}", str(value)])
     return cli
 
 
