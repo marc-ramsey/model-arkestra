@@ -417,7 +417,7 @@ class BaseModelRunner(ABC):
             # Resolve cache directory — private attr, never serialized
             chk = model_data.get("checkpoint")
             if chk:
-                cache_root = os.environ.get("HF_HUB_CACHE") or default_cache_root()
+                cache_root = default_cache_root()
                 ctx._cache_dir = cache_root / f"models--{chk.replace('/', '--')}"
                 os.makedirs(ctx._cache_dir, exist_ok=True)
             self._models[model_name] = ctx

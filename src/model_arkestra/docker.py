@@ -64,7 +64,7 @@ class DockerModelRunner(ContainerModelRunner):
             )
         cmd_parts = _build_container_cmd(
             "docker", self, ctx.name, ctx.port,
-            self.broadcast_addr, ctx.port,  # docker: same port in and out
+            self.broadcast_addr, DockerModelRunner.INSIDE_PORT,
             be,
             backend_id=ctx.backend_id,
         )

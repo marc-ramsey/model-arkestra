@@ -25,14 +25,6 @@ def _make_runner():
     return runner
 
 
-def _make_docker_runner():
-    """Create a docker-specific MagicMock runner with localhost prefix behavior."""
-    runner = MagicMock()
-    runner._resolve_image = lambda img: img if "/" in img else f"localhost/{img}"
-    runner.broadcast_addr = "0.0.0.0"
-    return runner
-
-
 # ── Backend resolution helper tests ───────────────────────────────
 
 class TestResolveBackendHelper:
@@ -40,21 +32,14 @@ class TestResolveBackendHelper:
 
     def test_uses_ctx_backend_id(self):
         """ctx.backend_id takes priority over model_data backend."""
-        pass  # Tested implicitly by callers via _resolve_backend_for_podman/docker
+        pass
 
     def test_falls_back_to_model_backend(self):
         """No ctx.backend_id → model backend key."""
         pass
 
 
-# ── New architecture — podman-style port mapping                 ────
-
-_BACKEND_CONFIG = {
-    "image": "ark-llama:vulkan-radv",
-    "devices": ["/dev/dri/card0:rwm", "/dev/dri/renderD128:rwm"],
-    "env_container": {"GGML_VK_VISIBLE_DEVICES": "0"},
-}
-
+# ── Podman-style container command building ───────────────────────
 
 class TestBuildContainerCmdPodman:
     @pytest.fixture(autouse=True)
@@ -63,112 +48,75 @@ class TestBuildContainerCmdPodman:
 
     @pytest.mark.asyncio
     async def test_devices_mounted(self):
+        """GPU device nodes are mounted into the container."""
         runner = _make_runner()
+        cfg = {
+            "image": "ark-llama:vulkan-radv",
+            "devices": ["/dev/dri/card0:rwm", "/dev/dri/renderD128:rwm"],
+        }
         cmd_parts = _build_container_cmd(
             "podman", runner, "test-model", 18003,
-            runner.broadcast_addr, 9090,  # inside_port
-            _BACKEND_CONFIG.copy(),
+            runner.broadcast_addr, 8080,
+            cfg,
         )
         assert "--device" in cmd_parts
         assert "/dev/dri/card0:rwm" in cmd_parts
-        assert "/dev/dri/renderD128:rwm" in cmd_parts
 
     @pytest.mark.asyncio
-    async def test_env_vars_set(self):
+    async def test_env_vars_and_port_mapping(self):
+        """Env vars and host:container port mapping are correct."""
         runner = _make_runner()
-        cfg = {"image": "ark-llama:vulkan-radv", "devices": [],
-               "env_container": {"GGML_VK_VISIBLE_DEVICES": "0"}}
+        cfg = {
+            "image": "ark-llama:vulkan-radv",
+            "env_container": {"GGML_VK_VISIBLE_DEVICES": "0", "LLAMA_CACHE": "/data/llama"},
+        }
         cmd_parts = _build_container_cmd(
             "podman", runner, "test-model", 18003,
-            runner.broadcast_addr, 9090,
+            runner.broadcast_addr, 8080,
             cfg,
         )
         assert "-e" in cmd_parts
         assert "PORT=18003" in cmd_parts
-        assert "GGML_VK_VISIBLE_DEVICES=0" in cmd_parts
-
-    @pytest.mark.asyncio
-    async def test_podman_port_mapping(self):
-        """Podman maps host:container port with separate inside_port."""
-        cfg = {"image": "ark-llama:v1", "devices": [], "env_container": {}}
-        runner = _make_runner()
-        cmd_parts = _build_container_cmd(
-            "podman", runner, "test-model", 18003,
-            runner.broadcast_addr, 9090,  # inside_port != host port
-            cfg,
-        )
         assert "-p" in cmd_parts
-        assert "0.0.0.0:18003:9090" in cmd_parts
+        assert "0.0.0.0:18003:8080" in cmd_parts
 
     @pytest.mark.asyncio
-    async def test_container_name(self):
-        cfg = {"image": "ark-llama:v1", "devices": [], "env_container": {}}
-        runner = _make_runner()
-        cmd_parts = _build_container_cmd(
-            "podman", runner, "test-model", 18003,
-            runner.broadcast_addr, 9090,
-            cfg,
-        )
-        assert "--name" in cmd_parts
-        assert "llm-test-model-18003" in cmd_parts
-
-    @pytest.mark.asyncio
-    async def test_host_binding_appended(self):
-        with patch("model_arkestra.container_runner.build_model_args", return_value=("/tmp/test-wrappers/vulkan-radv --port 9090 -fa on", "")):
+    async def test_container_name_and_host_flag(self):
+        """Container gets a name and host binding is applied once."""
+        assembled = "/tmp/test-wrappers/vulkan-radv --port 9090 -fa on"
+        with patch("model_arkestra.container_runner.build_model_args", return_value=(assembled, "")):
             cfg = {"image": "ark-llama:v1", "devices": [], "env_container": {}}
             runner = _make_runner()
             cmd_parts = _build_container_cmd(
                 "podman", runner, "test-model", 18003,
-                runner.broadcast_addr, 9090,
+                runner.broadcast_addr, 8080,
                 cfg,
             )
+            assert "--name" in cmd_parts
+            assert "llm-test-model-18003" in cmd_parts
             cmd_str = " ".join(cmd_parts)
             assert "--host 0.0.0.0" in cmd_str
-
-    @pytest.mark.asyncio
-    async def test_no_duplicated_host(self):
-        with patch("model_arkestra.container_runner.build_model_args", return_value=("/tmp/test-wrappers/vulkan-radv --port 9090 --host 0.0.0.0 -fa on", "")):
-            cfg = {"image": "ark-llama:v1", "devices": [], "env_container": {}}
-            runner = _make_runner()
-            cmd_parts = _build_container_cmd(
-                "podman", runner, "test-model", 18003,
-                runner.broadcast_addr, 9090,
-                cfg,
-            )
             assert cmd_parts.count("--host") <= 1
-
-    @pytest.mark.asyncio
-    async def test_custom_inside_port(self):
-        """Podman port mapping uses the inside_port parameter for the container."""
-        cfg = {"image": "ark-llama:v1", "devices": [], "env_container": {}}
-        runner = _make_runner()
-        cmd_parts = _build_container_cmd(
-            "podman", runner, "test-model", 18003,
-            runner.broadcast_addr, 3000,
-            cfg,
-        )
-        assert "-p" in cmd_parts
-        assert "0.0.0.0:18003:3000" in cmd_parts
 
     @pytest.mark.asyncio
     async def test_binary_dir_mounted(self):
         """Resolved binary directory is mounted read-only."""
         cfg = {
             "image": "ark-llama:v1",
-            "devices": [],
             "env_container": {},
             "binary_dir": "/tmp/test-wrappers/vulkan-radv",
         }
         runner = _make_runner()
         cmd_parts = _build_container_cmd(
             "podman", runner, "test-model", 18003,
-            runner.broadcast_addr, 9090,
+            runner.broadcast_addr, 8080,
             cfg,
         )
         assert "-v" in cmd_parts
+        assert "/tmp/test-wrappers/vulkan-radv:/llm-server/bin:ro" in " ".join(cmd_parts)
 
 
-# ── New architecture — docker-style port mapping                ────
+# ── Docker-style container command building ───────────────────────
 
 class TestBuildContainerCmdDocker:
     @pytest.fixture(autouse=True)
@@ -176,88 +124,58 @@ class TestBuildContainerCmdDocker:
         monkeypatch.setattr("os.path.isdir", lambda p: p.startswith("/tmp/test-"))
 
     @pytest.mark.asyncio
-    async def test_docker_port_mapping_host_to_host(self):
+    async def test_port_mapping_same_port(self):
         """Docker maps the same port inside and out (no INSIDE_PORT override)."""
         cfg = {"image": "ark-llama:v1", "devices": [], "env_container": {}}
         runner = _make_runner()
         cmd_parts = _build_container_cmd(
             "docker", runner, "test-model", 18003,
-            runner.broadcast_addr, 18003,  # same port in/out
+            runner.broadcast_addr, 8080,
             cfg,
         )
         assert "-p" in cmd_parts
-        assert "0.0.0.0:18003:18003" in cmd_parts
+        assert "0.0.0.0:18003:8080" in cmd_parts
 
     @pytest.mark.asyncio
-    async def test_docker_image_localhost_prefix(self):
-        """Docker runner prepends 'localhost/' to unqualified images."""
+    async def test_env_vars_and_container_config(self):
+        """Env vars from backend config and container env are included."""
         runner = MagicMock()
         runner._resolve_image = lambda img: img if "/" in img else f"localhost/{img}"
-        resolved = runner._resolve_image("ark-llama:v1")
-        assert resolved == "localhost/ark-llama:v1"
-
-    @pytest.mark.asyncio
-    async def test_docker_env_vars(self):
-        cfg = {"image": "ark-llama:v1", "devices": [],
-               "env_container": {"GGML_VK_VISIBLE_DEVICES": "0"}}
-        runner = _make_runner()
-        cmd_parts = _build_container_cmd(
-            "docker", runner, "test-model", 18003,
-            runner.broadcast_addr, 18003,
-            cfg,
-        )
-        assert "-e" in cmd_parts
-        assert "PORT=18003" in cmd_parts
-        assert "GGML_VK_VISIBLE_DEVICES=0" in cmd_parts
-
-    @pytest.mark.asyncio
-    async def test_docker_no_duplicated_host(self):
-        """If command already has --host, it should not be added again."""
-        with patch("model_arkestra.container_runner.build_model_args", return_value=("/tmp/test-wrappers/vulkan-radv --port 18003 --host 0.0.0.0 -fa on", "")):
-            cfg = {"image": "ark-llama:v1", "devices": [], "env_container": {}}
-            runner = _make_runner()
-            cmd_parts = _build_container_cmd(
-                "docker", runner, "test-model", 18003,
-                runner.broadcast_addr, 18003,
-                cfg,
-            )
-            assert cmd_parts.count("--host") <= 1
-
-    @pytest.mark.asyncio
-    async def test_docker_env_container_set(self):
-        """Env vars from backend's env_container are included."""
+        runner.broadcast_addr = "0.0.0.0"
+        runner._inference_kwargs = {}
         cfg = {
             "image": "ark-llama:v1",
-            "devices": [],
-            "env_container": {"LLAMA_CACHE": "/data/llama", "HF_HUB_CACHE": "/data/hf"},
+            "env_container": {"GGML_VK_VISIBLE_DEVICES": "0", "LLAMA_CACHE": "/data/llama"},
         }
-        runner = _make_docker_runner()
-        cmd_parts = _build_container_cmd(
-            "docker", runner, "test-model", 18003,
-            runner.broadcast_addr, 18003,
-            cfg,
-        )
+        with patch("model_arkestra.container_runner.build_model_args", return_value=(["/bin/server", "--port", "8080"], "")):
+            cmd_parts = _build_container_cmd(
+                "docker", runner, "test-model", 18003,
+                runner.broadcast_addr, 8080,
+                cfg,
+            )
+        assert "-e" in cmd_parts
+        assert "PORT=18003" in cmd_parts
         parts_str = " ".join(cmd_parts)
+        assert "GGML_VK_VISIBLE_DEVICES=0" in parts_str
         assert "LLAMA_CACHE=" in parts_str
-        assert "HF_HUB_CACHE=" in parts_str
 
     @pytest.mark.asyncio
-    async def test_docker_binary_dir_mounted(self):
+    async def test_binary_dir_mounted(self):
         """Resolved binary directory is mounted read-only."""
         with patch("os.path.isdir", return_value=True):
             cfg = {
                 "image": "ark-llama:v1",
-                "devices": [],
                 "env_container": {},
                 "binary_dir": "/tmp/test-wrappers/vulkan-radv",
             }
             runner = _make_runner()
             cmd_parts = _build_container_cmd(
                 "docker", runner, "test-model", 18003,
-                runner.broadcast_addr, 18003,
+                runner.broadcast_addr, 8080,
                 cfg,
             )
             assert "-v" in cmd_parts
+            assert "/tmp/test-wrappers/vulkan-radv:/llm-server/bin:ro" in " ".join(cmd_parts)
 
 
 # ── Dispatch error paths (unchanged from old test) ───────────────

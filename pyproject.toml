@@ -8,10 +8,11 @@ arkestra-cli = "model_arkestra.cli:main"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-addopts = "-m 'not slow'"
+addopts = "-m 'not slow and not e2e'"
 norecursedirs = "vendor"
 markers = [
     "slow: tests that download & start a real LLM (~5-10 min first run, fast after cache)",
+    "e2e: backend runner end-to-end — starts a cached GGUF model, verifies inference, checks logs (no HF download)",
 ]
 
 [project]

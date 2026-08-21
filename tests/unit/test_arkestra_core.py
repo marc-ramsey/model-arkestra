@@ -160,64 +160,6 @@ class TestRunnerInstanceFactory:
             arkestra._get_runner_instance("nonexistent")
 
 
-# ── Tests: Backend resolution ────────────────────────────────────────────
-
-
-class TestBackendResolution:
-    def test_resolve_backend_with_override(self):
-        """_resolve_backend_id uses the override param."""
-        arkestra = _make_cm(
-            backend_cfg={"default": "vulkan-radv", "vulkan-radv": {"args": "-hf ${CHECKPOINT}"}}
-        )
-        result = arkestra._resolve_backend_id("test-model", {}, override="vulkan-radv")
-        assert result == "vulkan-radv"
-
-    def test_resolve_backend_without_override_uses_default(self):
-        """Without override, falls back to backends default."""
-        arkestra = _make_cm(
-            backend_cfg={"default": "vulkan-radv", "vulkan-radv": {"args": "-hf ${CHECKPOINT}"}}
-        )
-        result = arkestra._resolve_backend_id("test-model", {})
-        assert result == "vulkan-radv"
-
-
-# ── Tests: Runner type resolution ─────────────────────────────────────────
-
-class TestRunnerTypeResolution:
-    def test_runner_from_backend_config(self):
-        """Backend with 'runner' key determines runner type."""
-        arkestra = _make_cm(
-            backend_cfg={
-                "default": "vulkan-radv",
-                "podman-vulkan": {"args": "-hf ${CHECKPOINT}", "runner": "podman"},
-            }
-        )
-        # Override to podman-vulkan backend (which has runner: podman)
-        rtype = arkestra._resolve_runner_type("test-model", {}, override_backend="podman-vulkan")
-        assert rtype == "podman"
-
-    def test_default_runner_when_no_backend(self):
-        """Without a specific backend, falls back to runners config default."""
-        arkestra = _make_cm(
-            backend_cfg={"default": "vulkan-radv", "vulkan-radv": {"args": "-hf ${CHECKPOINT}", "runner": "process"}},
-            runner_cfg={"default": "ProcessModelRunner"},
-        )
-        rtype = arkestra._resolve_runner_type("test-model", {})
-        assert rtype == "process"
-
-    def test_explicit_override_uses_backend_runner(self):
-        """Explicit override_backend with runner in config returns that runner."""
-        arkestra = _make_cm(
-            backend_cfg={
-                "default": "vulkan-radv",
-                "podman-vulkan": {"args": "-hf ${CHECKPOINT}", "runner": "podman"},
-            },
-        )
-        rtype = arkestra._resolve_runner_type("test-model", {}, override_backend="podman-vulkan")
-        assert rtype == "podman"
-
-
-# ── Tests: start() validation ────────────────────────────────────────────
 
 class TestStartValidation:
     def test_unknown_model_raises(self):

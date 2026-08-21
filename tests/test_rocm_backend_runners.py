@@ -159,46 +159,14 @@ class TestUnknownRunnerRejected:
             asyncio_run(mr.start("m1"))
 
 
-# ── 4. Explicit runner= override ───────────────────────────────────────────
 
-class TestExplicitRunnerOverride:
-    """explicit runner= argument takes priority over backends.<id>.runner."""
-
-    def test_podman_default_resolution(self):
-        cfg = cfg_rocm_podman()
-        mr = ModelArkestra(cfg)
-        assert mr._resolve_runner_type("test-rocm-podman", {}, None) == "podman"
-
-    def test_process_default_resolution(self):
-        cfg = cfg_rocm_process()
-        mr = ModelArkestra(cfg)
-        assert mr._resolve_runner_type("test-rocm-process", {}, None) == "process"
-
-
-# ── 5. Backend resolution ─────────────────────────────────────────────────
+# ── Backend resolution ───────────────────────────────────────
+# Note: model.backend priority and global default are tested in
+# tests/unit/test_resolve_defaults.py (TestBackendPriority).
+# This module keeps only the edge case requiring a full app instance.
 
 class TestBackendResolution:
-    """model.backend selects the correct backend entry."""
-
-    def test_model_backend(self):
-        cfg = cfg_rocm_podman()
-        mr = ModelArkestra(cfg)
-        assert mr._resolve_backend_id("test-rocm-podman", {}, None) == "rocm"
-
-    def test_global_default_used_when_no_model_backend(self):
-        cfg = _write_config(textwrap.dedent("""\
-            models-start-port: 18000
-            backends:
-              default: vulkan-radv
-              vulkan-radv:
-                runner: process
-            models:
-              m-default:
-                checkpoint: test/x:Q4
-        """))
-        mr = ModelArkestra(cfg)
-        assert mr._resolve_backend_id("m-default", {}, None) == "vulkan-radv"
-
+    """Edge cases in backend resolution that need a full ModelArkestra instance."""
     def test_no_backend_raises(self):
         cfg = _write_config("models:\n  m1:\n    checkpoint: x\n")
         mr = ModelArkestra(cfg)
@@ -206,7 +174,7 @@ class TestBackendResolution:
             mr._resolve_backend_id("m1", {}, None)
 
 
-# ── 6. Backend args are resolved correctly ────────────────────────────────
+# ── 5. Backend args are resolved correctly ────────────────────────────────
 
 class TestBackendArgsResolution:
     """backends.<id>.args dict is accessible and structurally correct."""
@@ -224,7 +192,7 @@ class TestBackendArgsResolution:
         assert be["args"]["flash-attn"] == "on"
 
 
-# ── 7. Container config keys (image, devices) ───────────────────────────
+# ── 6. Container config keys (image, devices) ───────────────────────────
 
 class TestContainerConfigKeys:
     """podman/docker backends carry image + optional devices/env_container."""
@@ -238,7 +206,7 @@ class TestContainerConfigKeys:
         assert be["image"] == "test-rocm-docker:v1"
 
 
-# ── 8. Multiple backends with different runners in one config ─────────
+# ── 7. Multiple backends with different runners in one config ─────────
 
 class TestMixedBackendsInConfig:
     """A single config can host backends mapped to process, podman, docker."""
@@ -293,7 +261,7 @@ class TestMixedBackendsInConfig:
         assert mr._resolve_runner_type("m-docker", {}, None) == "docker"
 
 
-# ── 9. Env vars from config are dicts (not _Environ) ─────────────────
+# ── 8. Env vars from config are dicts (not _Environ) ─────────────────
 
 class TestConfigEnvResolution:
     """The `env:` section in config.yaml resolves to a plain dict."""

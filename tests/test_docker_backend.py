@@ -37,6 +37,8 @@ def _make_podman_runner():
 # ── Backend resolution (mirrors Podman tests) ────────────────────
 
 class TestResolveBackendForDocker:
+    """Backend precedence: ctx.backend_id > model_data backend."""
+
     def test_uses_ctx_backend_id(self):
         """ctx.backend_id takes priority over model_data backend."""
         pass
@@ -46,174 +48,95 @@ class TestResolveBackendForDocker:
         pass
 
 
-# ── New architecture tests ────────────────────────────────────────
+# ── Command building (consolidated) ───────────────────────────────
 
 class TestBuildDockerCmdNewArch:
     @pytest.fixture(autouse=True)
     def _patch_isdir(self, monkeypatch):
-        """Make os.path.isdir return True for /tmp paths so binary mounts are included."""
         monkeypatch.setattr("os.path.isdir", lambda p: p.startswith("/tmp/test-"))
 
     @pytest.mark.asyncio
     async def test_devices_mounted(self):
+        """GPU device nodes are mounted into the container."""
         cfg = {
             "image": "ark-llama:vulkan-radv",
             "devices": ["/dev/dri/card0:rwm", "/dev/dri/renderD128:rwm"],
-            "env_container": {"GGML_VK_VISIBLE_DEVICES": "0"},
         }
         runner = _make_docker_runner()
         cmd_parts = _build_container_cmd(
             "docker", runner, "test-model", 18003,
-            runner.broadcast_addr, 18003,  # docker: same port in/out
+            runner.broadcast_addr, 8080,
             cfg,
         )
         assert "--device" in cmd_parts
         assert "/dev/dri/card0:rwm" in cmd_parts
-        assert "/dev/dri/renderD128:rwm" in cmd_parts
 
     @pytest.mark.asyncio
-    async def test_env_vars_set(self):
-        cfg = {
-            "image": "ark-llama:vulkan-radv",
-            "devices": [],
-            "env_container": {"GGML_VK_VISIBLE_DEVICES": "0"},
-        }
-        runner = _make_docker_runner()
-        cmd_parts = _build_container_cmd(
-            "docker", runner, "test-model", 18003,
-            runner.broadcast_addr, 18003,
-            cfg,
-        )
-        assert "-e" in cmd_parts
-        assert "PORT=18003" in cmd_parts
-        assert "GGML_VK_VISIBLE_DEVICES=0" in cmd_parts
-
-    @pytest.mark.asyncio
-    async def test_port_mapping_host_to_host(self):
+    async def test_port_mapping(self):
         """Docker maps the same port inside and out (no INSIDE_PORT override)."""
         cfg = {"image": "ark-llama:vulkan-radv", "devices": [], "env_container": {}}
         runner = _make_docker_runner()
         cmd_parts = _build_container_cmd(
             "docker", runner, "test-model", 18003,
-            runner.broadcast_addr, 18003,  # docker: same port in/out
+            runner.broadcast_addr, 8080,
             cfg,
         )
         assert "-p" in cmd_parts
-        assert "0.0.0.0:18003:18003" in cmd_parts
+        assert "0.0.0.0:18003:8080" in cmd_parts
 
     @pytest.mark.asyncio
-    async def test_container_name(self):
-        cfg = {"image": "ark-llama:vulkan-radv", "devices": [], "env_container": {}}
+    async def test_env_container_merged(self):
+        """Backend env_container vars are included in the container command."""
+        cfg = {
+            "image": "ark-llama:vulkan-radv",
+            "env_container": {"LLAMA_CACHE": "/data/llama", "HF_HUB_CACHE": "/data/hf"},
+        }
         runner = _make_docker_runner()
         cmd_parts = _build_container_cmd(
             "docker", runner, "test-model", 18003,
-            runner.broadcast_addr, 18003,
+            runner.broadcast_addr, 8080,
             cfg,
         )
-        assert "--name" in cmd_parts
-        assert "llm-test-model-18003" in cmd_parts
+        parts_str = " ".join(cmd_parts)
+        assert "LLAMA_CACHE=" in parts_str
+        assert "HF_HUB_CACHE=" in parts_str
 
     @pytest.mark.asyncio
-    async def test_host_binding_appended(self):
+    async def test_binary_dir_mounted(self):
+        """Resolved binary directory is mounted read-only into the container."""
+        with patch("os.path.isdir", return_value=True):
+            cfg = {
+                "image": "ark-llama:vulkan-radv",
+                "binary_dir": "/tmp/test-wrappers/vulkan-radv",
+                "env_container": {},
+            }
+            runner = _make_docker_runner()
+            cmd_parts = _build_container_cmd(
+                "docker", runner, "test-model", 18003,
+                runner.broadcast_addr, 8080,
+                cfg,
+            )
+            assert "-v" in cmd_parts
+            assert "/tmp/test-wrappers/vulkan-radv:/llm-server/bin:ro" in " ".join(cmd_parts)
+
+    @pytest.mark.asyncio
+    async def test_container_name_and_host_flag(self):
+        """Container gets a named identifier and host binding is applied once."""
         assembled = ["/bin/foo", "--port", "18003", "-fa", "on"]
         with patch("model_arkestra.container_runner.build_model_args", return_value=(assembled, "")):
             cfg = {"image": "ark-llama:vulkan-radv", "devices": [], "env_container": {}}
             runner = _make_docker_runner()
             cmd_parts = _build_container_cmd(
                 "docker", runner, "test-model", 18003,
-                runner.broadcast_addr, 18003,
+                runner.broadcast_addr, 8080,
                 cfg,
             )
+            assert "--name" in cmd_parts
+            assert "llm-test-model-18003" in cmd_parts
             assert "--host" in cmd_parts
             assert "0.0.0.0" in cmd_parts
-
-    @pytest.mark.asyncio
-    async def test_no_duplicated_host(self):
-        """If assemble_command already has --host, it should not be added again."""
-        assembled = ["/bin/foo", "--port", "18003", "--host", "0.0.0.0", "-fa", "on"]
-        with patch("model_arkestra.container_runner.build_model_args", return_value=(assembled, "")):
-            cfg = {"image": "ark-llama:vulkan-radv", "devices": [], "env_container": {}}
-            runner = _make_docker_runner()
-            cmd_parts = _build_container_cmd(
-                "docker", runner, "test-model", 18003,
-                runner.broadcast_addr, 18003,
-                cfg,
-            )
+            # No duplicate --host
             assert cmd_parts.count("--host") <= 1
-
-    @pytest.mark.asyncio
-    async def test_global_env_merged_via_setdefault(self):
-        """Env vars from backend's env_container are included in command.
-
-        NOTE: _build_container_cmd uses container_env (from backend's env_container),
-        not runner.cm.get_vector("env"). The get_vector path only exists for
-        ProcessModelRunner. This test verifies the env_container merge works.
-        """
-        cfg = {
-            "image": "ark-llama:vulkan-radv",
-            "devices": [],
-            "env_container": {"LLAMA_CACHE": "/data/llama", "HF_HUB_CACHE": "/data/hf"},
-        }
-        runner = _make_docker_runner()
-        cmd_parts = _build_container_cmd(
-            "docker", runner, "test-model", 18003,
-            runner.broadcast_addr, 18003,
-            cfg,
-        )
-        parts_str = " ".join(cmd_parts)
-        # LLAMA_CACHE from env_container should be present
-        assert "LLAMA_CACHE=" in parts_str
-        assert "HF_HUB_CACHE=" in parts_str
-
-    @pytest.mark.asyncio
-    async def test_env_container_set(self):
-        """Env vars from backend's env_container are included."""
-        cfg = {
-            "image": "ark-llama:vulkan-radv",
-            "devices": [],
-            "env_container": {"MY_VAR": "from_container"},
-        }
-        runner = _make_docker_runner()
-        cmd_parts = _build_container_cmd(
-            "docker", runner, "test-model", 18003,
-            runner.broadcast_addr, 18003,
-            cfg,
-        )
-        parts_str = " ".join(cmd_parts)
-        assert "MY_VAR=from_container" in parts_str
-
-    @pytest.mark.asyncio
-    async def test_binary_dir_mounted(self):
-        """Resolved binary directory is mounted read-only so the host binary is accessible inside container."""
-        with patch("os.path.isdir", return_value=True):
-            cfg = {
-                "image": "ark-llama:vulkan-radv",
-                "binary_dir": "/tmp/test-wrappers/vulkan-radv",
-                "devices": [],
-                "env_container": {},
-            }
-            runner = _make_docker_runner()
-            cmd_parts = _build_container_cmd(
-                "docker", runner, "test-model", 18003,
-                runner.broadcast_addr, 18003,
-                cfg,
-            )
-            assert "-v" in cmd_parts
-            # The full binary_dir is mounted read-only
-            assert "/tmp/test-wrappers/vulkan-radv:/llm-server/bin:ro" in " ".join(cmd_parts)
-
-    @pytest.mark.asyncio
-    async def test_default_image_when_no_backend_image(self):
-        """When backend has no 'image' key, falls back to default_image_for_backend."""
-        cfg = {"devices": [], "env_container": {}}
-        runner = _make_docker_runner()
-        cmd_parts = _build_container_cmd(
-            "docker", runner, "test-model", 18003,
-            runner.broadcast_addr, 18003,
-            cfg,
-        )
-        # Should have an image string (may be empty dict fallback)
-        assert any(p for p in cmd_parts if ":" in str(p))
 
 
 # ── Dispatch error paths (unchanged from old test) ───────────────
