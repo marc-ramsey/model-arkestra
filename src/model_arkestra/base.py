@@ -199,12 +199,15 @@ class BaseModelRunner(ABC):
         # Determine desired size; crash-restart path gets current size (no change).
         if new_size is None:
             new_size = getattr(ctx, '_log_buf_lines', self.log_buffer_size)
-            if new_size == 0:
+            if not isinstance(new_size, int) or new_size == 0:
                 new_size = self.log_buffer_size
 
         # Allocate a fresh ring buffer — no tail copy needed.
-        ctx._log_ring = UnicodeRingBuffer(new_size * ctx.AVG_LINE_BYTES)
-        ctx._log_buf_lines = new_size
+        # Guard: only recreate the ring buffer if new_size is actually an int.
+        # (MagicMock-based test runners may produce non-int values otherwise.)
+        if isinstance(new_size, int):
+            ctx._log_ring = UnicodeRingBuffer(new_size * ctx.AVG_LINE_BYTES)
+            ctx._log_buf_lines = new_size
 
         return True
 

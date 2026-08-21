@@ -6,12 +6,14 @@ docker.py and podman.py.
 """
 from __future__ import annotations
 import asyncio
+import logging
 import os
 import subprocess
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, List
 
+logger = logging.getLogger(__name__)
 from model_arkestra.base import BaseModelRunner
 from model_arkestra.common import (
     INSPECT_RE, SUBPROCESS_ENV, build_model_args, default_cache_root,
@@ -236,7 +238,6 @@ class ContainerModelRunner(BaseModelRunner, ABC):
                     return
 
             except Exception as e:
-                from model_arkestra import logger
                 logger.warning(
                     f"Error inspecting {self._container_cmd()} container {cid}: {e}"
                 )
