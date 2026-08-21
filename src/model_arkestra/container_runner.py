@@ -9,11 +9,12 @@ import asyncio
 import os
 import subprocess
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any, Dict, List
 
 from model_arkestra.base import BaseModelRunner
 from model_arkestra.common import (
-    INSPECT_RE, SUBPROCESS_ENV, build_model_args,
+    INSPECT_RE, SUBPROCESS_ENV, build_model_args, default_cache_root,
     resolve_binary_from_backend, safe_container_name,
 )
 from model_arkestra.types import RunnerState, _ModelContext
@@ -73,6 +74,14 @@ def _build_container_cmd(
             devices = list(extra_devs)
         binary_dir = os.path.dirname(binary_path) or binary_dir
 
+    # Resolve host HF cache directory for volume mount
+    cache_path: str | None = (runner.cm.data.get("env") or {}).get("HF_HUB_CACHE")
+    if not cache_path:
+        cache_path = os.environ.get("HF_HUB_CACHE")
+    if not cache_path:
+        cache_path = str(default_cache_root())
+    cache_path = Path(cache_path).expanduser()
+
     image = str(backend_config.get("image"))
     image = runner._resolve_image(image)
 
@@ -94,7 +103,11 @@ def _build_container_cmd(
     if binary_dir and os.path.isdir(binary_dir):
         parts.extend(["-v", f"{binary_dir}:/llm-server/bin:ro"])
 
-    # Resolve llama-server CLI args from config.
+    # Mount host HF cache at /data/hf and ensure env var points there
+    _inside_cache = "/data/hf"
+    if cache_path and os.path.isdir(str(cache_path)):
+        parts.extend(["-v", f"{cache_path}:{_inside_cache}:rw"])
+        parts.extend(["-e", f"HF_HUB_CACHE={_inside_cache}"])
     result = build_model_args(
         runner.cm, model_name,
         env_vars={"PORT": str(port)},
@@ -114,7 +127,7 @@ def _build_container_cmd(
             fixed.append(arg_list[i])
             i += 1
     if not fixed or "--host" not in fixed:
-        fixed.extend(["--host", broadcast_addr])
+        fixed.extend(["--host", "0.0.0.0"])
 
     parts.extend([image] + fixed)
     return parts

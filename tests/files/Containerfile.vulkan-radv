@@ -8,7 +8,7 @@ RUN dnf install -y --setopt=install_weak_deps=False \
 ENV AMD_VULKAN_ICD=RADV
 ENV VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json
 ENV MESA_SHADER_CACHE_DIR=/tmp/mesa-shader-cache
-ENV HF_HUB_CACHE=/home/lemonade/hub
+ENV HF_HUB_CACHE=/data/hf
 ENV ROCBLAS_USE_HIPBLASLT=1
 ENV GGML_CUDA_ENABLE_UNIFIED_MEMORY=ON
 ENV LD_LIBRARY_PATH=/usr/local/bin:/llm-server/bin
