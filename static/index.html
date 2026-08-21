@@ -1218,7 +1218,11 @@
                 const fullText = assitDiv.textContent;
                 renderMarkdown(assitDiv, fullText);
             } catch (err) {
-                if (err.name !== 'AbortError') {
+                if (err.name === 'AbortError') {
+                    // Model switched mid-stream — flag for clearChatHistory so
+                    // it shows an interruption marker instead of vanishing silently.
+                    _chatWasAborted = true;
+                } else {
                     console.error('[chat] stream failed:', err.message);
                     appendMessageBubble('assistant', `⚠ Error: ${err.message}`, false);
                 }
@@ -1324,10 +1328,24 @@
         }
 
         function clearChatHistory() {
-            // Per-model chat history already stored in localStorage
-            // Just clear the display when switching models
             const container = document.getElementById('chat-display');
-            if (container) container.textContent = '';
+            if (!container) { chatHistory = []; return; }
+
+            // If a stream was interrupted by model switch, remove the ghost
+            // streaming assistant bubble so the user doesn't see their message vanish.
+            if (_chatWasAborted) {
+                const bubbles = container.querySelectorAll('.message');
+                // Remove all messages up to and including the last assistant bubble
+                for (let i = bubbles.length - 1; i >= 0; i--) {
+                    if (bubbles[i].classList.contains('assistant')) {
+                        while (i >= 0) container.removeChild(bubbles[i--]);
+                        break;
+                    }
+                }
+                _chatWasAborted = false;
+            } else {
+                container.textContent = '';
+            }
             chatHistory = [];
         }
 
@@ -1338,6 +1356,10 @@
                 chatAbortCtrl = null;
             }
         }
+
+        // Tracks whether stream was aborted mid-response, so clearChatHistory
+        // can clean up the ghost assistant bubble instead of vanishing silently.
+        let _chatWasAborted = false;
 
         // ── Lifecycle ─────────────────────────────────────────────
         document.addEventListener('DOMContentLoaded', () => {
