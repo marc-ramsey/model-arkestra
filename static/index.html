@@ -614,6 +614,10 @@
         let logLastSeq    = 0;            // server-provided sequence cursor for log polling
         let isChatStreaming  = false;       // true while a chat response is streaming
 
+        // Streaming markdown accumulator — tokens buffered and re-parsed incrementally
+        let _streamAcc    = '';               // accumulated raw text of current stream
+        let _streamBubble = null;             // DOM element receiving the stream
+
         // ── 1.3 Fetch Helpers ─────────────────────────────────────
         function adminFetch(path, options = {}) {
             const headers = { ...options.headers };
@@ -1204,24 +1208,26 @@
             isChatStreaming = true;
             document.getElementById('right-chat-send-btn').disabled = true;
 
+            // Initialize streaming accumulator and DOM reference
+            _streamAcc = '';
+            _streamBubble = assitDiv;
+
             try {
                 await streamChatResponse(chatHistory, chatModel, (delta) => {
-                    // Append token to text content during streaming
-                    assitDiv.textContent += delta;
-                    const container = document.getElementById('chat-display');
-                    if (container) container.scrollTop = container.scrollHeight;
+                    // Accumulate tokens; renderMarkdownStream handles throttled re-parse
+                    _streamAcc += delta;
+                    renderMarkdownStream(_streamAcc);
                 });
 
-                // Stream complete — render markdown into the same element
+                // Stream complete — final markdown render without cursor
                 isChatStreaming = false;
-                assitDiv.classList.remove('streaming');
-                const fullText = assitDiv.textContent;
-                renderMarkdown(assitDiv, fullText);
+                finishStreamText(assitDiv);
             } catch (err) {
                 if (err.name === 'AbortError') {
                     // Model switched mid-stream — flag for clearChatHistory so
                     // it shows an interruption marker instead of vanishing silently.
                     _chatWasAborted = true;
+                    finishStreamText(assitDiv);  // remove cursor, show what we have
                 } else {
                     console.error('[chat] stream failed:', err.message);
                     appendMessageBubble('assistant', `⚠ Error: ${err.message}`, false);
@@ -1347,6 +1353,48 @@
                 container.textContent = '';
             }
             chatHistory = [];
+
+            // Also reset streaming markdown state
+            _streamAcc = '';
+            _streamBubble = null;
+        }
+
+        // ── Incremental streaming markdown rendering ────────────────
+
+        /** Render accumulated text with markdown + blinking cursor (throttled to rAF). */
+        let _streamRenderPending = false;
+
+        function renderMarkdownStream(text) {
+            if (_streamRenderPending) return;  // debounce — one parse per frame max
+            _streamRenderPending = true;
+            requestAnimationFrame(() => {
+                _streamRenderPending = false;
+                const el = _streamBubble;
+                if (!el) return;
+                if (typeof marked !== 'undefined') {
+                    el.innerHTML = marked.parse(text);
+                } else {
+                    // marked not loaded yet — fall back to plain text
+                    el.textContent = text;
+                }
+                // Append blinking cursor as last child
+                let cursor = el.querySelector('.cursor');
+                if (!cursor) {
+                    cursor = document.createElement('span');
+                    cursor.className = 'cursor';
+                    el.appendChild(cursor);
+                }
+            });
+        }
+
+        /** Finalize stream: remove cursor, set final markdown-rendered content. */
+        function finishStreamText(bubble) {
+            if (!bubble) return;
+            bubble.classList.remove('streaming');
+            const fullText = _streamAcc || bubble.textContent.replace(/\u200B/g, '').trim();
+            _streamAcc = '';
+            _streamBubble = null;
+            renderMarkdown(bubble, fullText);
         }
 
         // (stopChatStream - called implicitly on model change)
