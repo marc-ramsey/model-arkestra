@@ -611,7 +611,7 @@
 
         // Log polling state
         let logPollTimer    = null;         // interval id for log polling
-        let logLastCount    = 0;            // last appended line count for diff
+        let logLastSeq    = 0;            // server-provided sequence cursor for log polling
         let isChatStreaming  = false;       // true while a chat response is streaming
 
         // ── 1.3 Fetch Helpers ─────────────────────────────────────
@@ -1032,7 +1032,7 @@
                 clearInterval(logPollTimer);
                 logPollTimer = null;
             }
-            logLastCount = 0;
+            logLastSeq = 0;
         }
 
         async function loadLogSnapshot(modelName) {
@@ -1052,14 +1052,14 @@
 
             try {
                 const data = await adminGet('/admin/log/' + encodeURIComponent(modelName), { lines: 200 });
-                if (data && data.data) {
-                    for (const line of data.data) {
-                        const div = document.createElement('div');
-                        div.className = 'log-line';
-                        div.textContent = line;
-                        display.appendChild(div);
-                    }
-                    logLastCount = data.data.length;
+                const lines = data?.lines ?? [];
+                logLastSeq = data.since ?? 0;
+
+                for (const entry of lines) {
+                    const div = document.createElement('div');
+                    div.className = 'log-line';
+                    div.textContent = entry.text;
+                    display.appendChild(div);
                 }
             } catch (e) {
                 console.error('[admin] log snapshot failed for ' + modelName + ':', e.message);
@@ -1081,7 +1081,7 @@
                 display.appendChild(div);
             });
 
-            logLastCount += lines.length;
+            logLastSeq += lines.length;
 
             // Auto-scroll only if user is already at bottom
             if (nearBottom) display.scrollTop = display.scrollHeight;
@@ -1091,10 +1091,18 @@
             stopLogPoll();
             const pollOne = async () => {
                 try {
-                    const data = await adminGet('/admin/log/' + encodeURIComponent(modelName), { lines: 200 });
-                    if (data && data.data) {
-                        const newLines = data.data.slice(logLastCount);
-                        if (newLines.length > 0) appendLogLines(newLines);
+                    // On first call (logLastSeq == 0), do a snapshot fetch
+                    if (logLastSeq === 0) {
+                        const data = await adminGet('/admin/log/' + encodeURIComponent(modelName), { lines: 200 });
+                        logLastSeq = data?.since ?? 0;
+                        const newEntries = data?.lines ?? [];
+                        if (newEntries.length > 0) appendLogLines(newEntries.map(e => e.text));
+                    } else {
+                        const data = await adminGet('/admin/log/' + encodeURIComponent(modelName), { lines: 200, since: logLastSeq });
+                        if (!data || !data.lines) return;
+                        logLastSeq = data.since ?? logLastSeq;
+                        const newEntries = data.lines;
+                        if (newEntries.length > 0) appendLogLines(newEntries.map(e => e.text));
                     }
                 } catch (e) {
                     // Silent fail — don't flood console on transient issues
@@ -1111,7 +1119,7 @@
 
         // 6.1 Parameters panel toggle
         function toggleChatParams() {
-            const panel = document.getElementById('right-chat-params-panel');
+            const panel = document.getElementById('chat-params-panel');
             const toggle = document.getElementById('right-chat-params-toggle');
             if (!panel || !toggle) return;
             panel.classList.toggle('open');
