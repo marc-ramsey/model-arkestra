@@ -2,7 +2,7 @@ warmup-time: 10
 models-start-port: 18000
 model-ports: 2
 env:
-  LLAMA_CACHE: /home/lemonade/hub
+  HF_HUB_CACHE: /home/lemonade/hub
   HF_HUB_CACHE: /home/lemonade/hub
   ADMIN_KEY: test-admin-key
 images:

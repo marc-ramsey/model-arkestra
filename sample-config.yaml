@@ -10,7 +10,7 @@ defaults:
 env:
   ADMIN_KEY: whatever
   HF_HUB_CACHE: /home/lemonade/hub
-  LLAMA_CACHE: /home/lemonade/hub
+  HF_HUB_CACHE: /home/lemonade/hub
 
 backends:
   default: vulkan-radv

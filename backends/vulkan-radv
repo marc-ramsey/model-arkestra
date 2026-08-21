@@ -1,6 +1,6 @@
 #! /bin/bash
 LLAMA_PATH=/home/marc/local/llama.cpp/build-vulkan-radv/bin
-export LLAMA_CACHE=/home/lemonade/hub
+export HF_HUB_CACHE=/home/lemonade/hub
 export ROCBLAS_USE_HIPBLASLT=1
 export GGML_CUDA_ENABLE_UNIFIED_MEMORY=ON
 export LD_LIBRARY_PATH=$LLAMA_PATH:/usr/lib/llvm-18/lib:$LD_LIBRARY_PATH
