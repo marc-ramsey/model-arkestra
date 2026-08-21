@@ -37,7 +37,7 @@ Missing or incorrect keys return `401 Unauthorized`. Public paths (`/`, `/index.
 | `POST` | `/admin/start/{model}` | Yes | Start or restart a model (with optional transient overrides) |
 | `POST` | `/admin/stop/{model}` | Yes | Stop a running model |
 | `POST` | `/admin/eject/{model}` | Yes | Remove model from cache, clear contexts (no config change) |
-| `GET` | `/admin/log/{model}?lines=N&follow=true` | Yes | Log snapshot or SSE stream |
+| `GET` | `/admin/log/{model}?since=N&lines=M` | Yes | Delta or snapshot log query |
 | `GET` | `/admin/images` | Yes | List configured container images with runner type and availability |
 | `POST` | `/admin/images/build` | Yes | Build a single backend's image (body: `{"backend": "rocm"}`) |
 | `DELETE` | `/admin/images/{image_tag}` | Yes | Remove an image from the local store |
@@ -273,25 +273,52 @@ Returns `200 OK` with a detail report on success:
 ```
 If the model has no checkpoint configured, or the cache directory doesn't exist, `cache_deleted` is `false`. Returns `404` if the model doesn't exist in config. Returns `409 Conflict` when a shared-cache conflict prevents eject.
 
-### GET /admin/log/{model}?lines=N&follow=true
+### GET /admin/log/{model}?since=N&lines=M
 
-Return log lines for a running model. Without `follow`, returns a JSON snapshot. With `follow=true`, switches to an SSE stream.
+Return log lines for a running model. This is an **HTTP delta endpoint** — no streaming, no SSE. Clients poll on a schedule (typically 1–2s) to receive only new log lines since their last request.
 
-**Snapshot mode:**
+**Snapshot mode** (no `since` parameter):
+```bash
+curl 'http://localhost:8080/admin/log/qwen3.5-4b' \
+     -H 'X-Admin-Key: your-secret-key'
+```
+Returns the full current log buffer:
 ```json
-{"object": "log", "data": ["[INFO] Loading model...", "[INFO] Ready"]}
+{"lines": ["[INFO] Loading model...", "[INFO] Ready"]}
 ```
 
-**SSE mode** — streams new lines as they are produced:
+**Delta mode** (`since` parameter):
+```bash
+curl 'http://localhost:8080/admin/log/qwen3.5-4b?since=847&lines=50' \
+     -H 'X-Admin-Key: your-secret-key'
 ```
-data: {"type":"snapshot","lines":["line1","line2"]}
-
-data: {"type":"line","lines":["new line 3"]}
-
-data: [DONE]
+Returns only log lines with sequence number greater than `847`:
+```json
+{
+  "since": 912,
+  "missed_lines": 0,
+  "lines": [
+    {"seq": 848, "text": "[INFO] KV cache init..."},
+    {"seq": 849, "text": "[INFO] Loading model weights..."}
+  ]
+}
 ```
 
-Returns `404` if the model is not found in config. Uses the log buffer populated by live stream capture during execution — subprocess watchers (ProcessModelRunner) or container log streaming (`podman logs -f` / `docker logs -f`) feed lines into a shared ring buffer (`deque`, default 2000 lines, configurable via `log-buffer-size` key or `max_log_lines` kwarg). The buffer is allocated on first start, cleared on restart/re-start, and only re-allocated if the configured size changes.
+**Response headers** (present on every response):
+| Header | Description |
+|---|---|
+| `X-Current-Max` | Latest log line sequence number on the server |
+| `X-Missed-Lines` | Number of lines pruned from the buffer before or during the requested range. Zero if all requested lines are still in the buffer. |
+
+**Missed-lines scenario:** when a client is disconnected too long, older lines may fall off the ring buffer (default capacity: 500 lines). If `since=N` but line N has already been evicted, the response includes `X-Missed-Lines: K` indicating how many lines were skipped. The returned JSON still includes any remaining lines newer than the gap.
+
+**Delta protocol usage pattern:**
+1. Client starts with `since=0` to get all available lines
+2. Each response header `X-Current-Max` becomes the next request's `since`
+3. On reconnect, client sends its last known `since` value
+4. If `X-Missed-Lines > 0`, the client knows some log lines were lost
+
+**Implementation notes:** Log lines are tagged with a per-model monotonic sequence number as they are appended to the ring buffer by subprocess watchers (`ProcessModelRunner`) or container log streaming (`podman logs -f` / `docker logs -f`). The buffer uses a fixed-size deque (default 500 lines, configurable via `max_log_lines` in config or startup override). Only lines within the current window are available — older entries are automatically evicted.
 
 ### GET /admin/images
 
@@ -427,11 +454,11 @@ State management:
 | **Start / Restart** | Sends `POST /admin/start/{model}` with current transient draft values as overrides — no save-to-disk step first. |
 
 **Logs pane** — Terminal-style log viewer for a selected model:
-- Snapshot mode (default): loads last 200 lines via `GET /admin/log/{model}?lines=200`
-- Follow mode: toggle "Follow" checkbox to enable SSE streaming — new lines appear in real-time
-- Smart auto-scroll: scrolls to bottom during streaming *unless* you've scrolled up to read older logs (then it follows only when you return)
+- Snapshot mode (default): loads all lines via `GET /admin/log/{model}`
+- Auto-refresh: polls every 2 seconds, requesting only new lines since last seen (`?since=N`)
+- Smart auto-scroll: scrolls to bottom during active streaming *unless* you've scrolled up to read older logs
 - Clear button empties the pane content
-- Stream is automatically aborted on model change or accordion close
+- Missed-line notifications shown if a reconnect gap is detected
 
 **Chat pane** — Conversational inference UI that talks directly to the model's port:
 - Parameter panel: Temperature, Top P, Max Tokens — persisted per-model in `localStorage`

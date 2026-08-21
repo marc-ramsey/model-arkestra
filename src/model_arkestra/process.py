@@ -13,12 +13,12 @@ from model_arkestra.types import _ModelContext
 class ProcessModelRunner(BaseModelRunner):
 
     async def get_logs(self, model_name: str, lines: int = 100) -> List[str]:
-        """Return the last N log lines for a model."""
+        """Return the last N log line texts for a model (backward compat)."""
         ctx = self._models.get(model_name)
         if not ctx:
             return []
-        buffer = list(ctx._log_buffer)
-        return buffer[-lines:] if len(buffer) >= lines else buffer
+        result, _oldest = ctx._get_lines_since(0, lines)
+        return [t for _, t in result]
 
     async def _start_model_process(
         self, ctx: _ModelContext, model_data: Dict[str, Any]
@@ -71,7 +71,7 @@ class ProcessModelRunner(BaseModelRunner):
             preexec_fn=os.setsid
         )
 
-        # Start log capture: feed stdout/stderr lines into ctx._log_buffer ring buffer
+        # Start log capture: feed stdout/stderr lines into ctx ring buffer
         async def _read_stream(stream: asyncio.Stream, model_name: str) -> None:
             """Read one stream and append each line to the model's log buffer."""
             while True:
@@ -83,7 +83,7 @@ class ProcessModelRunner(BaseModelRunner):
                     if ctx and len(raw) > 0:
                         line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
                         if line:
-                            ctx._log_buffer.append(line)
+                            ctx._append_log_line(line)
                 except asyncio.CancelledError:
                     return
                 except Exception:

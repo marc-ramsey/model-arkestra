@@ -191,17 +191,25 @@ class BaseModelRunner(ABC):
 
         # Determine desired size; crash-restart path gets current size (no change).
         if new_size is None:
-            new_size = getattr(ctx._log_buffer, 'maxlen', self.log_buffer_size)
+            new_size = getattr(ctx, '_log_buf_size', 0) // ctx.AVG_LINE_BYTES
+            if new_size == 0:
+                new_size = self.log_buffer_size
 
-        if ctx._log_buffer.maxlen != new_size:
-            # Size changed — re-allocate preserving the last N lines that fit
-            buffer_list = list(ctx._log_buffer)
-            ctx._log_buffer = deque(maxlen=new_size)
-            for line in buffer_list:
-                ctx._log_buffer.append(line)  # auto-trims if too many
-        else:
-            # Same size — just clear (fast path).
-            ctx._log_buffer.clear()
+        desired_buf = new_size * ctx.AVG_LINE_BYTES
+        current_buf = len(ctx._log_buffer) if hasattr(ctx, '_log_buffer') else 0
+
+        if desired_buf != current_buf:
+            # Size changed — re-allocate preserving the last N lines that fit.
+            old_buf = ctx._log_buffer if hasattr(ctx, '_log_buffer') else bytearray()
+            new_buf = bytearray(desired_buf)
+            # Copy last portion of old data to new buffer (preserves tail content)
+            copy_start = max(0, len(old_buf) - desired_buf)
+            new_buf[:] = old_buf[copy_start:]
+            ctx._log_buffer = new_buf
+            ctx._log_buf_size = desired_buf
+            # Reset position/tail to start of the preserved data
+            ctx._log_pos = copy_start
+            ctx._log_tail = copy_start
 
         return True
 
@@ -420,7 +428,7 @@ class BaseModelRunner(ABC):
             # Resolve cache directory — private attr, never serialized
             chk = model_data.get("checkpoint")
             if chk:
-                cache_root = os.environ.get("HF_HUB_CACHE") or os.environ.get("LLAMA_CACHE") or default_cache_root()
+                cache_root = os.environ.get("HF_HUB_CACHE") or default_cache_root()
                 ctx._cache_dir = cache_root / f"models--{chk.replace('/', '--')}"
                 os.makedirs(ctx._cache_dir, exist_ok=True)
             self._models[model_name] = ctx

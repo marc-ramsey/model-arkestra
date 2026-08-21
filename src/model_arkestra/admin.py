@@ -131,7 +131,7 @@ class ArkestraAdmin:
                 data = []
 
                 # Resolve cache root once — it's a global config value, not per-model.
-                hf_cache = self._resolve_env("HF_HUB_CACHE") or self._resolve_env("LLAMA_CACHE") or str(default_cache_root())
+                hf_cache = self._resolve_env("HF_HUB_CACHE") or str(default_cache_root())
 
                 for model_name in self.server._arkestra.get_models():
                     ctx = contexts_by_name.get(model_name)
@@ -376,55 +376,39 @@ class ArkestraAdmin:
         @self._app.get("/admin/log/{model}")
         async def admin_log(
             model: str,
+            since: int = 0,
             lines: int = 100,
-            follow: bool = False,
         ):
             # Validate model exists in config first
             cfg = self._models_cfg
             if model not in cfg:
                 raise HTTPException(status_code=404, detail=f"Model '{model}' not in config")
 
-            if follow:
-                from fastapi.responses import StreamingResponse
+            ctx = self.server._arkestra.find_context(model)
+            if not ctx:
+                # Model not yet started — return empty result
+                return {
+                    "since": 0,
+                    "missed_lines": 0,
+                    "lines": [],
+                }
 
-                async def log_stream():
-                    """SSE stream of new log lines for a model."""
-                    ctx = self.server._arkestra.find_context(model)
-                    if not ctx:
-                        yield f"data: {json.dumps({'type': 'error', 'message': 'No context for this model'})}\n\n"
-                        return
-                    known_runner = None
+            # Read delta from ring buffer
+            new_lines, oldest_seq = ctx._get_lines_since(since, lines)
 
-                    # Send current tail as snapshot
-                    buf = list(ctx._log_buffer)
-                    yield f"data: {json.dumps({'type': 'snapshot', 'lines': buf[-lines:]})}\n\n"
-
-                    while True:
-                        await asyncio.sleep(0.1)
-                        new_buf = list(ctx._log_buffer)
-                        if new_buf != buf:           # deque wraps correctly; content changed
-                            yield f"data: {json.dumps({'type': 'line', 'lines': new_buf[-lines:]})}\n\n"
-                            buf = new_buf
-                
-                return StreamingResponse(
-                    log_stream(),
-                    media_type="text/event-stream",
-                    headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
-                )
+            # Calculate missed lines (entries pruned from ring before the requested since point)
+            if since > 0:
+                # Oldest valid seq is _oldest_valid_seq. If since > current_log_seq,
+                # the entire requested range has been evicted.
+                total_missed = max(0, min(since, ctx._log_seq) - oldest_seq)
             else:
-                # Snapshot mode — find the runner that owns this model's context
-                lines_data = []
-                ctx = self.server._arkestra.find_context(model)
-                if ctx and ctx._runner:
-                    runner = ctx._runner
-                    if hasattr(runner, 'get_logs'):
-                        try:
-                            result = await runner.get_logs(model, lines)
-                            if result:
-                                lines_data = result
-                        except Exception:
-                            pass
-                return {"object": "log", "data": lines_data}
+                total_missed = 0
+
+            return {
+                "since": ctx._log_seq,
+                "missed_lines": total_missed,
+                "lines": [{"seq": seq, "text": text} for seq, text in new_lines],
+            }
 
     def _add_images_route(self) -> None:
         @self._app.get("/admin/images")

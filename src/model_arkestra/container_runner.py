@@ -251,7 +251,7 @@ class ContainerModelRunner(BaseModelRunner, ABC):
                 if ctx and raw:
                     line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
                     if line:
-                        ctx._log_buffer.append(line)
+                        ctx._append_log_line(line)
 
         tasks = []
         for stream in (proc.stdout, proc.stderr):

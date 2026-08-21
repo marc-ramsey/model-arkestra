@@ -51,14 +51,6 @@ class TestCacheRoot:
             ma = ModelArkestra(cfg_path)
             assert ma._cache_root() == Path("/custom/hf/cache")
 
-    def test_config_llama_cache_when_no_hf(self):
-        with tempfile.TemporaryDirectory() as td:
-            cfg_path = os.path.join(td, "cfg.yaml")
-            with open(cfg_path, "w") as f:
-                f.write("env:\n  LLAMA_CACHE: /custom/llama/cache\nmodels: {}\n")
-            ma = ModelArkestra(cfg_path)
-            assert ma._cache_root() == Path("/custom/llama/cache")
-
     def test_os_env_hf_fallback(self, monkeypatch):
         with tempfile.TemporaryDirectory() as td:
             cfg_path = os.path.join(td, "cfg.yaml")
@@ -67,15 +59,6 @@ class TestCacheRoot:
             ma = ModelArkestra(cfg_path)
             monkeypatch.setenv("HF_HUB_CACHE", "/os-env/hf")
             assert ma._cache_root() == Path("/os-env/hf")
-
-    def test_os_env_llama_fallback(self, monkeypatch):
-        with tempfile.TemporaryDirectory() as td:
-            cfg_path = os.path.join(td, "cfg.yaml")
-            with open(cfg_path, "w") as f:
-                f.write("models: {}\n")
-            ma = ModelArkestra(cfg_path)
-            monkeypatch.setenv("LLAMA_CACHE", "/os-env/llama")
-            assert ma._cache_root() == Path("/os-env/llama")
 
     def test_config_env_takes_priority_over_os(self, monkeypatch):
         with tempfile.TemporaryDirectory() as td:
@@ -93,7 +76,6 @@ class TestCacheRoot:
                 f.write("models: {}\n")
             ma = ModelArkestra(cfg_path)
             monkeypatch.delenv("HF_HUB_CACHE", raising=False)
-            monkeypatch.delenv("LLAMA_CACHE", raising=False)
             assert ma._cache_root() == Path("~/.cache/huggingface/hub").expanduser()
 
 
@@ -102,7 +84,6 @@ class TestCacheDirForCheckpoint:
 
     def test_path_with_revision(self, monkeypatch):
         monkeypatch.delenv("HF_HUB_CACHE", raising=False)
-        monkeypatch.delenv("LLAMA_CACHE", raising=False)
         with tempfile.TemporaryDirectory() as td:
             cfg_path = os.path.join(td, "cfg.yaml")
             with open(cfg_path, "w") as f:
@@ -114,7 +95,6 @@ class TestCacheDirForCheckpoint:
 
     def test_path_without_revision(self, monkeypatch):
         monkeypatch.delenv("HF_HUB_CACHE", raising=False)
-        monkeypatch.delenv("LLAMA_CACHE", raising=False)
         with tempfile.TemporaryDirectory() as td:
             cfg_path = os.path.join(td, "cfg.yaml")
             with open(cfg_path, "w") as f:

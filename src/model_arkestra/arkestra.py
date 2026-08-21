@@ -208,14 +208,13 @@ class ModelArkestra:
     # ── cache helpers ────────────────────────────────────────────────
 
     def _cache_root(self) -> Path:
-        """Resolve HF_HUB_CACHE or LLAMA_CACHE env var to a root Path."""
-        for key in ("HF_HUB_CACHE", "LLAMA_CACHE"):
-            val = (self._cm.data.get("env") or {}).get(key)
-            if val:
-                return Path(val).expanduser()
-            val = os.environ.get(key)
-            if val:
-                return Path(val).expanduser()
+        """Resolve HF_HUB_CACHE to a root Path."""
+        val = (self._cm.data.get("env") or {}).get("HF_HUB_CACHE")
+        if val:
+            return Path(val).expanduser()
+        val = os.environ.get("HF_HUB_CACHE")
+        if val:
+            return Path(val).expanduser()
         return default_cache_root()
 
     def _cache_dir_for_checkpoint(self, checkpoint: str) -> Path:

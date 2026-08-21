@@ -15,11 +15,10 @@ See [Usage Guide](./usage.md#basic-initialization) for how to load a config file
 
 ## `env:` Section — Process Environment Variables
 
-Environment variables defined here are merged into the subprocess/container environment at startup, in addition to the host's current environment. This is how paths like `LLAMA_CACHE` and `HF_HUB_CACHE` propagate to the server process.
+Environment variables defined here are merged into the subprocess/container environment at startup, in addition to the host's current environment. This is how paths like `HF_HUB_CACHE` propagate to the server process.
 
 ```yaml
 env:
-  LLAMA_CACHE: /home/lemonade/hub
   HF_HUB_CACHE: /home/lemonade/hub
 ```
 
@@ -146,7 +145,7 @@ models:
       ctx-size: 16384
       jinja: true
 
-    max_log_lines: 500        # per-model override of the default 2000 (stored in admin context, not passed to subprocess)
+    max_log_lines: 500        # per-model override of the default 500 (stored in admin context, not passed to subprocess)
     capabilities: ["chat"]     # non-arg — never reaches subprocess
 ```
 

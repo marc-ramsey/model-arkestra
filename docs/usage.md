@@ -236,7 +236,20 @@ for line in lines:
 lines = await runner.get_logs("qwen3-4b", lines=50)
 ```
 
-The buffer is a ring deque (default 2000 lines) populated by live stream watchers — subprocess pipes for `ProcessModelRunner`, or `<podman\|docker> logs -f` streaming for container runners. It is allocated on first start, cleared on restart/re-start, and only re-allocated if the configured size changes.
+The buffer is a ring deque (default 500 lines) with per-line sequence numbers. Lines are tagged as they are appended by subprocess watchers or container log streaming. The admin endpoint returns deltas (`?since=N`) rather than full SSE streams — clients poll on a schedule to receive only new entries.
+
+## Delta Log Protocol
+
+Use `since` to receive only lines newer than what you've already seen:
+
+```bash
+curl 'http://localhost:8080/admin/log/qwen3-4b?since=847' \
+     -H 'X-Admin-Key: your-secret-key'
+# → {"since": 912, "missed_lines": 0, "lines": [{"seq": 848, "text": "..."}]}
+```
+
+Response header `X-Current-Max` gives the latest sequence number — use it as `since` on the next request. If `X-Missed-Lines > 0`, some lines were pruned from the buffer while disconnected.
+
 
 ## Error Handling
 
