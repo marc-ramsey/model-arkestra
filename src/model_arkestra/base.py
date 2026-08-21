@@ -23,6 +23,12 @@ class BaseModelRunner(ABC):
     LOG_BUFFER_DEFAULT = 2000  # max lines in model log ring buffer
     _DEFAULT_BACKEND = "vulkan-radv"
     _DEFAULT_RUNNER = "process"
+    _LLAMA_FIELDS = frozenset({
+        "temperature", "top_p", "top_k", "repetition_penalty",
+        "frequency_penalty", "presence_penalty", "stop", "seed",
+        "mirostat", "mirostat_tau", "mirostat_eta", "grammar",
+        "max_tokens", "min_tokens", "logit_bias",
+    })
 
     @classmethod
     def resolve_defaults(cls, backends_cfg: Dict | None, runners_cfg: Dict | None,
@@ -282,7 +288,7 @@ class BaseModelRunner(ABC):
             "messages": messages,
             "stream": True,
         }
-        stream_payload.update({k: v for k, v in payload.items() if v is not None})
+        stream_payload.update({k: v for k, v in payload.items() if k in self._LLAMA_FIELDS and v is not None})
         async for event in self._stream_sse(model_name, stream_payload):
             yield event
 
@@ -299,7 +305,7 @@ class BaseModelRunner(ABC):
         else:
             payload["messages"] = [{"role": "user", "content": prompt}]
 
-        payload.update({k: v for k, v in kwargs.items() if v is not None})
+        payload.update({k: v for k, v in kwargs.items() if k in self._LLAMA_FIELDS and v is not None})
 
         async with aiohttp.ClientSession() as session:
             for attempt in range(12):
@@ -313,8 +319,10 @@ class BaseModelRunner(ABC):
                         if resp.status != 200:
                             raise RunnerError(f"Server error: {resp.status}")
                         data = await resp.json()
+                        msg = data.get("choices", [{}])[0].get("message", {})
+                        content = msg.get("content", "") or msg.get("reasoning_content", "")
                         return {
-                            "content": data.get("choices", [{}])[0].get("message", {}).get("content", ""),
+                            "content": content,
                             "usage": data.get("usage", {
                                 "model": model_name,
                                 "prompt_tokens": 0,

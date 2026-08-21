@@ -39,7 +39,7 @@ from model_arkestra.server import ArkestraServer
 
 _E2E_CONFIG = """
 warmup-time: 10
-models-start-port: 18500
+models-start-port: 18000
 model-ports: 64
 env:
   ADMIN_KEY: test-e2e-key
@@ -50,16 +50,25 @@ backends:
     binary_dir: /home/marc/local/llama.cpp/build-vulkan-radv/bin
     binary: llama-server
     runner: process
+    args:
+      hf: ${CHECKPOINT}
+      port: "${PORT}"
   docker-backend:
     binary_dir: /home/marc/local/llama.cpp/build-vulkan-radv/bin
     binary: llama-server
     image: ark-llama:vulkan-radv
     runner: docker
+    args:
+      hf: ${CHECKPOINT}
+      port: "${PORT}"
   podman-backend:
     binary_dir: /home/marc/local/llama.cpp/build-vulkan-radv/bin
     binary: llama-server
     image: ark-llama:vulkan-radv
     runner: podman
+    args:
+      hf: ${CHECKPOINT}
+      port: "${PORT}"
 
 runners:
   default: ProcessModelRunner
@@ -223,36 +232,7 @@ def _stop_model(client: httpx.Client, base_url: str, model_name: str) -> None:
 
 # ── Parametrization ──────────────────────────────────────────────────────────
 
-def _get_port():
-    """Allocate a unique port per test function using a file-based counter."""
-    import fcntl
-    counter_path = "/tmp/.arkestra_e2e_port_counter"
-    lock_path = counter_path + ".lock"
-
-    with open(lock_path, "w") as lk:
-        fcntl.flock(lk.fileno(), fcntl.LOCK_EX)
-        try:
-            with open(counter_path, "r") as cf:
-                base = int(cf.read().strip())
-            port = base + os.getpid() % 1000  # spread across the 64k range
-            if port < 18500 or port > 24999:
-                port = 18500
-        except (FileNotFoundError, ValueError):
-            port = 18500 + os.getpid() % 1000
-
-        with open(counter_path, "w") as cf:
-            cf.write(str(port))
-
-    # Ensure uniqueness — if the port is taken, try next one
-    tries = 0
-    while tries < 100:
-        result = subprocess.run(["ss", "-tlnp"], capture_output=True, text=True, timeout=5)
-        if f":{port}" not in result.stdout:
-            return port
-        port += 1
-        tries += 1
-
-    raise RuntimeError(f"Could not find a free port after {tries} attempts")
+E2E_PORT = 18005
 
 
 # Backend/runner combinations to test.
@@ -282,22 +262,21 @@ def e2e_server(request):
     The model lifecycle (start → stop) is handled within the test body using
     _start_model() and _stop_model().
     """
-    test_port = _get_port()
     admin_key = "test-e2e-key"
-    base_url = f"http://127.0.0.1:{test_port}"
+    base_url = f"http://127.0.0.1:{E2E_PORT}"
 
-    proxy, client = _start_server(test_port, admin_key)
+    proxy, client = _start_server(E2E_PORT, admin_key)
 
     # Expose to test via request node for param info
-    request.instance._e2e_port = test_port
+    request.instance._e2e_port = E2E_PORT
     request.instance._e2e_base_url = base_url
     request.instance._e2e_client = client
 
-    yield {"server": proxy, "client": client, "port": test_port, "base_url": base_url}
+    yield {"server": proxy, "client": client, "port": E2E_PORT, "base_url": base_url}
 
     # ── Guaranteed teardown (always runs, even on assertion failure) ──────
     try:
-        _stop_server(proxy, client, test_port)
+        _stop_server(proxy, client, E2E_PORT)
     except Exception:
         pass  # Best effort — don't mask test failures
 
