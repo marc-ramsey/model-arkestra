@@ -10,6 +10,7 @@ from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator, Dict, Optional, Iterator, Set
 import aiohttp
 from model_arkestra.common import default_cache_root
+from model_arkestra.unicode_ringbuffer import UnicodeRingBuffer
 from model_arkestra.types import (
     RunnerState, RunnerError, ServerReadyTimeout, 
     ModelNotStarted, MaxRestartsExceeded, ModelShutdown, _ModelContext
@@ -191,25 +192,13 @@ class BaseModelRunner(ABC):
 
         # Determine desired size; crash-restart path gets current size (no change).
         if new_size is None:
-            new_size = getattr(ctx, '_log_buf_size', 0) // ctx.AVG_LINE_BYTES
+            new_size = getattr(ctx, '_log_buf_lines', self.log_buffer_size)
             if new_size == 0:
                 new_size = self.log_buffer_size
 
-        desired_buf = new_size * ctx.AVG_LINE_BYTES
-        current_buf = len(ctx._log_buffer) if hasattr(ctx, '_log_buffer') else 0
-
-        if desired_buf != current_buf:
-            # Size changed — re-allocate preserving the last N lines that fit.
-            old_buf = ctx._log_buffer if hasattr(ctx, '_log_buffer') else bytearray()
-            new_buf = bytearray(desired_buf)
-            # Copy last portion of old data to new buffer (preserves tail content)
-            copy_start = max(0, len(old_buf) - desired_buf)
-            new_buf[:] = old_buf[copy_start:]
-            ctx._log_buffer = new_buf
-            ctx._log_buf_size = desired_buf
-            # Reset position/tail to start of the preserved data
-            ctx._log_pos = copy_start
-            ctx._log_tail = copy_start
+        # Allocate a fresh ring buffer — no tail copy needed.
+        ctx._log_ring = UnicodeRingBuffer(new_size * ctx.AVG_LINE_BYTES)
+        ctx._log_buf_lines = new_size
 
         return True
 

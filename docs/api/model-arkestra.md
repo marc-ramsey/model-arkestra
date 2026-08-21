@@ -175,7 +175,7 @@ Read-only property returning the names of all models currently in `"running"` st
 
 Internal aggregation: returns every tracked `_ModelContext` across all runners. Each context carries `name`, `port`, `state` (`RunnerState` enum), `backend_id`, `runner_type`, `restart_count`, and `last_error`. Callers who need detailed runtime info should use this.
 
-Each `_ModelContext` also maintains a `_log_buffer: deque[str]` (ring buffer, default 2000 lines) — populated live by subprocess stream watchers (process runners) or container log streamers (podman/docker runners). Accessing it directly is discouraged; use `get_logs()` instead for proper buffering and line-limiting.
+Each `_ModelContext` also maintains a `_log_ring: UnicodeRingBuffer` — a fixed-capacity ring buffer backed by `bytearray` that stores log entries with 2-byte length prefixes and 4-byte sequence numbers. Lines are added live by subprocess stream watchers (process runners) or container log streamers (podman/docker runners). The ring overwrites oldest entries when full — the `_get_lines_since()` API filters by sequence number so callers always see new lines. Use `get_logs()` instead for proper line-limiting.
 
 ### `get_v1_models() -> dict`
 

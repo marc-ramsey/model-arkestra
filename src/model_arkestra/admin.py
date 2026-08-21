@@ -385,30 +385,33 @@ class ArkestraAdmin:
                 raise HTTPException(status_code=404, detail=f"Model '{model}' not in config")
 
             ctx = self.server._arkestra.find_context(model)
-            if not ctx:
+            if not ctx or not hasattr(ctx, '_get_lines_since'):
                 # Model not yet started — return empty result
-                return {
-                    "since": 0,
-                    "missed_lines": 0,
-                    "lines": [],
-                }
+                from fastapi.responses import JSONResponse
+                return JSONResponse(
+                    status_code=200,
+                    content={"since": 0, "missed_lines": 0, "lines": []},
+                    headers={"X-Missed-Lines": "0", "X-Current-Max": "0"},
+                )
 
             # Read delta from ring buffer
             new_lines, oldest_seq = ctx._get_lines_since(since, lines)
 
             # Calculate missed lines (entries pruned from ring before the requested since point)
-            if since > 0:
-                # Oldest valid seq is _oldest_valid_seq. If since > current_log_seq,
-                # the entire requested range has been evicted.
-                total_missed = max(0, min(since, ctx._log_seq) - oldest_seq)
+            if since > 0 and since <= oldest_seq:
+                # Requested seq is older than oldest valid — entire range was evicted
+                total_missed = since - oldest_seq + len(ctx._get_lines_since(0, 1)[0]) if oldest_seq < ctx._log_seq else since - oldest_seq
+            elif since > 0:
+                total_missed = max(0, since - oldest_seq)
             else:
                 total_missed = 0
 
-            return {
-                "since": ctx._log_seq,
-                "missed_lines": total_missed,
-                "lines": [{"seq": seq, "text": text} for seq, text in new_lines],
-            }
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=200,
+                content={"since": ctx._log_seq, "missed_lines": total_missed, "lines": [{"seq": seq, "text": text} for seq, text in new_lines]},
+                headers={"X-Missed-Lines": str(total_missed), "X-Current-Max": str(ctx._log_seq)},
+            )
 
     def _add_images_route(self) -> None:
         @self._app.get("/admin/images")

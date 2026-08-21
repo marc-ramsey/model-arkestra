@@ -164,3 +164,7 @@ The `_dict_to_cli()` helper inside `build_model_args()` converts a merged args d
 Keys use kebab-case in YAML, matching CLI flag names directly.
 
 Infrastructure flags (`--port`, `--model`) are added by the runner from context metadata. The conversion happens inside ``build_model_args()`` which is called once per model start — this is the only place where arguments become strings. Internally everything stays structured as dicts. For llama.cpp, a single whitelist (`LLAMA_INFER_ARGS`) gates what inference kwargs reach CLI construction.
+
+## Related
+
+- [Log Ring Buffer](log-ring-buffer.md) — fixed-capacity ring buffer for model log capture
