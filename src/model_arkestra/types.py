@@ -76,7 +76,8 @@ class _ModelContext:
     def _get_lines_since(self, since: int, max_lines: int) -> Tuple[List[Tuple[int, str]], int]:
         """Read log lines with seq > since. Returns ([(seq, text),...], oldest_seq)."""
         entries = self._log_ring.read_entries(max_lines=max_lines, next_line=since)
-        return entries, 0
+        oldest_seq = entries[0][0] if entries else 0
+        return entries, oldest_seq
 
     def __repr__(self) -> str:
         return f"<{self.name} port={self.port} state={self.state.name}>"
