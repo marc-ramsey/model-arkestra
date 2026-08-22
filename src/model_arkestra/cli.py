@@ -269,10 +269,11 @@ def _load_sources(config_dir: Path) -> tuple[dict, dict]:
 
 
 def cmd_download_backend(backend_name: str, version: str = "latest") -> int:
-    """Download a pre-built backend binary.
-    
-    Resolves the backend to a source in sources.yaml and downloads using
-    BinaryDownloader.  The binary is cached for later use by model start.
+    """Download a pre-built backend binary from backends.yaml sources.
+
+    Resolves the backend to a source in backends.yaml, downloads using
+    BinaryDownloader, and writes the resolved `binary_dir` + `binary` path
+    into the backend entry so process.py can find it at runtime.
     
     Args:
         backend_name: Name of backend (e.g., 'rocm', 'vulkan-radv', 'cpu-optimized').
@@ -284,38 +285,47 @@ def cmd_download_backend(backend_name: str, version: str = "latest") -> int:
     from model_arkestra.binary_downloader import BinaryDownloader, BinaryDownloaderError
 
     config_dir = DEFAULT_CONFIG_DIR
-    sources_file = config_dir / "sources.yaml"
+    backends_file = config_dir / "backends.yaml"
     
-    # Load sources
-    if not sources_file.exists():
-        print("sources.yaml not found. Run 'model-arkestra init' first.", file=sys.stderr)
+    # Load sources from backends.yaml (merged with backends section)
+    if not backends_file.exists():
+        print("backends.yaml not found. Run 'model-arkestra init' first.", file=sys.stderr)
         return 1
     
     try:
-        import yaml as _yaml_module
-        raw = _yaml_module.safe_load(sources_file.read_text()) or {}
+        raw = _yaml.safe_load(backends_file.read_text()) or {}
         sources = raw.get("sources", {}) or {}
         defaults = raw.get("defaults", {}) or {}
     except Exception as e:
-        print(f"Failed to parse sources.yaml: {e}", file=sys.stderr)
+        print(f"Failed to parse backends.yaml: {e}", file=sys.stderr)
         return 1
 
-    # Resolve backend → source name
+    # Resolve backend → source name (check BACKEND_TO_SOURCE, direct source lookup,
+    # and the backends section's binary_source field)
     source_name = BACKEND_TO_SOURCE.get(backend_name)
     if source_name is None and backend_name in sources:
         source_name = backend_name  # direct source name
+    
+    if source_name is None:
+        # Try resolving via the backends section's binary_source field
+        be_section = raw.get("backends", {})
+        if backend_name in be_section:
+            source_ref = be_section[backend_name].get("binary_source")
+            if source_ref and source_ref in sources:
+                source_name = source_ref
+    
     if source_name is None:
         print(f"Unknown backend: {backend_name}", file=sys.stderr)
-        avail = list(BACKEND_TO_SOURCE.keys())
-        extra = [k for k in sources if k not in BACKEND_TO_SOURCE]
+        avail = [k for k, v in BACKEND_TO_SOURCE.items() if v is not None]
+        extra = [k for k in sources if k not in BACKEND_TO_SOURCE or BACKEND_TO_SOURCE.get(k) == k]
         print(f"Known backends: {', '.join(avail)}", file=sys.stderr)
         if extra:
-            print(f"Or any source name from sources.yaml: {', '.join(extra[:5])}", file=sys.stderr)
+            print(f"Or any source name from backends.yaml: {', '.join(extra[:5])}", file=sys.stderr)
         return 1
     
     source_cfg = sources.get(source_name)
     if not source_cfg or not isinstance(source_cfg, dict):
-        print(f"Source '{source_name}' not found in sources.yaml", file=sys.stderr)
+        print(f"Source '{source_name}' not found in backends.yaml", file=sys.stderr)
         return 1
     
     # Create downloader and resolve
@@ -332,10 +342,52 @@ def cmd_download_backend(backend_name: str, version: str = "latest") -> int:
         print(f"Download failed: {e}", file=sys.stderr)
         return 1
     
+    # Wire the resolved binary path into backends.yaml so process.py can find it
+    binary_dir = str(Path(binary_path).parent)
+    binary_name = Path(binary_path).name
+    _set_binary_in_backend(backends_file, backend_name, binary_dir, binary_name)
+    
     print(f"✓ Downloaded {backend_name} to: {binary_path}")
-    print(f"  Version: {version}")
-    print(f"  Source:  {source_name}")
+    print(f"  Version:   {version}")
+    print(f"  Source:    {source_name}")
+    print(f"  Cached in: {binary_dir}")
     return 0
+
+
+def _set_binary_in_backend(
+    backends_file: Path,
+    backend_name: str,
+    binary_dir: str,
+    binary_name: str,
+) -> None:
+    """Update a backend entry in backends.yaml with resolved binary path.
+
+    Writes `binary_dir` and `binary` keys into the backend definition so
+    process.py can locate it at runtime. Uses atomic write to prevent
+    corruption if interrupted.
+    """
+    data: dict = {}
+    if backends_file.exists():
+        try:
+            data = _yaml.safe_load(backends_file.read_text()) or {}
+        except Exception:
+            data = {}
+    
+    be_section: dict = data.get("backends", {})
+    if backend_name not in be_section:
+        print(f"  Warning: Backend '{backend_name}' not found in backends.yaml — skipping path update.", file=sys.stderr)
+        return
+    
+    be_entry = be_section[backend_name]
+    binary_dir_expanded = str(Path(binary_dir).expanduser())
+    be_entry["binary_dir"] = binary_dir_expanded
+    be_entry["binary"] = binary_name
+    data["backends"] = be_section
+    
+    tmp_path = backends_file.with_suffix(".yaml.tmp")
+    with open(tmp_path, "w") as f:
+        _yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+    tmp_path.rename(backends_file)
 
 
 def cmd_download_all() -> int:
