@@ -140,6 +140,8 @@ class ArkestraServer:
         openai_aliases: Dict mapping OpenAI model IDs to internal model names.
             e.g. {"gpt-4": "qwen3-4b", "claude": "llama3"}
         extra_headers: Extra response headers to inject on every response.
+        admin_key: Admin panel API key — gates all /admin/* paths. Falls back
+            to config.env.ADMIN_KEY if not provided.
 
     Example embedding into an existing FastAPI app:
         proxy = ArkestraServer("config.yaml", port=8080)
@@ -155,11 +157,13 @@ class ArkestraServer:
         ready_timeout: float = 120.0,
         openai_aliases: Optional[Dict[str, str]] = None,
         extra_headers: Optional[Dict[str, str]] = None,
+        admin_key: Optional[str] = None,
         broadcast_addr: Optional[str] = None,
     ):
         self.port = port
         self.openai_aliases = openai_aliases or {}
         self.extra_headers = extra_headers or {}
+        self.admin_key = admin_key
 
         from model_arkestra.arkestra import ModelArkestra
         self._arkestra = ModelArkestra(
@@ -255,7 +259,7 @@ class ArkestraServer:
 
         # ── Admin subcomponent ───────────────────────────────────
         from model_arkestra.admin import ArkestraAdmin
-        admin_key = self._arkestra.cm.data.get("env", {}).get("ADMIN_KEY")
+        admin_key = self.admin_key or self._arkestra.cm.data.get("env", {}).get("ADMIN_KEY")
         self._admin = ArkestraAdmin(self, admin_key=admin_key, app=app)
         self._admin.install()
 
