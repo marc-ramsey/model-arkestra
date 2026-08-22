@@ -139,6 +139,7 @@ def mock_arkestra():
     mock = MagicMock()
     mock.start = AsyncMock(return_value=None)
     mock.shutdown = AsyncMock(return_value=None)
+    mock._log = AsyncMock(return_value=None)  # global log buffer helper
     mock.ainvoke = AsyncMock(
         return_value="Quantum entanglement is when particles connect across space."
     )

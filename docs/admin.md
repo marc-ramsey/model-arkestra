@@ -40,6 +40,7 @@ Missing or incorrect keys return `401 Unauthorized`. Public paths (`/`, `/index.
 | `POST` | `/admin/stop/{model}` | Yes | Stop a running model |
 | `POST` | `/admin/eject/{model}` | Yes | Remove model from cache, clear contexts (no config change) |
 | `GET` | `/admin/log/{model}?since=N&lines=M` | Yes | Delta or snapshot log query |
+| `GET` | `/admin/logs?since=N&lines=M` | Yes | Server-level log entries (proxy traffic, lifecycle events) |
 | `GET` | `/admin/images` | Yes | List configured container images with runner type and availability |
 | `POST` | `/admin/images/build` | Yes | Build a single backend's image (body: `{"backend": "rocm"}`) |
 | `DELETE` | `/admin/images/{image_tag}` | Yes | Remove an image from the local store |
@@ -323,6 +324,46 @@ Returns only log lines with sequence number greater than `847`:
 
 **Implementation notes:** Log lines are tagged with a per-model monotonic sequence number as they are appended to the ring buffer by subprocess watchers (`ProcessModelRunner`) or container log streaming (`podman logs -f` / `docker logs -f`). The buffer uses a fixed-size deque (default 500 lines, configurable via `max_log_lines` in config or startup override). Only lines within the current window are available — older entries are automatically evicted.
 
+### GET /admin/logs?since=N&lines=M
+
+Return **server-level** log entries for the entire ModelArkestra instance. This is a separate ring buffer from per-model logs (`/admin/log/{model}`) and captures proxy traffic, model lifecycle events, and server startup/shutdown.
+
+**Request format:**
+```bash
+curl 'http://localhost:8080/admin/logs?since=0&lines=200' \
+     -H 'X-Admin-Key: your-secret-key'
+```
+
+**Response (same shape as per-model log):**
+```json
+{
+  "seq": 47,
+  "missed_lines": 0,
+  "lines": [
+    {"seq": 1, "text": "[action=start server port=8080]"},
+    {"seq": 2, "text": "[action=start model=qwen3 port=18001]"},
+    {"seq": 3, "text": "[action=req model=qwen3 method=POST path=/v1/chat/completions status=200 latency_ms=420 tokens=240]"},
+    {"seq": 4, "text": "[action=stream_start model=gemma messages=2]"},
+    {"seq": 5, "text": "[action=stream_end model=gemma duration_ms=1850 tokens=342] status=ok"}
+  ]
+}
+```
+
+**Response headers:** Same as per-model log — `X-Current-Max` (latest seq), `X-Missed-Lines` (evicted entries before the `since` point).
+
+**Log entry types and their metadata fields:**
+| action | Fields logged |
+|---|---|
+| `start server` | port |
+| `start model` | model, port |
+| `stop model` | model |
+| `shutdown` | — (server-level teardown) |
+| `req` | model, method, path, status, latency_ms, tokens |
+| `stream_start` | model, messages |
+| `stream_end` | model, duration_ms, tokens, status (`ok`, `error`, or `no_tokens`) |
+
+The buffer is configurable via `app-log-lines` in the YAML config (default: 2000 entries). In the admin dashboard, select **"Server logs"** from the log model dropdown to view these entries alongside per-model output.
+
 ### GET /admin/images
 
 List all container images configured in the `images:` section of the config file, along with their runner type and availability status. Resolves each backend's runner through the config chain (backends.<id>.runner → runners.<type> → default).
@@ -456,9 +497,12 @@ State management:
 | **Cancel** | Closes the Edit accordion. Form values stay in memory (not reverted) so you can reopen later with edits intact. |
 | **Start / Restart** | Sends `POST /admin/start/{model}` with current transient draft values as overrides — no save-to-disk step first. |
 
-**Logs pane** — Terminal-style log viewer for a selected model:
-- Snapshot mode (default): loads all lines via `GET /admin/log/{model}`
-- Auto-refresh: polls every 2 seconds, requesting only new lines since last seen (`?since=N`)
+**Logs pane** — Terminal-style log viewer for a selected model or server:
+- **Model logs**: Select a specific model from the dropdown to view its process stdout/stderr via `GET /admin/log/{model}`
+- **Server logs**: Select "Server logs" from the dropdown to view proxy traffic and lifecycle events via `GET /admin/logs`
+- Both share the same delta-polling pattern (1–2s interval) with `?since=N` cursor
+- Smart auto-scroll: scrolls to bottom during active streaming *unless* you've scrolled up to read older logs
+- Clear button empties the pane content
 - Smart auto-scroll: scrolls to bottom during active streaming *unless* you've scrolled up to read older logs
 - Clear button empties the pane content
 - Missed-line notifications shown if a reconnect gap is detected

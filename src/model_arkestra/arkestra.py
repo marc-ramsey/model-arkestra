@@ -14,6 +14,7 @@ from model_arkestra.docker import DockerModelRunner
 from model_arkestra.podman import PodmanModelRunner
 from model_arkestra.process import ProcessModelRunner
 from model_arkestra.types import RunnerState, _ModelContext
+from model_arkestra.unicode_ringbuffer import UnicodeRingBuffer
 
 
 class ModelArkestra:
@@ -25,6 +26,25 @@ class ModelArkestra:
         self._runners: Dict[str, BaseModelRunner] = {}
         self._runner_kwargs = runner_kwargs
         self._build_runner_class_map()
+        # ── Global log buffer (single ring for all server-level events) ─
+        app_log_lines = int(self._cm.data.get('app-log-lines', 2000))
+        self._global_log_buf = UnicodeRingBuffer(app_log_lines * _ModelContext.AVG_LINE_BYTES)
+        self._global_log_seq: int = 0
+
+    # ── port allocation (global) ───────────────────────────────────────
+    async def _log(self, text: str) -> None:
+        """Append a line to the global log buffer."""
+        self._global_log_seq += 1
+        if not text.endswith("\n"):
+            text = text + "\n"
+        for _ in range(20):
+            try:
+                self._global_log_buf.write(self._global_log_seq, text)
+                break
+            except UnicodeRingBuffer.BufferFullError:
+                if not self._global_log_buf:
+                    return
+                self._global_log_buf.read_entries(max_lines=1)
 
     # ── port allocation (global) ───────────────────────────────────────
     def _alloc(self) -> int:
@@ -287,6 +307,7 @@ class ModelArkestra:
             ctx = inst._models[model_name]
             ctx.runner_type = runner_type_override
             ctx._runner = inst
+            await self._log(f"[action=start model={model_name} port={port}]")
             return
 
         # Resolve backend + runner type from config
@@ -305,11 +326,13 @@ class ModelArkestra:
         ctx = runner._models[model_name]
         ctx.runner_type = resolved_runner
         ctx._runner = runner
+        await self._log(f"[action=start model={model_name} port={port}]")
 
     async def stop(self, model_name: str) -> None:
         """Stop the named model."""
         for r in self._runners.values():
             if model_name in r._models:  # noqa: SLF001
+                await self._log(f"[action=stop model={model_name}]")
                 try:
                     await r.stop()
                 except Exception:
@@ -400,6 +423,7 @@ class ModelArkestra:
 
     async def shutdown(self) -> None:
         """Full teardown — stop models, clear runners, reset port allocator."""
+        await self._log(f"[action=shutdown]")
         for r in self._runners.values():
             await r.shutdown()
         self._runners.clear()

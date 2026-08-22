@@ -12,6 +12,8 @@ See [Usage Guide](./usage.md#basic-initialization) for how to load a config file
 | `model-ports` | `int` | `32` | Number of ports available — valid range is `models-start-port` through `models-start-port + model-ports - 1`. Allocation raises `RuntimeError("Port range exceeded: …")` when exhausted. |
 | `warmup-time` | `float` | `10.0` | Seconds to wait after `/health` returns OK before marking the model as `"running"`. Improves reliability of the first inference request by bridging the gap between HTTP readiness and weight loading completion. |
 | `default-image` | `str` | `ark-llama:vulkan-radv` | Default container image tag for runners when no backend specifies an `image:`. Used as fallback in both PodmanModelRunner and DockerModelRunner. |
+| `app-log-lines` | `int` | `2000` | Number of server-level log entries to retain in the global ring buffer (Admin API → `/admin/logs`). Each entry is ~200 bytes, so 2000 lines ≈ 400 KB. |
+| `log-buffer-size` | `int` | `2000` | Maximum lines retained per-model in the process log ring buffer. Applied to both `_ModelContext` instances and runner-level buffers. |
 
 ## `env:` Section — Process Environment Variables
 

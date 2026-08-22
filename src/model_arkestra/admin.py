@@ -92,6 +92,7 @@ class ArkestraAdmin:
         self._add_start_route()
         self._add_eject_route()
         self._add_log_route()
+        self._add_global_log_route()
         self._add_images_route()
         self._installed = True
         return self
@@ -465,6 +466,28 @@ class ArkestraAdmin:
                 status_code=200,
                 content={"since": ctx._log_seq, "missed_lines": total_missed, "lines": [{"seq": seq, "text": text} for seq, text in new_lines]},
                 headers={"X-Missed-Lines": str(total_missed), "X-Current-Max": str(ctx._log_seq)},
+            )
+
+    def _add_global_log_route(self) -> None:
+        @self._app.get("/admin/logs")
+        async def admin_global_logs(
+            since: int = 0,
+            lines: int = 200,
+        ):
+            buf = self.server._arkestra._global_log_buf
+            seq_max = self.server._arkestra._global_log_seq
+
+            entries = buf.read_entries(max_lines=lines, next_line=since)
+
+            # Calculate missed lines (entries evicted before requested since point)
+            oldest = entries[0][0] if entries else 0
+            total_missed = max(0, since - oldest) if since > 0 and oldest < since else 0
+
+            return JSONResponse(
+                status_code=200,
+                content={"seq": seq_max, "missed_lines": total_missed,
+                         "lines": [{"seq": s, "text": t} for s, t in entries]},
+                headers={"X-Missed-Lines": str(total_missed), "X-Current-Max": str(seq_max)},
             )
 
     def _add_images_route(self) -> None:

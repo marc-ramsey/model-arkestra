@@ -766,6 +766,11 @@
                 for (const m of modelsCache) {
                     html += '<option value="' + m.id + '"' + (m.id === current ? ' selected' : '') + '>' + m.id + '</option>';
                 }
+                if (id === 'log-model-select') {
+                    html += '<optgroup label="">';
+                    html += '<option value="*"' + ('*' === current ? ' selected' : '') + '>Server logs</option>';
+                    html += '</optgroup>';
+                }
                 sel.innerHTML = html;
             }
         }
@@ -1057,9 +1062,10 @@
             }
 
             try {
-                const data = await adminGet('/admin/log/' + encodeURIComponent(modelName), { lines: 200 });
+                const url = modelName === '*' ? '/admin/logs' : '/admin/log/' + encodeURIComponent(modelName);
+                const data = await adminGet(url, { lines: 200 });
                 const lines = data?.lines ?? [];
-                logLastSeq = data.since ?? 0;
+                logLastSeq = data.since ?? data.seq ?? 0;
 
                 for (const entry of lines) {
                     const div = document.createElement('div');
@@ -1099,14 +1105,16 @@
                 try {
                     // On first call (logLastSeq == 0), do a snapshot fetch
                     if (logLastSeq === 0) {
-                        const data = await adminGet('/admin/log/' + encodeURIComponent(modelName), { lines: 200 });
-                        logLastSeq = data?.since ?? 0;
+                        const url = modelName === '*' ? '/admin/logs' : '/admin/log/' + encodeURIComponent(modelName);
+                        const data = await adminGet(url, { lines: 200 });
+                        logLastSeq = data.since ?? data.seq ?? 0;
                         const newEntries = data?.lines ?? [];
                         if (newEntries.length > 0) appendLogLines(newEntries.map(e => e.text));
                     } else {
-                        const data = await adminGet('/admin/log/' + encodeURIComponent(modelName), { lines: 200, since: logLastSeq });
+                        const url = modelName === '*' ? '/admin/logs' : '/admin/log/' + encodeURIComponent(modelName);
+                        const data = await adminGet(url, { lines: 200, since: logLastSeq });
                         if (!data || !data.lines) return;
-                        logLastSeq = data.since ?? logLastSeq;
+                        logLastSeq = data.since ?? data.seq ?? logLastSeq;
                         const newEntries = data.lines;
                         if (newEntries.length > 0) appendLogLines(newEntries.map(e => e.text));
                     }
