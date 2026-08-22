@@ -2,18 +2,11 @@ from __future__ import annotations
 import asyncio
 import os
 import shlex
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from model_arkestra.container_runner import ContainerModelRunner, _resolve_backend, _build_container_cmd
 from model_arkestra.common import SUBPROCESS_ENV, safe_container_name
 from model_arkestra.types import _ModelContext
-
-
-def _resolve_backend_for_podman(
-    runner: Any, ctx: _ModelContext, model_data: Dict[str, Any]
-) -> Dict[str, Any] | None:
-    """Resolve the effective backend for podman (priority: ctx > model_data > config)."""
-    return _resolve_backend(runner, ctx, model_data)
 
 
 class PodmanModelRunner(ContainerModelRunner):
@@ -40,7 +33,7 @@ class PodmanModelRunner(ContainerModelRunner):
         self, ctx: _ModelContext, model_data: Dict[str, Any]
     ) -> None:
         await self._ensure_port_available(ctx.port)
-        backend = _resolve_backend_for_podman(self, ctx, model_data)
+        backend = _resolve_backend(self, ctx, model_data)
         if backend is None:
             raise RuntimeError(
                 f"No backend resolved for podman model '{ctx.name}' — "

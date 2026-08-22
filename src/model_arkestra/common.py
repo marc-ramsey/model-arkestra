@@ -3,11 +3,12 @@ from __future__ import annotations
 import re
 import shlex
 import subprocess as _subprocess
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 
 import os
 from pathlib import Path
+import yaml
 # Subprocess env — convert os.environ to plain dict for uvloop compatibility
 SUBPROCESS_ENV: Dict[str, str] = dict(os.environ)
 
@@ -80,7 +81,6 @@ def resolve_binary_from_backend(backend: Dict[str, Any]) -> Optional[tuple]:
 
     Returns ``(binary_path, devices)`` or **None** when nothing resolves.
     """
-    import os
 
     devices: List[str] = []
 
@@ -116,6 +116,42 @@ def resolve_binary_from_backend(backend: Dict[str, Any]) -> Optional[tuple]:
     return None
 
 
+def _resolve_backend_config_field(backend_id: Optional[str], field: str) -> Any:
+    """Read a single field from backends.<id> or backends.<default>.
+
+    Walks known config files, tries explicit backend_id first,
+    then falls back to the default backend's value.
+    Returns None if nothing found.
+    """
+    try:
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        for candidate in ["sample-config.yaml", "config.yaml"]:
+            path = os.path.join(project_root, candidate)
+            if not os.path.isfile(path):
+                continue
+            with open(path) as f:
+                cfg = yaml.safe_load(f) or {}
+            backends = cfg.get("backends") or {}
+            if not isinstance(backends, dict):
+                continue
+
+            # 1. Explicit backend_id
+            if backend_id:
+                be = backends.get(backend_id)
+                if isinstance(be, dict) and field in be:
+                    return be[field]
+
+            # 2. Default backend
+            default_be_id = backends.get("default")
+            if default_be_id:
+                default_be = backends.get(default_be_id)
+                if isinstance(default_be, dict) and field in default_be:
+                    return default_be[field]
+    except Exception:
+        pass
+    return None
+
+
 def default_image_for_backend(backend_id: Optional[str]) -> str:
     """Derive a default image tag from the backend identifier.
 
@@ -124,39 +160,13 @@ def default_image_for_backend(backend_id: Optional[str]) -> str:
       2. backends.<default>.image         — global default backend
       3. hardcoded fallback               — ark-llama:vulkan-radv
     """
-    try:
-        import yaml, os
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        for candidate in ["sample-config.yaml", "config.yaml"]:
-            path = os.path.join(project_root, candidate)
-            if os.path.isfile(path):
-                with open(path) as f:
-                    cfg = yaml.safe_load(f) or {}
-                backends = cfg.get("backends") or {}
-
-                # 1. Explicit per-backend image
-                if backend_id and isinstance(backends, dict):
-                    be = backends.get(backend_id)
-                    if isinstance(be, dict) and "image" in be:
-                        return str(be["image"])
-
-                    # 2. Global default backend's image
-                    default_be_id = backends.get("default")
-                    if default_be_id:
-                        default_be = backends.get(default_be_id)
-                        if isinstance(default_be, dict) and "image" in default_be:
-                            return str(default_be["image"])
-
-                # 3. Hardcoded fallbacks (legacy / programmatic usage)
-                if backend_id and any(k in backend_id.lower() for k in ("rocm", "hip", "opencl")):
-                    return "ark-llama:rocm"
-                return _DEFAULT_IMAGE
-    except Exception:
-        pass
-    # Hardcoded fallbacks
+    image = _resolve_backend_config_field(backend_id, "image")
+    if image:
+        return str(image)
+    # Hardcoded fallbacks (legacy / programmatic usage)
     if backend_id and any(k in backend_id.lower() for k in ("rocm", "hip", "opencl")):
         return "ark-llama:rocm"
-    return "ark-llama:vulkan-radv"
+    return _DEFAULT_IMAGE
 
 
 def containerfile_for_backend(backend_id: Optional[str]) -> Optional[str]:
@@ -165,23 +175,9 @@ def containerfile_for_backend(backend_id: Optional[str]) -> Optional[str]:
     Reads backends.<id>.container. Returns None if not found.
     The caller should resolve relative to the project root.
     """
-    try:
-        import yaml, os
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        for candidate in ["sample-config.yaml", "config.yaml"]:
-            path = os.path.join(project_root, candidate)
-            if os.path.isfile(path):
-                with open(path) as f:
-                    cfg = yaml.safe_load(f) or {}
-                backends = cfg.get("backends") or {}
-                if isinstance(backends, dict) and backend_id:
-                    be = backends.get(backend_id)
-                    if isinstance(be, dict):
-                        cf = be.get("container")
-                        if cf:
-                            return os.path.join("tests", "files", cf)
-    except Exception:
-        pass
+    cf = _resolve_backend_config_field(backend_id, "container")
+    if cf:
+        return os.path.join("tests", "files", cf)
     return None
 
 
