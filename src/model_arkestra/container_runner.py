@@ -8,10 +8,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import subprocess
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 from model_arkestra.base import BaseModelRunner
@@ -142,7 +141,11 @@ class ContainerModelRunner(BaseModelRunner, ABC):
         super().__init__(*args, **kwargs)
 
     async def get_logs(self, model_name: str, lines: int = 100) -> List[str]:
-        """Return the last N log lines for a model via container runtime."""
+        """Return the last N log lines for a model via container runtime.
+
+        Lines from stdout and stderr are interleaved in arrival order;
+        stderr lines are prefixed with ``[err] `` for easy distinction.
+        """
         ctx = self._models.get(model_name)
         if not ctx:
             return []
@@ -162,11 +165,27 @@ class ContainerModelRunner(BaseModelRunner, ABC):
             stderr=asyncio.subprocess.PIPE,
             env=SUBPROCESS_ENV,
         )
-        stdout, stderr = await proc.communicate()
+
+        interleaved: List[str] = []
+
+        async def _read_stream(stream: asyncio.Stream, prefix: str) -> None:
+            while True:
+                raw = await stream.readline()
+                if not raw:
+                    break
+                line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+                if line:
+                    interleaved.append(f"{prefix}{line}")
+
+        await asyncio.gather(
+            _read_stream(proc.stdout, ""),
+            _read_stream(proc.stderr, "[err] "),
+        )
+
+        proc.wait()
         if proc.returncode != 0:
             return []
-        text = stdout.decode("utf-8", errors="replace") + stderr.decode("utf-8", errors="replace")
-        return [line for line in text.splitlines() if line]
+        return interleaved
 
     async def _release_port(self, port: int) -> None:
         """Wait up to ``port_drain_timeout`` seconds for a stopped container's
