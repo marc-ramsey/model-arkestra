@@ -4,7 +4,7 @@ Model Arkestra ships an administrative panel that integrates into the same FastA
 
 ## Initialization
 
-Admin routes are installed automatically when calling `server.get_app()` — pass the `admin_key` argument to enable:
+Admin routes are installed automatically when calling `server.get_app()` — pass the ``admin_key`` argument to enable:
 
 ```python
 server = ArkestraServer(
@@ -14,6 +14,8 @@ server = ArkestraServer(
 )
 app = server.get_app()
 ```
+
+The key resolves with priority: **constructor argument** > ``config.env.ADMIN_KEY`` from the YAML config file > disabled (no auth).
 
 When `admin_key` is provided, every request to `/admin/*` must include the header:
 

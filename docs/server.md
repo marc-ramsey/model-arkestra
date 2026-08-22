@@ -19,15 +19,15 @@ This launches a FastAPI server backed by ModelArkestra on port 8080. Models load
 | `--config` / `-c` | *(required)* | — | Path to YAML config file |
 | `--port` / `-p` | — | `8080` | HTTP port to listen on |
 | `--host` / `-H` | — | `0.0.0.0` | Bind address — use `127.0.0.1` for localhost-only |
-| `--ready-timeout` / `-t` | — | `60` | Seconds to wait for models during startup |
+| `--ready-timeout` / `-t` | — | `120` | Seconds to wait for models during startup |
 | `--alias` / `-a` | — | — | OpenAI model alias mapping (`KEY=VALUE`). Repeat for multiple, e.g. `-a gpt-4=qwen3 -a claude=gemma` |
 | `--api-key` | — | — | Require this Bearer token on every request (basic auth bypass) |
-| `--cors` | — | `false` | Enable CORS headers |
+| `--cors` | — | `false` | Enable full CORS via CORSMiddleware — handles preflight OPTIONS, all standard Access-Control headers. Accepts any origins (`"*"`) by default. |
 | `--ssl-certfile` | — | — | Path to TLS certificate file (PEM) |
 | `--ssl-keyfile` | — | — | Path to TLS private key file (PEM) |
 | `--log-level` | — | `info` | Uvicorn log level |
 | `--workers` / `-w` | — | `1` | Number of worker processes |
-| `--broadcast-addr` | — | auto | Address models bind to (`0.0.0.0` or `127.0.0.1`) |
+| `--broadcast-addr` | — | auto | Address models bind to (`0.0.0.0` or `127.0.0.1`). No CLI value defers to config ``runners.broadcast_addr``, then global default ``0.0.0.0``. |
 
 ## Usage — Embed Into an Existing App
 
@@ -45,6 +45,20 @@ app = server.get_app()
 
 # Use `app` with uvicorn, or extend it further
 import uvicorn
+uvicorn.run(app, host="0.0.0.0", port=8080)
+```
+
+### Enable CORS for browser clients
+
+Pass ``allow_origins`` to install FastAPI's CORSMiddleware — this handles preflight `OPTIONS` requests and all standard Access-Control headers automatically:
+
+```python
+server = ArkestraServer(
+    "config.yaml",
+    port=8080,
+    allow_origins=["*"],  # open to any origin; use specific origins for production
+)
+app = server.get_app()
 uvicorn.run(app, host="0.0.0.0", port=8080)
 ```
 
@@ -69,13 +83,28 @@ app.mount("", arkestra_app)  # all /v1/*, /health routes merge in
 uvicorn.run(app, port=8080)
 ```
 
-### Run as a background thread in an existing process
+### Embed into an existing FastAPI app's lifespan
+
+When you need Arkestra as a component of a larger service, create the server but let the parent FastAPI app control its lifecycle through a lifespan manager:
 
 ```python
-server = ArkestraServer("config.yaml")
-await server.start()  # blocks until shutdown
-# ... your app logic ...
-await server.shutdown()  # stops everything on exit
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from model_arkestra.server import ArkestraServer
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Start Arkestra — models load lazily on first inference request
+    server = ArkestraServer("config.yaml")
+    app.mount("", server.get_app())
+    yield
+    await server.shutdown()
+
+app = FastAPI(title="My Service", lifespan=lifespan)
+
+@app.get("/custom")
+def custom_endpoint():
+    return {"hello": "world"}
 ```
 
 ## Endpoints
