@@ -781,8 +781,11 @@
                 if (!data || !data.config) return;
 
                 const cfg = data.config;
+                // Available capabilities resolved from config (normal chain:
+                // per-model → default-capabilities → hardcoded fallback)
+                const allCaps = data.available_capabilities || ['chat'];
                 // Deep clone for dirty detection snapshot
-                modelStates[modelName] = { config: cfg, snapshot: JSON.parse(JSON.stringify(cfg)), dirty: false };
+                modelStates[modelName] = { config: cfg, snapshot: JSON.parse(JSON.stringify(cfg)), dirty: false, allCaps };
 
                 let html = '';
 
@@ -822,8 +825,7 @@
                 // Capabilities chips
                 const capsId = 'mc-caps-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_');
                 html += '<div class="edit-field"><label>Capabilities</label><div class="capabilities-list" id="' + capsId + '">';
-                const allCaps = ['chat', 'tts'];
-                const selectedCaps = new Set(cfg.capabilities || ['chat']);
+                const selectedCaps = new Set(cfg.capabilities || allCaps);
                 for (const c of allCaps) {
                     html += '  <span class="capability-chip' + (selectedCaps.has(c) ? ' active' : '') + '" data-cap="' + c + '">' + c + '</span>';
                 }
@@ -909,7 +911,7 @@
                 (current.runner ?? '') !== (snap.runner ?? '') ||
                 current.args !== (snap.args ?? '') ||
                 current.max_log_lines !== (snap.max_log_lines ?? 500) ||
-                JSON.stringify(caps.sort()) !== JSON.stringify((snap.capabilities || ['chat']).sort())
+                JSON.stringify(caps.sort()) !== JSON.stringify((snap.capabilities || snap.allCaps || ['chat']).sort())
             );
             modelStates[modelName].dirty = isDirty;
             const btn = document.getElementById('mc-save-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_'));

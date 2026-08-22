@@ -34,6 +34,22 @@ from model_arkestra.types import RunnerState
 MODEL_CONFIG_FIELDS = frozenset({"args", "checkpoint", "backend", "capabilities", "runner", "tags", "max_log_lines"})
 INFRA_KEYS = frozenset({"args", "checkpoint", "backend", "runner", "max_log_lines"})
 
+# ── Capability resolution helpers ────────────────────────────────
+def _resolve_capabilities(model_cfg: dict | None, global_cfg: dict | None) -> list[str]:
+    """Resolve available capability types using the normal chain:
+
+    1. Per-model `capabilities` (explicit)
+    2. Global ``default-capabilities`` top-level config key
+    3. Hardcoded fallback ``["chat"]``
+    """
+    if model_cfg and model_cfg.get("capabilities"):
+        return list(model_cfg["capabilities"])
+    g = global_cfg or {}
+    defaults = g.get("default-capabilities")
+    if isinstance(defaults, list) and defaults:
+        return list(defaults)
+    return ["chat"]
+
 
 class ArkestraAdmin:
     """Admin subcomponent that installs routes on an ArkestraServer's app."""
@@ -165,6 +181,10 @@ class ArkestraAdmin:
                             "checkpoint": checkpoint,
                             "capabilities": model_cfg.get("capabilities", []),
                         }
+
+                    # Resolve available capabilities per-model (normal chain)
+                    global_cfg = self.server._arkestra.cm.data or {}
+                    entry["available_capabilities"] = _resolve_capabilities(model_cfg, global_cfg)
                     data.append(entry)
 
                 # Top-level metadata for dropdown options (static per-server)
@@ -310,7 +330,16 @@ class ArkestraAdmin:
             ctx = contexts.get(model)
             status = str(ctx.state).lower().replace("runnerstate.", "") if ctx else None
 
-            return {"ok": True, "model": model, "config": copy.deepcopy(cfg[model]), "status": status}
+            # Resolve available capabilities for this model
+            global_cfg = self.server._arkestra.cm.data or {}
+            available_caps = _resolve_capabilities(cfg[model], global_cfg)
+
+            return {
+                "ok": True, "model": model,
+                "config": copy.deepcopy(cfg[model]),
+                "status": status,
+                "available_capabilities": available_caps,
+            }
 
         @self._app.put("/admin/config/{model}")
         async def admin_config_update(model: str, body: Dict[str, Any]):
