@@ -9,7 +9,7 @@ This guide walks through common Model Arkestra operations: initializing the orch
 ```python
 from model_arkestra.arkestra import ModelArkestra
 
-runner = ModelArkestra("config.yaml", ready_timeout=120.0)
+runner = ModelArkestra("config.yaml", ready_timeout=120.0)  # passes to underlying runners
 
 async with runner:
     # ... use runner.start(), stop(), ainvoke(), etc ...

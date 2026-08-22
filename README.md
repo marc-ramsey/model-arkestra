@@ -58,6 +58,19 @@ arkestra-server --config config.yaml --port 8080
 
 Then hit `POST /v1/chat/completions` with any OpenAI-compatible client, or visit the admin dashboard at `http://localhost:8080/`.
 
+### Hugging Face Cache Location
+
+Models are downloaded via HuggingFace Hub. Control where they land by setting `HF_HUB_CACHE`:
+
+- **Via config.yaml** (merged into every subprocess/container env):
+  ```yaml
+  env:
+    HF_HUB_CACHE: /data/hf-cache
+  ```
+- **Or as an environment variable** in the host shell.
+
+The default is `~/.cache/huggingface/hub`. The [`config.md`](./docs/config.md#env-section) has full details on the `env:` section and resolution priority.
+
 ## Architecture Overview
 
 Model Arkestra routes models through a config-driven runner registry — each model selects a backend, which maps to a runner type (process, podman, or docker). A global port allocator distributes ports from a configured range. Port assignments are sticky: stopping and restarting a model reuses the same port.

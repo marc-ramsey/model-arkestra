@@ -26,24 +26,7 @@ python -m pytest -v --tb=short -m slow
 
 ## Import Path
 
-The runner and its backends live in the `model_arkestra` package:
-
-```python
-from llm_config_manager.config_manager import ConfigManager    # data layer
-from model_arkestra.arkestra import ModelArkestra              # orchestration (recommended)
-from model_arkestra.base import BaseModelRunner                # abstract base class
-from model_arkestra.process import ProcessModelRunner          # process runner
-from model_arkestra.podman import PodmanModelRunner            # podman runner
-from model_arkestra.docker import DockerModelRunner            # docker runner
-from model_arkestra.container_runner import ContainerModelRunner  # container base class
-from model_arkestra.http_client import ModelHttpClient         # lightweight HTTP client
-from model_arkestra.langchain_adapter import LangChainModelAdapter  # LangChain LCEL wrapper
-from model_arkestra.server import ArkestraServer             # OpenAI v1-compatible API server
-
-# Convenience re-exports from __init__.py:
-from model_arkestra import RunnerState, RunnerError, ServerReadyTimeout
-from model_arkestra import ModelNotStarted, MaxRestartsExceeded, ModelShutdown
-```
+All public imports are listed in the [README](../README#import-path).
 
 ## Shared Utilities (`common.py`)
 
