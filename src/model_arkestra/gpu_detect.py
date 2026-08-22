@@ -81,7 +81,7 @@ def has_cpu_binary() -> bool:
     ]:
         if candidate.exists():
             return True
-    return False  # Will be downloaded during model start via sources.yaml
+    return False  # Will be downloaded during model start via backends.yaml
 
 
 # ── GPU detection ──────────────────────────────────────────────────

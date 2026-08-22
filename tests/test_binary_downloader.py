@@ -12,7 +12,7 @@ from model_arkestra.binary_downloader import (
     BinaryDownloader, BinaryDownloaderError, ChecksumMismatch,
     GITHUB_RELEASE, LOCAL_FILE, _file_lock,
 )
-from model_arkestra.common import resolve_config_path, resolve_sources_path
+from model_arkestra.common import resolve_config_path, resolve_backends_path
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────

@@ -32,18 +32,18 @@ def resolve_config_path(config_path: Optional[str] = None) -> Path:
     return DEFAULT_CONFIG_DIR / "config.yaml"
 
 
-def resolve_sources_path(config_dir: Optional[str] = None) -> Optional[Path]:
-    """Resolve sources.yaml path from explicit arg or default location.
+def resolve_backends_path(config_dir: Optional[str] = None) -> Optional[Path]:
+    """Resolve backends.yaml path from explicit arg or default location.
 
     Resolution order:
-      1. Explicit ``config_dir`` argument → ``{config_dir}/sources.yaml``
-      2. ``DEFAULT_CONFIG_DIR / 'sources.yaml'``
+      1. Explicit ``config_dir`` argument → ``{config_dir}/backends.yaml``
+      2. ``DEFAULT_CONFIG_DIR / 'backends.yaml'``
 
     Returns None if neither resolves to an existing file (caller should
-    treat as "no sources configured" and fall back to Containerfile builds).
+    treat as "no backends configured" and fall back to Containerfile builds).
     """
     base = Path(config_dir).expanduser() if config_dir else DEFAULT_CONFIG_DIR
-    path = base / "sources.yaml"
+    path = base / "backends.yaml"
     return path if path.exists() else None
 
 

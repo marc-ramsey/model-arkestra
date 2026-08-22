@@ -27,7 +27,7 @@ class ModelArkestra:
         self,
         config_path: Optional[str] = None,
         start_port: int = 18000,
-        sources_config: Optional[Dict[str, Any]] = None,
+        backends_config: Optional[Dict[str, Any]] = None,
         **runner_kwargs: Any,
     ):
         # Resolve config path — defaults to ~/.config/arkestra/config.yaml
@@ -37,15 +37,18 @@ class ModelArkestra:
         self._runners: Dict[str, BaseModelRunner] = {}
         self._runner_kwargs = runner_kwargs
         self._build_runner_class_map()
-        # Load sources.yaml from same directory as config (if present)
+        # Load backends.yaml from same directory as config (if present)
         parent = self._config_path.parent
-        sources_path = parent / "sources.yaml"
-        if sources_config is not None:
-            self._sources = sources_config
-        elif sources_path.exists():
-            self._sources = ConfigManager(str(sources_path)).data.get("sources", {})
+        backends_path = parent / "backends.yaml"
+        if backends_config is not None:
+            self._backends_cfg = backends_config
+        elif backends_path.exists():
+            with open(backends_path) as f:
+                self._backends_cfg = yaml.safe_load(f) or {}
         else:
-            self._sources = {}
+            self._backends_cfg = {}
+        # Extract sources section for binary_downloader compatibility
+        self._sources: Dict[str, Any] = self._backends_cfg.get("sources", {})
         # ── Global log buffer (single ring for all server-level events) ─
         app_log_lines = int(self._cm.data.get('app-log-lines', 2000))
         self._global_log_buf = UnicodeRingBuffer(app_log_lines * _ModelContext.AVG_LINE_BYTES)

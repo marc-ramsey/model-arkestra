@@ -1,0 +1,83 @@
+# ═══════════════════════════════════════════
+# backends.yaml — Backend definitions & download sources
+# ═══════════════════════════════════════════
+# Reference configuration. Users get a fresh copy from `model-arkestra init`.
+
+backends:
+
+  # ── Built-in backends ────────────────────────────────────────────────
+
+  vulkan-radv:
+    type: vulkan-radv
+    description: "Vulkan with RADV driver — works on AMD, NVIDIA, and Intel GPUs"
+    runner: ProcessModelRunner
+    binary_source: official-vulkan-radv
+    args:
+      ngl: 999
+      ctx-size: ${ctx-size}
+
+  rocm:
+    type: rocm
+    description: "ROCm — best for AMD iGPU and discrete GPUs"
+    runner: ProcessModelRunner
+    binary_source: lemonade-rocm-nightly
+    args:
+      ngl: 999
+      ctx-size: ${ctx-size}
+
+  nvidia-cuda:
+    type: nvidia-cuda
+    description: "NVIDIA CUDA — for NVIDIA discrete GPUs"
+    runner: ProcessModelRunner
+    binary_source: official-cuda
+    args:
+      ngl: 999
+      ctx-size: ${ctx-size}
+
+  cpu-optimized:
+    type: cpu
+    description: "CPU-only mode — uses all available cores"
+    runner: ProcessModelRunner
+    binary_source: ggml-org-cpu
+    args:
+      threads: ${nproc}
+      no-mmap: true
+
+
+# ── Download sources (used by backends above) ─────────────────────
+
+sources:
+
+  official-vulkan-radv:
+    type: github-release
+    repo: ggml-org/llama.cpp
+    release_type: latest
+    asset_pattern: "llama-server-*-bin-*-vulkan*"
+    sha256_asset: "*.sha256"
+
+  lemonade-rocm-nightly:
+    type: github-release
+    repo: lemonade-sdk/llamacpp-rocm
+    release_type: latest
+    asset_pattern: "*-linux-x86_64.tar.gz"
+    sha256_asset: "*.sha256"
+
+  official-cuda:
+    type: github-release
+    repo: ggml-org/llama.cpp
+    release_type: latest
+    asset_pattern: "llama-server-*-bin-*-cuda*"
+    sha256_asset: "*.sha256"
+
+  ggml-org-cpu:
+    type: github-release
+    repo: ggml-org/llama.cpp
+    release_type: latest
+    asset_pattern: "llama-server-*-bin-*-static*"
+    sha256_asset: ""
+
+
+defaults:
+  release_type: latest
+  verify_checksum: true
+  cache_ttl_hours: 24

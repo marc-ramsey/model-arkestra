@@ -200,7 +200,7 @@ Chat preserves full multi-turn history — every turn is sent to the model.
 # Init command — scaffold default config files
 # ═══════════════════════════════════════════════════════════
 DEFAULT_CONFIG_DIR = Path.home() / ".config" / "arkestra"
-TEMPLATE_FILES = ["config.yaml.j2", "sources.yaml.j2"]
+TEMPLATE_FILES = ["config.yaml.j2", "backends.yaml.j2"]
 
 # Map backend names to source names in sources.yaml
 BACKEND_TO_SOURCE: dict[str, str] = {
@@ -394,10 +394,10 @@ def cmd_init(force: bool = False) -> int:
 
     config_dir = DEFAULT_CONFIG_DIR
     config_file = config_dir / "config.yaml"
-    sources_file = config_dir / "sources.yaml"
+    backends_file = config_dir / "backends.yaml"
 
     # Check for existing files
-    if not force and (config_file.exists() or sources_file.exists()):
+    if not force and (config_file.exists() or backends_file.exists()):
         print(f"Config directory already exists: {config_dir}", file=sys.stderr)
         print("Files present:  ", end="")
         existing = [f.name for f in config_dir.iterdir() if f.is_file()]
@@ -450,8 +450,13 @@ def cmd_init(force: bool = False) -> int:
     print(f"(reason: {reason})")
 
     print(f"\nConfig files scaffolded to {config_dir}")
-    print("Edit config.yaml to add models and adjust backends.")
-    print("See sample-config.yaml in the repository for a complete reference.")
+    print("  config.yaml      — model configs (edit freely)")
+    print("  backends.yaml    — backend definitions + download sources")
+    print()
+    print("To add a custom local binary:")
+    print("  model-arkestra add-backend --local /path/to/binary [--name my-llama]")
+    print("To see available backends:")
+    print("  model-arkestra list-backends")
     return 0
 
 

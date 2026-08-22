@@ -1,28 +1,20 @@
-# ═══════════════════════════════════════════════════════════
-# config.yaml — ModelArkestra configuration
-# ═══════════════════════════════════════════════════════════
-# This is a minimal scaffold. See sample-config.yaml in the
-# repository for a complete reference with all backends and options.
+# ═══════════════════════════════════════════
+# config.yaml — ModelArkestra model configuration
+# ═══════════════════════════════════════════
+# For backend definitions (binary sources, download channels), see
+# backends.yaml in the same directory.
 
 models-start-port: 18000
 model-ports: 32
 warmup-time: 10
 
+app-log-lines: 2000
+
 env:
   HF_HUB_CACHE: ~/.cache/huggingface
 
-engines:
-  llama_cpp:
-    binary: llama-server
-    args:
-      ctx-size: ${ctx-size}
-      jinja: on
-      n-gpu-layers: ${n-gpu-layers}
-    capabilities:
-      - chat
-
 backends:
-  default: vulkan-radv
+  default: vulkan-radv   # references a backend name from backends.yaml
 
 models:
   qwen3.8-27b:

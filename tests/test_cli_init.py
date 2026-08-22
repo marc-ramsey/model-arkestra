@@ -8,13 +8,13 @@ from model_arkestra.cli import cmd_init, DEFAULT_CONFIG_DIR
 
 
 def test_init_creates_files(tmp_path):
-    """Init creates config.yaml and sources.yaml in default directory."""
+    """Init creates config.yaml and backends.yaml in default directory."""
     with patch("model_arkestra.cli.DEFAULT_CONFIG_DIR", tmp_path):
         result = cmd_init(force=True)
 
     assert result == 0
     assert (tmp_path / "config.yaml").exists()
-    assert (tmp_path / "sources.yaml").exists()
+    assert (tmp_path / "backends.yaml").exists()
 
 
 def test_init_content_contains_scaffold_markers(tmp_path):
@@ -54,15 +54,28 @@ def test_init_overwrites_with_force(tmp_path):
     assert "models-start-port" in config
 
 
-def test_sources_yaml_has_preconfigured_sources(tmp_path):
-    """Generated sources.yaml has pre-configured download sources."""
+def test_backends_yaml_has_preconfigured_backends(tmp_path):
+    """Generated backends.yaml has pre-configured backend definitions and sources."""
     with patch("model_arkestra.cli.DEFAULT_CONFIG_DIR", tmp_path):
         cmd_init(force=True)
 
-    sources = (tmp_path / "sources.yaml").read_text()
-    # Should have actual source definitions, not empty dict
-    assert "sources:" in sources
-    assert "github-release" in sources
+    backends = (tmp_path / "backends.yaml").read_text()
+    # Should have both backends: section and sources: section
+    assert "backends:" in backends
+    assert "sources:" in backends
+    assert "github-release" in backends
+
+
+def test_backends_yaml_has_built_in_backends(tmp_path):
+    """Generated backends.yaml includes all four built-in backend definitions."""
+    with patch("model_arkestra.cli.DEFAULT_CONFIG_DIR", tmp_path):
+        cmd_init(force=True)
+
+    backends = (tmp_path / "backends.yaml").read_text()
+    assert "vulkan-radv:" in backends
+    assert "rocm:" in backends
+    assert "nvidia-cuda:" in backends
+    assert "cpu-optimized:" in backends
 
 
 def test_default_config_dir_is_xdg_compliant():
