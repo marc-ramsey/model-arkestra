@@ -7,11 +7,9 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import json
 import os
-import shutil
-import subprocess
 import sys
+from pathlib import Path
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -387,7 +385,6 @@ class ArkestraAdmin:
             ctx = self.server._arkestra.find_context(model)
             if not ctx or not hasattr(ctx, '_get_lines_since'):
                 # Model not yet started — return empty result
-                from fastapi.responses import JSONResponse
                 return JSONResponse(
                     status_code=200,
                     content={"since": 0, "missed_lines": 0, "lines": []},
@@ -406,7 +403,6 @@ class ArkestraAdmin:
             else:
                 total_missed = 0
 
-            from fastapi.responses import JSONResponse
             return JSONResponse(
                 status_code=200,
                 content={"since": ctx._log_seq, "missed_lines": total_missed, "lines": [{"seq": seq, "text": text} for seq, text in new_lines]},
