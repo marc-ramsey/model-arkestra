@@ -1,5 +1,7 @@
 # Model Arkestra
 
+> This is early alpha code, functional on AMD *Strix Halo* systems only for now.
+
 Model Arkestra is a lightweight Python orchestrator for running local LLM inference engines — primarily [llama.cpp](https://github.com/ggerganov/llama.cpp) — across your choice of backends, from bare-metal subprocesses to isolated containers (Podman / Docker). It exists so you can deploy and manage models on your own hardware with **safety and stability**, without the overhead of a full-blown proxy or cluster manager.
 
 This is **not** a replacement for [Lemonade](https://github.com/ollama/lemonade) or [llama-swap](https://github.com/sgl-project/llama-swap). No model registries, no auto-scaling, no Kubernetes babysitting. If you just want models up and running on your own GPU — with clean lifecycle management, graceful shutdowns, and restart resilience out of the box — Arkestra is a straight line between config file and inference.
