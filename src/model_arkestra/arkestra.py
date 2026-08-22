@@ -420,7 +420,6 @@ class ModelArkestra:
             # Keep prompt-based flow (backward compat)
             pass
         # If messages are already in payload (list of dicts), they go through as-is
-        runner = self._get_runner(model_name, {}, backend)
         async for chunk in runner.astream(model_name, payload):
             yield chunk
 
