@@ -8,12 +8,6 @@ models-start-port: 18000
 model-ports: 32
 warmup-time: 10
 
-defaults:
-  ctx-size: 16384
-  jinja: true
-  n-gpu-layers: 999
-  no-mmap: true
-
 env:
   HF_HUB_CACHE: ~/.cache/huggingface
 
@@ -22,13 +16,60 @@ engines:
     binary: llama-server
     args:
       ctx-size: ${ctx-size}
-      jinja: true
+      jinja: on
       n-gpu-layers: ${n-gpu-layers}
-      no-mmap: true
     capabilities:
       - chat
 
 backends:
   default: vulkan-radv
 
-models: {}
+models:
+  qwen3.8-27b:
+    checkpoint: unsloth/Qwen3.8-27B-GGUF:Q4_K_M
+    args:
+      temp: 0.7
+      top-p: 0.80
+      top-k: 20
+      presence-penalty: 1.5
+      chat-template-kwargs: '{"reasoning_effort":"medium"}'
+
+  qwen3.6-27b-mtp:
+    checkpoint: unsloth/Qwen3.6-27B-MTP-GGUF:UD-Q4_K_XL
+    args:
+      temp: 0.6
+      top-p: 0.95
+      top-k: 20
+      chat-template-kwargs: '{"enable_thinking":true}'
+
+  qwen3.6-35b-a3b:
+    checkpoint: unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL
+    args:
+      temp: 0.6
+      top-p: 0.95
+      top-k: 20
+      chat-template-kwargs: '{"enable_thinking":true}'
+
+  gemma-4-12b-qat:
+    checkpoint: unsloth/gemma-4-12B-it-qat-GGUF:UD-Q4_K_XL
+    args:
+      temp: 1.0
+      top-p: 0.95
+      top-k: 64
+      chat-template-kwargs: '{"enable_thinking":true}'
+
+  gemma-4-26b-a4b-qat:
+    checkpoint: unsloth/gemma-4-26B-A4B-it-qat-GGUF:UD-Q4_K_XL
+    args:
+      temp: 1.0
+      top-p: 0.95
+      top-k: 64
+      chat-template-kwargs: '{"enable_thinking":true}'
+
+  gemma-4-31b-qat:
+    checkpoint: unsloth/gemma-4-31B-it-qat-GGUF:UD-Q4_K_XL
+    args:
+      temp: 1.0
+      top-p: 0.95
+      top-k: 64
+      chat-template-kwargs: '{"enable_thinking":true}'
