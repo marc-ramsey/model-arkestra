@@ -89,7 +89,7 @@ Returns a list of all configured models with their full runtime context. Models 
 | `args` | Model args from config |
 | `checkpoint` | Model checkpoint reference |
 | `capabilities` | Capability tags (default `["chat"]` if none specified) |
-| `available_capabilities` | Resolved capability pool for the admin UI chips — follows the chain: per-model `capabilities` → top-level `default-capabilities` → hardcoded fallback `["chat"]` |
+| `available_capabilities` | Resolved capability pool for the admin UI chips — follows the chain: per-model `capabilities` → backend-declared `backends.<id>.capabilities` → hardcoded fallback `["chat"]` |
 
 **Status values:**
 - `running`, `loading`, `error`, `stopping` — real states from active runner contexts

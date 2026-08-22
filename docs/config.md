@@ -12,7 +12,6 @@ See [Usage Guide](./usage.md#basic-initialization) for how to load a config file
 | `model-ports` | `int` | `32` | Number of ports available — valid range is `models-start-port` through `models-start-port + model-ports - 1`. Allocation raises `RuntimeError("Port range exceeded: …")` when exhausted. |
 | `warmup-time` | `float` | `10.0` | Seconds to wait after `/health` returns OK before marking the model as `"running"`. Improves reliability of the first inference request by bridging the gap between HTTP readiness and weight loading completion. |
 | `default-image` | `str` | `ark-llama:vulkan-radv` | Default container image tag for runners when no backend specifies an `image:`. Used as fallback in both PodmanModelRunner and DockerModelRunner. |
-| `default-capabilities` | `list[str]` | `["chat"]` | System-wide default capabilities shown in the admin UI. Overridden by per-model `capabilities` key. The capability chain: per-model → `default-capabilities` → hardcoded fallback `["chat"]`. |
 
 ## `env:` Section — Process Environment Variables
 
@@ -87,6 +86,7 @@ When a model has `backend: rocm`, the routing chain resolves: `rocm` → `runner
 | `devices` | list[str] | Device passthrough entries for container runs (e.g. `"/dev/dri/card1:rwm"`). |
 | `env_container` | dict | Environment variables passed into the container. Merged on top of global `env:`. |
 | `version` | str | ROCm/Vulkan version string — used to resolve binary dir from known build directory map (`_ROCM_BUILD_MAP`). |
+| `capabilities` | list[str] | Capability types this backend supports (e.g. `["chat", "embed"]`). Used as the admin UI's available-capabilities fallback when per-model `capabilities` is not set. Hardcoded baseline is `["chat"]`. |
 
 ## `runners:` Section — Runner Class Registry
 

@@ -35,19 +35,25 @@ MODEL_CONFIG_FIELDS = frozenset({"args", "checkpoint", "backend", "capabilities"
 INFRA_KEYS = frozenset({"args", "checkpoint", "backend", "runner", "max_log_lines"})
 
 # ── Capability resolution helpers ────────────────────────────────
-def _resolve_capabilities(model_cfg: dict | None, global_cfg: dict | None) -> list[str]:
+def _resolve_capabilities(model_cfg: dict | None, global_cfg: dict | None, backend_id: str | None = None) -> list[str]:
     """Resolve available capability types using the normal chain:
 
-    1. Per-model `capabilities` (explicit)
-    2. Global ``default-capabilities`` top-level config key
+    1. Per-model ``capabilities`` (explicit override)
+    2. Backend-declared ``backends.<id>.capabilities``
     3. Hardcoded fallback ``["chat"]``
     """
     if model_cfg and model_cfg.get("capabilities"):
         return list(model_cfg["capabilities"])
-    g = global_cfg or {}
-    defaults = g.get("default-capabilities")
-    if isinstance(defaults, list) and defaults:
-        return list(defaults)
+
+    # Backend-declared capabilities (falls back to backend resolution chain: explicit > per-model > default)
+    b = (global_cfg or {}).get("backends") or {}
+    if isinstance(b, dict):
+        bid = backend_id or model_cfg.get("backend") or b.get("default")
+        if bid:
+            caps = (b.get(str(bid)) or {}).get("capabilities")
+            if isinstance(caps, list) and caps:
+                return list(caps)
+
     return ["chat"]
 
 
@@ -184,7 +190,9 @@ class ArkestraAdmin:
 
                     # Resolve available capabilities per-model (normal chain)
                     global_cfg = self.server._arkestra.cm.data or {}
-                    entry["available_capabilities"] = _resolve_capabilities(model_cfg, global_cfg)
+                    entry["available_capabilities"] = _resolve_capabilities(
+                        model_cfg, global_cfg, backend_id=str(entry.get("backend_id") or "") or None,
+                    )
                     data.append(entry)
 
                 # Top-level metadata for dropdown options (static per-server)
@@ -332,7 +340,10 @@ class ArkestraAdmin:
 
             # Resolve available capabilities for this model
             global_cfg = self.server._arkestra.cm.data or {}
-            available_caps = _resolve_capabilities(cfg[model], global_cfg)
+            available_caps = _resolve_capabilities(
+                cfg[model], global_cfg,
+                backend_id=str(cfg[model].get("backend") or "") or None,
+            )
 
             return {
                 "ok": True, "model": model,
