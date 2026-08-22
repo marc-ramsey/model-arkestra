@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional, Set
@@ -49,6 +50,8 @@ class ModelArkestra:
         app_log_lines = int(self._cm.data.get('app-log-lines', 2000))
         self._global_log_buf = UnicodeRingBuffer(app_log_lines * _ModelContext.AVG_LINE_BYTES)
         self._global_log_seq: int = 0
+        # ── Backend runtime validation (hard error on mismatch) ───────
+        self._validate_backend_runtime()
 
     # ── port allocation (global) ───────────────────────────────────────
     async def _log(self, text: str) -> None:
@@ -79,6 +82,73 @@ class ModelArkestra:
         port = self._next_port
         self._next_port += 1
         return port
+    
+    # ── backend runtime validation (hard error) ─────────────────────
+    def _validate_backend_runtime(self) -> None:
+        """Ensure the configured default backend's runtime is available.
+
+        Raises RuntimeError if a non-CPU backend is configured but its
+        runtime is not detected on the system. CPU backends always pass
+        since the binary will be downloaded at model-start time.
+        """
+        backends = self._cm.data.get("backends") or {}
+        if not isinstance(backends, dict):
+            return  # no backends section — skip validation
+        backend_id = backends.get("default")
+        if not backend_id:
+            return  # no default backend set — skip validation
+
+        runtime_checks = {
+            "vulkan-radv": self._check_vulkan,
+            "rocm": self._check_rocm,
+            "nvidia-cuda": self._check_nvidia,
+        }
+        checker = runtime_checks.get(backend_id)
+        if checker:
+            if not checker():
+                suggestion = "Run 'model-arkestra init' to auto-detect your GPU."
+                raise RuntimeError(
+                    f"Backend '{backend_id}' configured but runtime not detected. {suggestion}"
+                )
+        # CPU backends and unknown IDs pass by default
+
+    @staticmethod
+    def _check_vulkan() -> bool:
+        try:
+            result = subprocess.run(
+                ["vulkaninfo", "--summary"],
+                capture_output=True, timeout=5, text=True,
+            )
+            return result.returncode == 0 and "Vulkan Instance Version" in result.stdout
+        except (FileNotFoundError, OSError):
+            return False
+
+    @staticmethod
+    def _check_rocm() -> bool:
+        try:
+            subprocess.run(
+                ["rocm-smi", "--showconfig"],
+                capture_output=True, timeout=5,
+            )
+            return True
+        except (FileNotFoundError, OSError):
+            pass
+        # Fallback: check for ROCm lib directory
+        return any(
+            p.exists() for p in [Path("/opt/rocm/lib"), Path("/usr/lib64/rocm")]
+        )
+
+    @staticmethod
+    def _check_nvidia() -> bool:
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=name,driver_version",
+                 "--format=csv"],
+                capture_output=True, timeout=5, text=True,
+            )
+            return result.returncode == 0 and "NVIDIA" in result.stdout
+        except (FileNotFoundError, OSError):
+            return False
     
     def _get_existing_port(self, model_name: str) -> Optional[int]:
         """Find the port from a stopped context for *model_name*, if one exists.

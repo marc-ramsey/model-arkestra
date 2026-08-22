@@ -203,11 +203,53 @@ DEFAULT_CONFIG_DIR = Path.home() / ".config" / "arkestra"
 TEMPLATE_FILES = ["config.yaml.j2", "sources.yaml.j2"]
 
 
+def _set_backend_in_config(config_path: Path, backend: str) -> None:
+    """Update the default backend in a rendered config.yaml.
+
+    Replaces the line ``default: <current>`` under ``backends:`` with
+    the detected backend.  Uses simple text replacement (no YAML parser).
+    """
+    content = config_path.read_text()
+    # Match the backends.default line and replace its value
+    lines = content.splitlines(True)
+    new_lines: list[str] = []
+    in_backends_section = False
+    replaced = False
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped == "backends:" or (stripped.startswith("backends") and ":" in stripped):
+            in_backends_section = True
+            new_lines.append(line)
+            continue
+        if in_backends_section and not replaced:
+            # Check for the 'default:' key under backends
+            if stripped == "default:" or (stripped.startswith("default:") and ":" in stripped):
+                indent = len(line) - len(line.lstrip())
+                new_lines.append(" " * indent + f"default: {backend}\n")
+                replaced = True
+                continue
+            # If we hit a non-indented, non-comment line that isn't 'default',
+            # we've left the backends section
+            if stripped and not stripped.startswith("#"):
+                in_backends_section = False
+        new_lines.append(line)
+
+    if replaced:
+        config_path.write_text("".join(new_lines))
+
+
 def cmd_init(force: bool = False) -> int:
     """Scaffold default config files in ~/.config/arkestra/.
 
+    After writing templates, detects available GPU/CPU hardware and sets
+    the recommended backend as the default.  Prints warnings for special
+    cases (multi-GPU, ROCm preference on Strix Halo, etc.).
+
     Returns 0 on success, 1 on error.
     """
+    from model_arkestra.gpu_detect import detect_all
+
     config_dir = DEFAULT_CONFIG_DIR
     config_file = config_dir / "config.yaml"
     sources_file = config_dir / "sources.yaml"
@@ -228,7 +270,6 @@ def cmd_init(force: bool = False) -> int:
     for template_name in TEMPLATE_FILES:
         dest = config_dir / template_name.replace(".j2", "")
         try:
-            # Read from package resource
             content = (src_pkg / template_name).read_text()
             dest.write_text(content)
             print(f"Created {dest}")
@@ -236,8 +277,38 @@ def cmd_init(force: bool = False) -> int:
             print(f"Error creating {template_name}: {exc}", file=sys.stderr)
             return 1
 
+    # ── Hardware detection & backend recommendation ────────────────
+    result = detect_all()
+    backend, reason = result["recommendation"]
+
+    print(f"\nDetected GPU hardware:")
+    if result["primary_gpu"]:
+        g = result["primary_gpu"]
+        gpu_desc = g["name"].split("]", 1)[-1].strip() if "]" in g["name"] else g["name"]
+        print(f"  ✓ {gpu_desc}")
+    else:
+        cpu = result["cpu"]
+        feat_str = ", ".join(cpu.get("features", [])) or "default"
+        print(f"  No GPU found")
+        print(f"  CPU: {cpu['arch']} ({cpu['vendor']}, {cpu['cores']} cores, {feat_str})")
+
+    # Multi-GPU warning
+    if result["multi_gpu_warn"]:
+        n = len(result["gpus"])
+        print(f"\n  ⚠ {n} GPUs detected — using first ({backend}) as default.")
+        print("  Secondary GPU(s) ignored. Edit config.yaml to change.")
+
+    # Warnings from detection
+    for w in result.get("warnings", []):
+        print(f"\n  ⚠ {w}")
+
+    # Patch config with detected backend
+    _set_backend_in_config(config_file, backend)
+    print(f"\nWrote backends.default: {backend}")
+    print(f"(reason: {reason})")
+
     print(f"\nConfig files scaffolded to {config_dir}")
-    print("Edit config.yaml to add models and backends.")
+    print("Edit config.yaml to add models and adjust backends.")
     print("See sample-config.yaml in the repository for a complete reference.")
     return 0
 

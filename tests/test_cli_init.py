@@ -24,7 +24,9 @@ def test_init_content_contains_scaffold_markers(tmp_path):
 
     config = (tmp_path / "config.yaml").read_text()
     assert "models-start-port" in config
-    assert "vulkan-radv" in config
+    # Backend is auto-detected — just verify a valid backend was set
+    assert "backends:" in config
+    assert "default:" in config
 
 
 def test_init_preserves_existing(tmp_path):
@@ -52,13 +54,15 @@ def test_init_overwrites_with_force(tmp_path):
     assert "models-start-port" in config
 
 
-def test_sources_yaml_is_empty_by_default(tmp_path):
-    """Generated sources.yaml has empty sources dict."""
+def test_sources_yaml_has_preconfigured_sources(tmp_path):
+    """Generated sources.yaml has pre-configured download sources."""
     with patch("model_arkestra.cli.DEFAULT_CONFIG_DIR", tmp_path):
         cmd_init(force=True)
 
     sources = (tmp_path / "sources.yaml").read_text()
-    assert "sources: {}" in sources
+    # Should have actual source definitions, not empty dict
+    assert "sources:" in sources
+    assert "github-release" in sources
 
 
 def test_default_config_dir_is_xdg_compliant():
