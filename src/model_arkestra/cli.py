@@ -460,6 +460,175 @@ def cmd_init(force: bool = False) -> int:
     return 0
 
 
+# ── Backend management commands ───────────────────────────────────
+
+def _load_backends_cfg() -> tuple[Path, dict]:
+    """Load backends.yaml and return (path, data_dict). Raises on error."""
+    path = DEFAULT_CONFIG_DIR / "backends.yaml"
+    if not path.exists():
+        print("backends.yaml not found. Run 'model-arkestra init' first.", file=sys.stderr)
+        sys.exit(1)
+    try:
+        import yaml as _yaml
+        data = _yaml.safe_load(path.read_text()) or {}
+        return path, data
+    except Exception as e:
+        print(f"Failed to parse backends.yaml: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_list_backends() -> int:
+    """List all configured backends with their status."""
+    import yaml as _yaml
+    
+    backends_path = DEFAULT_CONFIG_DIR / "backends.yaml"
+    if not backends_path.exists():
+        print("backends.yaml not found. Run 'model-arkestra init' first.", file=sys.stderr)
+        return 1
+    
+    try:
+        data = _yaml.safe_load(backends_path.read_text()) or {}
+    except Exception as e:
+        print(f"Failed to parse backends.yaml: {e}", file=sys.stderr)
+        return 1
+    
+    backends = data.get("backends", {})
+    if not backends:
+        print("No backends defined in backends.yaml.")
+        return 0
+    
+    cache_dir = Path.home() / ".local" / "share" / "model-arkestra" / "bin-cache"
+    configs_path = DEFAULT_CONFIG_DIR / "config.yaml"
+    current_default = None
+    if configs_path.exists():
+        try:
+            cfg_data = _yaml.safe_load(configs_path.read_text()) or {}
+            be_section = cfg_data.get("backends", {})
+            if isinstance(be_section, dict):
+                current_default = be_section.get("default")
+        except Exception:
+            pass
+    
+    print(f"{'Name':<20} {'Type':<16} {'Description':<50} {'Binary':<10} {'Default'}")
+    print("-" * 115)
+    
+    for name, be_cfg in sorted(backends.items()):
+        if not isinstance(be_cfg, dict):
+            continue
+        be_type = be_cfg.get("type", "-")
+        desc = (be_cfg.get("description") or "-")[:48]
+        cached = False
+        if cache_dir.exists():
+            bin_files = list(cache_dir.rglob(f"*{name}*llama-server*") or [])
+            if not bin_files:
+                src_name = be_cfg.get("binary_source", "")
+                bin_files = list(cache_dir.rglob(f"*{src_name}*") or [])
+            cached = len(bin_files) > 0
+        
+        binary_status = "✓ cached" if cached else "not found"
+        default_marker = " ← default" if name == current_default else ""
+        print(f"{name:<20} {be_type:<16} {desc:<50} {binary_status:<10}{default_marker}")
+    
+    return 0
+
+
+def cmd_add_backend(
+    local_path: Optional[str] = None,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+) -> int:
+    """Add a custom backend with a local binary."""
+    import yaml as _yaml
+    
+    if not local_path:
+        print("Error: --local /path/to/binary is required.", file=sys.stderr)
+        return 1
+    
+    bin_path = Path(local_path).expanduser().resolve()
+    if not bin_path.exists():
+        print(f"Binary not found: {bin_path}", file=sys.stderr)
+        return 1
+    if not os.access(str(bin_path), os.X_OK):
+        print(f"Binary is not executable: {bin_path}", file=sys.stderr)
+        return 1
+    
+    if name is None:
+        name = bin_path.stem.replace("llama-server", "local-llama")
+        if "avx" in str(bin_path).lower():
+            name = f"local-{bin_path.stem}"
+    
+    backends_file = DEFAULT_CONFIG_DIR / "backends.yaml"
+    data: dict = {}
+    if backends_file.exists():
+        try:
+            data = _yaml.safe_load(backends_file.read_text()) or {}
+        except Exception:
+            data = {}
+    
+    be_section: dict = data.get("backends", {})
+    if name in be_section:
+        print(f"Backend '{name}' already exists. Remove it first.", file=sys.stderr)
+        return 1
+    
+    be_section[name] = {
+        "type": "custom",
+        "description": description or f"Custom llama-server from {bin_path.parent}",
+        "runner": "ProcessModelRunner",
+        "binary_path": str(bin_path),
+        "args": {
+            "ngl": 999,
+            "ctx-size": "${ctx-size}",
+        },
+    }
+    data["backends"] = be_section
+    
+    tmp_path = backends_file.with_suffix(".yaml.tmp")
+    with open(tmp_path, "w") as f:
+        _yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+    tmp_path.rename(backends_file)
+    
+    print(f"✓ Added backend '{name}' from {bin_path}")
+    return 0
+
+
+def cmd_remove_backend(backend_name: str) -> int:
+    """Remove a backend from backends.yaml."""
+    import yaml as _yaml
+    
+    backends_file = DEFAULT_CONFIG_DIR / "backends.yaml"
+    if not backends_file.exists():
+        print("backends.yaml not found. Run 'model-arkestra init' first.", file=sys.stderr)
+        return 1
+    
+    try:
+        data = _yaml.safe_load(backends_file.read_text()) or {}
+    except Exception as e:
+        print(f"Failed to parse backends.yaml: {e}", file=sys.stderr)
+        return 1
+    
+    be_section: dict = data.get("backends", {})
+    if not isinstance(be_section, dict):
+        be_section = {}
+    
+    if backend_name not in be_section:
+        available = list(be_section.keys())
+        print(f"Backend '{backend_name}' not found.", file=sys.stderr)
+        if available:
+            print(f"Available: {', '.join(available)}", file=sys.stderr)
+        return 1
+    
+    del be_section[backend_name]
+    data["backends"] = be_section
+    
+    tmp_path = backends_file.with_suffix(".yaml.tmp")
+    with open(tmp_path, "w") as f:
+        _yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+    tmp_path.rename(backends_file)
+    
+    print(f"✓ Removed backend '{backend_name}'")
+    return 0
+
+
 def cmd_init_wrapper() -> None:
     """Convenience entry point: arkestra-init [--force]."""
     import argparse
@@ -508,10 +677,32 @@ def main(argv: list[str] | None = None) -> None:
     chat_parser.add_argument("--broadcast-addr", default=None,
                              help='Broadcast address for models (default: 0.0.0.0)')
 
+    # ── list-backends subcommand ──────────────────────────────────────
+    subparsers.add_parser(
+        "list-backends",
+        help="List all configured backends with status",
+    )
+
+    # ── add-backend subcommand ────────────────────────────────────────
+    add_parser = subparsers.add_parser(
+        "add-backend",
+        help="Add a custom backend with a local binary",
+    )
+    add_parser.add_argument("--local", "-l", help="Path to local llama-server binary")
+    add_parser.add_argument("--name", "-n", default=None, help="Backend name (derived from path if not given)")
+    add_parser.add_argument("--description", "-d", default=None, help="Human-readable description")
+
+    # ── remove-backend subcommand ─────────────────────────────────────
+    rm_parser = subparsers.add_parser(
+        "remove-backend",
+        help="Remove a backend from backends.yaml",
+    )
+    rm_parser.add_argument("backend", help="Backend name to remove")
+
     # ── download-backend subcommand ───────────────────────────────────
     dl_parser = subparsers.add_parser(
         "download-backend",
-        help="Download a pre-built backend binary from sources.yaml",
+        help="Download a pre-built backend binary from backends.yaml sources",
     )
     dl_parser.add_argument("backend", help="Backend name (rocm, vulkan-radv, cpu-optimized)")
     dl_parser.add_argument(
@@ -530,6 +721,19 @@ def main(argv: list[str] | None = None) -> None:
     # ── Route to subcommand handler ───────────────────────────────────
     if args.command == "init":
         sys.exit(cmd_init(force=args.force))
+
+    if args.command == "list-backends":
+        sys.exit(cmd_list_backends())
+
+    if args.command == "add-backend":
+        sys.exit(cmd_add_backend(
+            local_path=getattr(args, 'local', None),
+            name=getattr(args, 'name', None),
+            description=getattr(args, 'description', None),
+        ))
+
+    if args.command == "remove-backend":
+        sys.exit(cmd_remove_backend(args.backend))
 
     if args.command == "download-backend":
         sys.exit(cmd_download_backend(backend_name=args.backend, version=args.version))
