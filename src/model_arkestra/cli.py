@@ -202,6 +202,14 @@ Chat preserves full multi-turn history — every turn is sent to the model.
 DEFAULT_CONFIG_DIR = Path.home() / ".config" / "arkestra"
 TEMPLATE_FILES = ["config.yaml.j2", "sources.yaml.j2"]
 
+# Map backend names to source names in sources.yaml
+BACKEND_TO_SOURCE: dict[str, str] = {
+    "rocm": "lemonade-rocm-nightly",
+    "vulkan-radv": "official-vulkan-radv",
+    "nvidia-cuda": "official-cuda",
+    "cpu-optimized": None,  # no source yet — handled separately
+}
+
 
 def _set_backend_in_config(config_path: Path, backend: str) -> None:
     """Update the default backend in a rendered config.yaml.
@@ -237,6 +245,140 @@ def _set_backend_in_config(config_path: Path, backend: str) -> None:
 
     if replaced:
         config_path.write_text("".join(new_lines))
+
+
+# ── Download backend commands ───────────────────────────────────────
+
+def _load_sources(config_dir: Path) -> tuple[dict, dict]:
+    """Load sources.yaml from config directory.
+    
+    Returns (sources_dict, global_defaults) or empty dicts if file missing.
+    """
+    sources_file = config_dir / "sources.yaml"
+    if not sources_file.exists():
+        return {}, {}
+    try:
+        import yaml
+        data = yaml.safe_load(sources_file.read_text()) or {}
+        sources = data.get("sources", {}) or {}
+        defaults = data.get("defaults", {}) or {}
+        return sources, defaults
+    except Exception:
+        return {}, {}
+
+
+def cmd_download_backend(backend_name: str, version: str = "latest") -> int:
+    """Download a pre-built backend binary.
+    
+    Resolves the backend to a source in sources.yaml and downloads using
+    BinaryDownloader.  The binary is cached for later use by model start.
+    
+    Args:
+        backend_name: Name of backend (e.g., 'rocm', 'vulkan-radv', 'cpu-optimized').
+        version: Version tag (default 'latest', or a pinned version like '2.95').
+    
+    Returns:
+        0 on success, 1 on error.
+    """
+    from model_arkestra.binary_downloader import BinaryDownloader, BinaryDownloaderError
+
+    config_dir = DEFAULT_CONFIG_DIR
+    sources_file = config_dir / "sources.yaml"
+    
+    # Load sources
+    if not sources_file.exists():
+        print("sources.yaml not found. Run 'model-arkestra init' first.", file=sys.stderr)
+        return 1
+    
+    try:
+        import yaml as _yaml_module
+        raw = _yaml_module.safe_load(sources_file.read_text()) or {}
+        sources = raw.get("sources", {}) or {}
+        defaults = raw.get("defaults", {}) or {}
+    except Exception as e:
+        print(f"Failed to parse sources.yaml: {e}", file=sys.stderr)
+        return 1
+
+    # Resolve backend → source name
+    source_name = BACKEND_TO_SOURCE.get(backend_name)
+    if source_name is None and backend_name in sources:
+        source_name = backend_name  # direct source name
+    if source_name is None:
+        print(f"Unknown backend: {backend_name}", file=sys.stderr)
+        avail = list(BACKEND_TO_SOURCE.keys())
+        extra = [k for k in sources if k not in BACKEND_TO_SOURCE]
+        print(f"Known backends: {', '.join(avail)}", file=sys.stderr)
+        if extra:
+            print(f"Or any source name from sources.yaml: {', '.join(extra[:5])}", file=sys.stderr)
+        return 1
+    
+    source_cfg = sources.get(source_name)
+    if not source_cfg or not isinstance(source_cfg, dict):
+        print(f"Source '{source_name}' not found in sources.yaml", file=sys.stderr)
+        return 1
+    
+    # Create downloader and resolve
+    cache_dir = Path.home() / ".local" / "share" / "model-arkestra" / "bin-cache"
+    try:
+        downloader = BinaryDownloader(
+            backend_id=backend_name,
+            source_cfg=source_cfg,
+            cache_dir=cache_dir,
+            global_defaults=defaults if defaults else None,
+        )
+        binary_path = asyncio.run(downloader.resolve(version=version))
+    except BinaryDownloaderError as e:
+        print(f"Download failed: {e}", file=sys.stderr)
+        return 1
+    
+    print(f"✓ Downloaded {backend_name} to: {binary_path}")
+    print(f"  Version: {version}")
+    print(f"  Source:  {source_name}")
+    return 0
+
+
+def cmd_download_all() -> int:
+    """Download primary and fallback backends based on detected hardware.
+    
+    Runs GPU detection, then downloads the recommended backend plus one
+    fallback (e.g., vulkan-radv for AMD even if rocm is preferred).
+    """
+    from model_arkestra.gpu_detect import detect_all
+
+    result = detect_all()
+    primary_backend, reason = result["recommendation"]
+    
+    # Choose fallback based on hardware
+    fallback: str | None = None
+    if result["primary_gpu"] and result["primary_gpu"]["vendor"] == "amd":
+        primary_backend = "rocm"
+        fallback = "vulkan-radv"
+    elif result["primary_gpu"] and result["primary_gpu"]["vendor"] == "nvidia":
+        primary_backend = "nvidia-cuda"
+        fallback = None
+    else:
+        primary_backend = "cpu-optimized"
+        fallback = None
+
+    print(f"Downloading backend for detected hardware:")
+    print(f"  Primary: {primary_backend}")
+    if fallback:
+        print(f"  Fallback: {fallback}")
+    print()
+    
+    # Download primary
+    rc1 = cmd_download_backend(primary_backend, version="latest")
+    if rc1 != 0:
+        return rc1
+    
+    # Download fallback if available
+    if fallback and BACKEND_TO_SOURCE.get(fallback):
+        print()
+        rc2 = cmd_download_backend(fallback, version="latest")
+        if rc2 != 0:
+            print(f"\n⚠ Fallback download failed (primary {primary_backend} is OK).", file=sys.stderr)
+    
+    return 0
 
 
 def cmd_init(force: bool = False) -> int:
@@ -361,11 +503,34 @@ def main(argv: list[str] | None = None) -> None:
     chat_parser.add_argument("--broadcast-addr", default=None,
                              help='Broadcast address for models (default: 0.0.0.0)')
 
+    # ── download-backend subcommand ───────────────────────────────────
+    dl_parser = subparsers.add_parser(
+        "download-backend",
+        help="Download a pre-built backend binary from sources.yaml",
+    )
+    dl_parser.add_argument("backend", help="Backend name (rocm, vulkan-radv, cpu-optimized)")
+    dl_parser.add_argument(
+        "--version", "-V", default="latest",
+        help='Version tag (default: latest)',
+    )
+
+    # ── download-all subcommand ───────────────────────────────────────
+    subparsers.add_parser(
+        "download-all",
+        help="Download primary + fallback backends based on detected hardware",
+    )
+
     args = parser.parse_args(argv)
 
     # ── Route to subcommand handler ───────────────────────────────────
     if args.command == "init":
         sys.exit(cmd_init(force=args.force))
+
+    if args.command == "download-backend":
+        sys.exit(cmd_download_backend(backend_name=args.backend, version=args.version))
+
+    if args.command == "download-all":
+        sys.exit(cmd_download_all())
 
     # Default: chat subcommand (for backwards compat with no subcommand)
     if hasattr(args, 'config'):
