@@ -1,174 +1,122 @@
 # Configuration Format (YAML)
 
-The runner reads from the same YAML configuration used by `ConfigManager`. This document covers the top-level settings, the `env:` section, `images:`, `backends:`, `runners:`, and `models:`.
+ModelArkestra uses **two configuration files** that work together:
 
-See [Usage Guide](./usage.md#basic-initialization) for how to load a config file.
+| File | Purpose | User Editability |
+|------|---------|-----------------|
+| `~/.config/arkestra/config.yaml` | Model definitions, ports, global defaults | Full — edit freely |
+| `~/.config/arkestra/backends.yaml` | Backend types, binary sources, download channels | **Advanced** — see below |
 
-## Top-Level Settings
+Both files are scaffolded together by `model-arkestra init`. They live in the XDG-compliant directory `~/.config/arkestra/`, resolvable via `resolve_config_path()` and `resolve_backends_path()`.
+
+```
+~/.config/arkestra/
+├── config.yaml        ← your models + global settings
+└── backends.yaml      ← backend definitions + download sources
+```
+
+## Quick Start: The Init Command
+
+```bash
+model-arkestra init --force          # writes both files from scratch
+model-arkestra list-backends         # shows available backends + binary status
+model-arkestra download-backend rocm  # downloads the ROCm binary
+model-arkestra start                 # validates backends, starts server
+```
+
+**Detection flow:** `init` probes your hardware (GPU vendor, CPU arch), then writes a `config.yaml` with `backends.default:` pointing to the best backend for your machine. The full backend definitions live in `backends.yaml`.
+
+## Configuration Commands
+
+| Command | Purpose |
+|---------|---------|
+| `model-arkestra init [--force]` | Scaffold both config files; sets default backend from detection |
+| `model-arkestra detect` | Read-only hardware report — no file changes |
+| `model-arkestra list-backends` | Table of backends: type, description, cached binary status |
+| `model-arkestra add-backend -l /path/to/binary [-n name] [-d desc]` | Add a custom local llama-server binary |
+| `model-arkestra remove-backend <name>` | Delete a backend from backends.yaml |
+| `model-arkestra download-backend <name> [--version TAG]` | Download a pre-built binary for a backend |
+| `model-arkestra download-all` | Auto-detect + download primary + fallback backends |
+
+---
+
+## `config.yaml` — Model Configuration
+
+This file defines models, ports, and global settings. Backend selection is minimal — just pick the default:
+
+```yaml
+models-start-port: 18000
+model-ports: 32
+warmup-time: 10
+
+app-log-lines: 2000
+
+env:
+  HF_HUB_CACHE: ~/.cache/huggingface
+
+backends:
+  default: rocm        # picks a backend from backends.yaml
+
+models:
+  qwen3.8-27b:
+    checkpoint: unsloth/Qwen3.8-27B-GGUF:Q4_K_M
+    args:
+      temp: 0.7
+      top-p: 0.80
+      top-k: 20
+      presence-penalty: 1.5
+      chat-template-kwargs: '{"reasoning_effort":"medium"}'
+
+  qwen3.6-27b-mtp:
+    checkpoint: unsloth/Qwen3.6-27B-MTP-GGUF:UD-Q4_K_XL
+    args:
+      temp: 0.6
+      top-p: 0.95
+      top-k: 20
+      chat-template-kwargs: '{"enable_thinking":true}'
+```
+
+### Top-Level Settings
 
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `models-start-port` | `int` | `18000` | First port in the auto-allocated range. |
-| `model-ports` | `int` | `32` | Number of ports available — valid range is `models-start-port` through `models-start-port + model-ports - 1`. Allocation raises `RuntimeError("Port range exceeded: …")` when exhausted. |
-| `warmup-time` | `float` | `10.0` | Seconds to wait after `/health` returns OK before marking the model as `"running"`. Improves reliability of the first inference request by bridging the gap between HTTP readiness and weight loading completion. |
-| `default-image` | `str` | `ark-llama:vulkan-radv` | Default container image tag for runners when no backend specifies an `image:`. Used as fallback in both PodmanModelRunner and DockerModelRunner. |
-| `app-log-lines` | `int` | `2000` | Number of server-level log entries to retain in the global ring buffer (Admin API → `/admin/logs`). Each entry is ~200 bytes, so 2000 lines ≈ 400 KB. |
-| `log-buffer-size` | `int` | `2000` | Maximum lines retained per-model in the process log ring buffer. Applied to both `_ModelContext` instances and runner-level buffers. |
+| `model-ports` | `int` | `32` | Number of ports available — valid range is `models-start-port` through `models-start-port + model-ports - 1`. |
+| `warmup-time` | `float` | `10.0` | Seconds to wait after `/health` returns OK before marking the model as `"running"`. |
+| `app-log-lines` | `int` | `2000` | Number of server-level log entries retained in the global ring buffer (Admin API → `/admin/logs`). Each entry ~200 bytes. |
+| `env` | `dict` | — | Environment variables merged into model subprocesses at startup (e.g., `HF_HUB_CACHE`). |
 
-## `env:` Section — Process Environment Variables
+### `backends.default:` Key
 
-Environment variables defined here are merged into the subprocess/container environment at startup, in addition to the host's current environment. This is how paths like `HF_HUB_CACHE` propagate to the server process.
-
-```yaml
-env:
-  HF_HUB_CACHE: /home/lemonade/hub
-```
-
-Environment variable resolution follows priority: method argument > config.yaml `env:` section > OS environment.
-
-## `images:` Section — Container Image Registry
-
-This section defines container images and their source Containerfiles, one entry per backend type. It is read by `default_image_for_backend()` (to resolve image tags) and `containerfile_for_backend()` (to locate the build artifact).
-
-```yaml
-images:
-  rocm:
-    image: ark-llama:rocm
-    containerfile: Containerfile.rocm
-    default: false
-  vulkan-radv:
-    image: ark-llama:vulkan-radv
-    containerfile: Containerfile.vulkan-radv
-    default: true
-
-default-image: ark-llama:vulkan-radv
-```
-
-### Image Configuration Keys
-
-| Key | Type | Description |
-|---|---|---|
-| `image` | str | Full image tag (e.g. `ark-llama:rocm`). Used as the default for this backend when no explicit `image:` is set in the backend config. |
-| `containerfile` | str | Filename of the Containerfile used to build the image. Resolved relative to `tests/files/` at project root. |
-| `default` | bool | Marks which image is the global default. Only one entry should be `true`. Controls the `default-image` top-level value. |
-
-The `default-image` top-level key serves as the ultimate fallback — when no images section, no backend `image:`, and no runner class has a configured value, this tag is used.
-
-## `engines:` Section — Inference Engine Registry
-
-Each engine defines shared defaults (binary location, default args, capabilities) that are inherited by backends referencing it via `engine: <name>`. Backend-level values override engine-level ones.
-
-```yaml
-engines:
-  llama_cpp:
-    binary_dir: /home/marc/local/llama.cpp/build/bin
-    binary: llama-server
-    args:
-      ctx-size: 16384
-      jinja: true
-    capabilities:
-      - chat
-      - embed
-```
-
-### Engine Configuration Keys
-
-| Key | Type | Description |
-|---|---|---|
-| `binary_dir` | str | Default directory containing the inference engine binary. Backends inherit this when they do not specify their own. |
-| `binary` | str | Default binary name (e.g. `"llama-server"`). Inherited by backends that omit it. |
-| `args` | dict | Default argument values for models using this engine. Deep-merged into the args cascade with engine values as fallbacks. |
-| `capabilities` | list[str] | Capability types supported by this engine (e.g. `["chat", "embed"]`). Used as a fallback when per-model and per-backend capabilities are not set. |
-
-## `backends:` Section — Executable Registry
-
-Each backend entry specifies its argument list and which runner type should handle it. Backend args use the same YAML dict format as model args — a flat mapping of flag names to values that merges into the defaults cascade.
+This single key selects which backend from `backends.yaml` is used as the default for all models that don't specify a `backend` override. It does **not** define the backend — that lives in `backends.yaml`.
 
 ```yaml
 backends:
-  vulkan-radv:
-    engine: llama_cpp
-    runner: process     ← maps this backend to ProcessModelRunner
-    args:
-      flash-attn: "on"
-      hf: ${CHECKPOINT}
-    image: ark-llama:vulkan-radv
-  rocm:
-    engine: llama_cpp
-    runner: podman      ← maps this backend to PodmanModelRunner
-    args:
-      flash-attn: "on"
-      hf: ${CHECKPOINT}
-    image: ark-llama:rocm
-  default: vulkan-radv         ← global default backend (also has runner: process)
+  default: rocm   # references an entry in backends.yaml
 ```
 
-When a model has `backend: rocm`, the routing chain resolves: `rocm` → `runner: podman` → `runners.podman` → `PodmanModelRunner`.
+### `models:` Section — Model Definitions
 
-### Backend Configuration Keys
+Each model uses `checkpoint` for the HF reference, `args:` for CLI flags, and optionally a `backend` override.
 
-| Key | Type | Description |
-|---|---|---|
-| `runner` | str | Runner type string (e.g. `"process"`, `"podman"`, `"docker"`). Resolved against `runners:` config or built-in registry. |
-| `binary_dir` | str | Absolute path to host directory containing the llama-server binary. Direct-process runners use it directly; container runners resolve it indirectly via `resolve_binary_from_backend()` in `common.py` (which also checks `version` and image name heuristics). |
-| `binary` | str | Binary name (default: `"llama-server"`). Used with `binary_dir` to form the full path. |
-| `image` | str | Container image tag for Podman/Docker runners. |
-| `devices` | list[str] | Device passthrough entries for container runs (e.g. `"/dev/dri/card1:rwm"`). |
-| `env_container` | dict | Environment variables passed into the container. Merged on top of global `env:`. |
-| `version` | str | ROCm/Vulkan version string — used to resolve binary dir from known build directory map (`_ROCM_BUILD_MAP`). |
-| `capabilities` | list[str] | Capability types this backend supports (e.g. `["chat", "embed"]`). Used as the admin UI's available-capabilities fallback when per-model `capabilities` is not set. Hardcoded baseline is `["chat"]`. |
+#### `args:` Field Format
 
-## `runners:` Section — Runner Class Registry
+The `args:` key is a **flat YAML dict** where each key is a CLI flag name (kebab-case):
 
-This section maps runner type strings to concrete class names. Built-in types (`process`, `podman`, `docker`) are auto-registered; config entries can override them or add new ones (as long as the class is importable from this module).
-
-```yaml
-runners:
-  podman: PodmanModelRunner
-  docker: DockerModelRunner
-  default: ProcessModelRunner
-```
-
-The `default` key specifies the fallback runner type when neither `backends.<id>.runner` nor a model's own `backend` field provides one.
-
-See [Architecture](./architecture.md) for the runner routing precedence table.
-
-## `models:` Section — Model Definitions
-
-Each model entry uses `checkpoint` for the model path, structurally separated `args:` for CLI flags, and optionally `backend` to override which backend registry entry is used. **There is no `cmd` field** — commands are assembled at start time via the backend registry.
-
-### `args:` Field Format
-
-The `args:` key holds a **flat YAML dict** where each key is a CLI flag name (kebab-case) and each value becomes the flag's argument. Entries are resolved in config-dict order.
-
-| Style | YAML Entry | Reconstructed Flag |
+| Style | YAML Entry | Flag Output |
 |---|---|---|
 | Standard value | `temp: 0.7` | `--temp 0.7` |
-| Boolean `true` | `jinja: true` | `--jinja` (presence-only, no value) |
-| Boolean `false` | `no-mmap: false` | omitted from the list entirely |
+| Boolean `true` | `jinja: true` | `--jinja` (presence-only) |
+| Boolean `false` | `no-mmap: false` | omitted entirely |
 | HuggingFace repo | `hf: user/repo:Q4_K_M` | `-hf user/repo:Q4_K_M` |
 
-Keys use kebab-case in YAML, matching CLI flag names directly. **Special key `hf`** maps to the llama-server `-hf` flag for loading models from HuggingFace Hub (not a regular `--hf` flag). Non-arg model metadata (checkpoint, capabilities, max_log_lines) lives at the model level alongside `args:`, not inside it — only `args:` keys reach subprocesses.
-
-Backend args use the same dict format.
-
-```yaml
-backends:
-  rocm:
-    runner: process
-    args:
-      flash-attn: "on"
-```
-
-> **Note:** YAML interprets bare `on` and `off` as boolean values. Always quote them (`"on"`, `"off"`) for llama-server flags that accept string values.
-
-Model args and backend args merge through the same defaults cascade — dict-style entries from each layer are combined with later layers overriding earlier ones (last-wins for overlapping keys).
+> **Note:** YAML interprets bare `on` and `off` as booleans. Always quote them (`"on"`, `"off"`) for flags that accept strings.
 
 ```yaml
 models:
   qwen3-4b:
     checkpoint: unsloth/Qwen3-4B-GGUF:Q4_K_M
-    backend: rocm
+    backend: rocm            # optional override (defaults to backends.default)
 
     args:
       temp: 0.7
@@ -176,30 +124,178 @@ models:
       ctx-size: 16384
       jinja: true
 
-    max_log_lines: 500        # per-model override of the default 500 (stored in admin context, not passed to subprocess)
-    capabilities: ["chat"]     # non-arg — never reaches subprocess
+    max_log_lines: 500        # per-model log buffer size
+    capabilities: ["chat"]     # non-arg — shown in admin UI, not passed to subprocess
 ```
 
-### Argument Resolution & Defaults Chain
+---
 
-Arguments follow a six-layer resolution cascade — each layer fills in values missing from the one above:
+## `backends.yaml` — Backend Definitions & Download Sources
+
+> ⚠️ **Advanced:** This file is auto-generated on `init`. Edit with caution if you're not familiar with backend configuration. Use `model-arkestra add-backend` for custom binaries.
+
+```yaml
+backends:
+
+  vulkan-radv:
+    type: vulkan-radv
+    description: "Vulkan with RADV driver — works on AMD, NVIDIA, Intel"
+    runner: ProcessModelRunner
+    binary_source: official-vulkan-radv
+    args:
+      ngl: 999
+      ctx-size: ${ctx-size}
+
+  rocm:
+    type: rocm
+    description: "ROCm — best for AMD iGPU and discrete GPUs"
+    runner: ProcessModelRunner
+    binary_source: lemonade-rocm-nightly
+    args:
+      ngl: 999
+      ctx-size: ${ctx-size}
+
+  nvidia-cuda:
+    type: nvidia-cuda
+    description: "NVIDIA CUDA — for NVIDIA discrete GPUs"
+    runner: ProcessModelRunner
+    binary_source: official-cuda
+    args:
+      ngl: 999
+      ctx-size: ${ctx-size}
+
+  cpu-optimized:
+    type: cpu
+    description: "CPU-only mode — uses all available cores"
+    runner: ProcessModelRunner
+    binary_source: ggml-org-cpu
+    args:
+      threads: ${nproc}
+      no-mmap: true
+
+
+# ── Download sources (referenced by backends above) ───────────────
+
+sources:
+
+  official-vulkan-radv:
+    type: github-release
+    repo: ggml-org/llama.cpp
+    release_type: latest
+    asset_pattern: "llama-server-*-bin-*-vulkan*"
+    sha256_asset: "*.sha256"
+
+  lemonade-rocm-nightly:
+    type: github-release
+    repo: lemonade-sdk/llamacpp-rocm
+    release_type: latest
+    asset_pattern: "*-linux-x86_64.tar.gz"
+    sha256_asset: "*.sha256"
+
+  official-cuda:
+    type: github-release
+    repo: ggml-org/llama.cpp
+    release_type: latest
+    asset_pattern: "llama-server-*-bin-*-cuda*"
+    sha256_asset: "*.sha256"
+
+  ggml-org-cpu:
+    type: github-release
+    repo: ggml-org/llama.cpp
+    release_type: latest
+    asset_pattern: "llama-server-*-bin-*-static*"
+    sha256_asset: ""
+
+
+defaults:
+  release_type: latest
+  verify_checksum: true
+  cache_ttl_hours: 24
+```
+
+### Backend Entry Keys
+
+| Key | Type | Description |
+|---|---|---|
+| `type` | str | Backend type identifier (`rocm`, `vulkan-radv`, `nvidia-cuda`, `cpu`, or `custom`). Determines binary variant. |
+| `description` | str | Human-readable description shown in `list-backends`. |
+| `runner` | str | Runner class name (e.g., `"ProcessModelRunner"`). Always `ProcessModelRunner` for process runners. |
+| `binary_source` | str | Name of a source entry from the `sources:` section below. |
+| `args` | dict | Default CLI arguments merged into model args during startup. |
+| `binary_path` | str | (Only for `type: custom`) Absolute path to an already-built llama-server binary. |
+
+### Source Entry Keys
+
+| Key | Type | Description |
+|---|---|---|
+| `type` | str | Source type: `"github-release"`, `"oci-image"`, or `"local-file"`. |
+| `repo` | str | (For github-release) Owner/repo on GitHub (e.g., `"ggml-org/llama.cpp"`). |
+| `release_type` | str | `"latest"` for newest tag via API, or a pinned version like `"v2.95"`. |
+| `asset_pattern` | str | Glob pattern to match the desired download asset. |
+| `sha256_asset` | str | Pattern for checksum sidecar file; empty string skips verification. |
+| `registry` | str | (For oci-image) Container registry hostname. |
+| `tag` | str | (For oci-image) Image tag to pull. |
+| `path` | str | (For local-file) Absolute path to a pre-built binary. |
+
+### Custom Backend Entries (User-Added)
+
+Add custom backends via the CLI:
+
+```bash
+model-arkestra add-backend --local /opt/my-builds/llama-server \
+                           --name my-avx512 \
+                           --description "Custom AVX512 build"
+```
+
+This appends to the `backends:` section of backends.yaml:
+
+```yaml
+my-avx512:
+  type: custom
+  description: "Custom AVX512 build"
+  runner: ProcessModelRunner
+  binary_path: /opt/my-builds/llama-server
+  args:
+    ngl: 999
+    ctx-size: ${ctx-size}
+```
+
+Then select it in config.yaml:
+
+```yaml
+backends:
+  default: my-avx512
+```
+
+---
+
+## Backend Resolution & Defaults Chain
+
+Arguments follow a six-layer resolution cascade — each layer fills values missing from the one above:
 
 1. `**overrides` passed to `start()` — transient, single invocation only
 2. Model-level `args:` dict — explicit per-model overrides
 3. `defaults:` section at top level of config.yaml — global shared defaults
-4. Backend class defaults — each backend defines fallback values
-5. Engine + runner type defaults — inference engine and execution container baselines
-6. Hardcoded fallbacks on the base runner class
+4. Backend entry `args:` from backends.yaml — inherited by all models using it
+5. Source-level defaults (cache TTL, checksum verification)
+6. Hardcoded fallbacks
 
-Each backend (e.g., `rocm`, `vulkan-radv`) declares its inference engine in `engine:`. Engine defaults (binary location, arg defaults, capabilities) are inherited by the backend — backend-level values override engine-level ones.
+Backend selection resolution:
 
-### Admin UI Rendering
+1. Model's `backend:` field (if specified)
+2. `backends.default:` key in config.yaml
+3. `"vulkan-radv"` hardwired fallback
 
-The admin dashboard maps arg styles to typed controls: standard values use number/text inputs, booleans use toggle switches, presence flags use checkboxes. Overrides sent via start/stop buttons are typed JSON matching these styles — the UI never sends opaque strings.
+Runner resolution (for ProcessModelRunner, always process):
+
+1. Backend entry's `runner:` field
+2. Hardwired `"ProcessModelRunner"` for process mode
+
+---
 
 ## Related Documentation
 
-- [Usage Guide](./usage.md) — how to load and use a config file
+- [Usage Guide](./usage.md) — how to load and use config files
 - [Architecture](./architecture.md) — runner routing based on backend config
 - [Admin API](./admin.md) — runtime config management via HTTP endpoints
-- [Server Documentation](./server.md) — CLI options for server startup
+- [Lifecycle](./lifecycle.md) — state transitions for model runners

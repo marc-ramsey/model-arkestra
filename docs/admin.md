@@ -366,7 +366,7 @@ The buffer is configurable via `app-log-lines` in the YAML config (default: 2000
 
 ### GET /admin/images
 
-List all container images configured in the `images:` section of the config file, along with their runner type and availability status. Resolves each backend's runner through the config chain (backends.<id>.runner → runners.<type> → default).
+List all container images configured in `backends.yaml`, along with their runner type and availability status.
 
 Returns a JSON array:
 ```json
@@ -384,7 +384,7 @@ Returns a JSON array:
 
 | Field | Description |
 |---|---|
-| `backend_id` | Backend identifier from the `images:` section |
+| `backend_id` | Backend identifier from the `backends:` section of backends.yaml |
 | `runner` | Resolved runner type (`podman`, `docker`, or `process`) |
 | `runtime_detected` | Whether the container runtime for this runner is available on PATH |
 | `image` | Full image tag configured for this backend |
@@ -421,7 +421,7 @@ Build runs synchronously with a 600s timeout. The full stdout/stderr from the co
 
 ### DELETE /admin/images/{image_tag}
 
-Remove an image tag from the local store. The tag must match one configured in a backend's `images:` entry.
+Remove an image tag from the local store. The tag must match one configured in a backend's `image:` entry in backends.yaml.
 
 ```json
 DELETE /admin/images/ark-llama:rocm
