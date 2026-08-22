@@ -1,10 +1,11 @@
-"""Arkestra terminal chat client.
+"""Arkestra CLI — chat client and init scaffolding.
 
 Usage:
     arkestra-cli --config config.yaml --model qwen3-4b          # direct (connects to model ports)
     arkestra-cli --server http://localhost:8080 --model gpt-4     # via server
+    arkestra-cli init                                           # scaffold default config files
 
-Types ``/help`` for commands, ``/quit`` or ``Ctrl+D`` to exit.
+Chat client types ``/help`` for commands, ``/quit`` or ``Ctrl+D`` to exit.
 
 Supports streaming output and full multi-turn conversation history.
 """
@@ -12,7 +13,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import shutil
 import sys
+from pathlib import Path
+
+try:
+    from importlib.resources import files as resources_files
+except ImportError:
+    from importlib_resources import files as resources_files
 
 try:
     import aiohttp
@@ -188,6 +196,62 @@ Chat preserves full multi-turn history — every turn is sent to the model.
 """)
 
 
+# ═══════════════════════════════════════════════════════════
+# Init command — scaffold default config files
+# ═══════════════════════════════════════════════════════════
+DEFAULT_CONFIG_DIR = Path.home() / ".config" / "arkestra"
+TEMPLATE_FILES = ["config.yaml.j2", "sources.yaml.j2"]
+
+
+def cmd_init(force: bool = False) -> int:
+    """Scaffold default config files in ~/.config/arkestra/.
+
+    Returns 0 on success, 1 on error.
+    """
+    config_dir = DEFAULT_CONFIG_DIR
+    config_file = config_dir / "config.yaml"
+    sources_file = config_dir / "sources.yaml"
+
+    # Check for existing files
+    if not force and (config_file.exists() or sources_file.exists()):
+        print(f"Config directory already exists: {config_dir}", file=sys.stderr)
+        print("Files present:  ", end="")
+        existing = [f.name for f in config_dir.iterdir() if f.is_file()]
+        print(", ".join(existing) or "(none)")
+        print("\nUse --force to overwrite existing files.", file=sys.stderr)
+        return 1
+
+    # Create directory and copy templates
+    config_dir.mkdir(parents=True, exist_ok=True)
+    src_pkg = resources_files("model_arkestra.templates")
+    
+    for template_name in TEMPLATE_FILES:
+        dest = config_dir / template_name.replace(".j2", "")
+        try:
+            # Read from package resource
+            content = (src_pkg / template_name).read_text()
+            dest.write_text(content)
+            print(f"Created {dest}")
+        except Exception as exc:
+            print(f"Error creating {template_name}: {exc}", file=sys.stderr)
+            return 1
+
+    print(f"\nConfig files scaffolded to {config_dir}")
+    print("Edit config.yaml to add models and backends.")
+    print("See sample-config.yaml in the repository for a complete reference.")
+    return 0
+
+
+def cmd_init_wrapper() -> None:
+    """Convenience entry point: arkestra-init [--force]."""
+    import argparse
+    parser = argparse.ArgumentParser(prog="arkestra-init")
+    parser.add_argument("--force", "-f", action="store_true",
+                        help="Overwrite existing config files")
+    args, _ = parser.parse_known_args()
+    sys.exit(cmd_init(force=args.force))
+
+
 # ── Entry point ───────────────────────────────────────────────────────
 
 def main(argv: list[str] | None = None) -> None:
@@ -199,21 +263,45 @@ def main(argv: list[str] | None = None) -> None:
     """
     parser = argparse.ArgumentParser(
         prog="arkestra-cli",
-        description="Terminal chat client for ModelArkestra models.",
+        description="ModelArkestra — chat client, init, and more.",
     )
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--config", "-c", help="YAML config file path (direct mode)")
-    group.add_argument("--server", "-x", default=None, help="Server URL (e.g. http://localhost:8080)")
-    parser.add_argument("--model", "-m", required=True, help="Model name to chat with")
-    parser.add_argument("--broadcast-addr", default=None,
-                        help='Broadcast address for models (default: 0.0.0.0)')
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # ── init subcommand ───────────────────────────────────────────────
+    init_parser = subparsers.add_parser(
+        "init",
+        help="Scaffold default config files in ~/.config/arkestra/",
+    )
+    init_parser.add_argument(
+        "--force", "-f",
+        action="store_true",
+        help="Overwrite existing config files",
+    )
+
+    # ── chat subcommand (default) ─────────────────────────────────────
+    chat_parser = subparsers.add_parser(
+        "chat",
+        help="Interactive chat client for ModelArkestra models",
+    )
+    chat_group = chat_parser.add_mutually_exclusive_group(required=True)
+    chat_group.add_argument("--config", "-c", help="YAML config file path (direct mode)")
+    chat_group.add_argument("--server", "-x", default=None, help="Server URL")
+    chat_parser.add_argument("--model", "-m", required=True, help="Model name to chat with")
+    chat_parser.add_argument("--broadcast-addr", default=None,
+                             help='Broadcast address for models (default: 0.0.0.0)')
 
     args = parser.parse_args(argv)
-    broadcast_addr = args.broadcast_addr if args.broadcast_addr is not None else "0.0.0.0"
 
-    if args.server:
-        asyncio.run(chat_server(args.server, args.model))
-    else:
-        asyncio.run(chat_direct(args.config, args.model, broadcast_addr))
+    # ── Route to subcommand handler ───────────────────────────────────
+    if args.command == "init":
+        sys.exit(cmd_init(force=args.force))
+
+    # Default: chat subcommand (for backwards compat with no subcommand)
+    if hasattr(args, 'config'):
+        broadcast_addr = args.broadcast_addr or "0.0.0.0"
+        if args.server:
+            asyncio.run(chat_server(args.server, args.model))
+        else:
+            asyncio.run(chat_direct(args.config, args.model, broadcast_addr))
 
 

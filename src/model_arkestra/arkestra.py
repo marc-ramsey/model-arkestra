@@ -9,7 +9,9 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Set
 
 from llm_config_manager.config_manager import ConfigManager
 from model_arkestra.base import BaseModelRunner
-from model_arkestra.common import _resolve_backend, default_cache_root
+from model_arkestra.common import (
+    _resolve_backend, default_cache_root, resolve_config_path,
+)
 from model_arkestra.docker import DockerModelRunner
 from model_arkestra.podman import PodmanModelRunner
 from model_arkestra.process import ProcessModelRunner
@@ -20,12 +22,29 @@ from model_arkestra.unicode_ringbuffer import UnicodeRingBuffer
 class ModelArkestra:
     """Start/ainvoke/astream/stop all models through one object."""
 
-    def __init__(self, config_path: str, start_port: int = 18000, **runner_kwargs: Any):
-        self._cm = ConfigManager(config_path)
+    def __init__(
+        self,
+        config_path: Optional[str] = None,
+        start_port: int = 18000,
+        sources_config: Optional[Dict[str, Any]] = None,
+        **runner_kwargs: Any,
+    ):
+        # Resolve config path — defaults to ~/.config/arkestra/config.yaml
+        self._config_path = resolve_config_path(config_path)
+        self._cm = ConfigManager(str(self._config_path))
         self._next_port = self._cm.data.get('models-start-port', start_port)
         self._runners: Dict[str, BaseModelRunner] = {}
         self._runner_kwargs = runner_kwargs
         self._build_runner_class_map()
+        # Load sources.yaml from same directory as config (if present)
+        parent = self._config_path.parent
+        sources_path = parent / "sources.yaml"
+        if sources_config is not None:
+            self._sources = sources_config
+        elif sources_path.exists():
+            self._sources = ConfigManager(str(sources_path)).data.get("sources", {})
+        else:
+            self._sources = {}
         # ── Global log buffer (single ring for all server-level events) ─
         app_log_lines = int(self._cm.data.get('app-log-lines', 2000))
         self._global_log_buf = UnicodeRingBuffer(app_log_lines * _ModelContext.AVG_LINE_BYTES)

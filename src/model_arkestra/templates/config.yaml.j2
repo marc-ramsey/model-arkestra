@@ -1,0 +1,34 @@
+# ═══════════════════════════════════════════════════════════
+# config.yaml — ModelArkestra configuration
+# ═══════════════════════════════════════════════════════════
+# This is a minimal scaffold. See sample-config.yaml in the
+# repository for a complete reference with all backends and options.
+
+models-start-port: 18000
+model-ports: 32
+warmup-time: 10
+
+defaults:
+  ctx-size: 16384
+  jinja: true
+  n-gpu-layers: 999
+  no-mmap: true
+
+env:
+  HF_HUB_CACHE: ~/.cache/huggingface
+
+engines:
+  llama_cpp:
+    binary: llama-server
+    args:
+      ctx-size: ${ctx-size}
+      jinja: true
+      n-gpu-layers: ${n-gpu-layers}
+      no-mmap: true
+    capabilities:
+      - chat
+
+backends:
+  default: vulkan-radv
+
+models: {}

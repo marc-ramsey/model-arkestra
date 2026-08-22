@@ -35,6 +35,8 @@ except ImportError:
         'Install with: pip install "model-arkestra[proxy]"'
     )
 
+from model_arkestra.common import resolve_config_path
+
 try:
     from pydantic import BaseModel, Field
 except ImportError:
@@ -157,7 +159,7 @@ class ArkestraServer:
 
     def __init__(
         self,
-        config_path: str,
+        config_path: Optional[str] = None,
         port: int = 8080,
         ready_timeout: float = 120.0,
         openai_aliases: Optional[Dict[str, str]] = None,
@@ -173,8 +175,10 @@ class ArkestraServer:
         self.allow_origins = allow_origins
 
         from model_arkestra.arkestra import ModelArkestra
+        # Resolve config path — defaults to ~/.config/arkestra/config.yaml
+        resolved_path = str(resolve_config_path(config_path))
         self._arkestra = ModelArkestra(
-            config_path,
+            resolved_path,
             ready_timeout=ready_timeout,
             broadcast_addr=broadcast_addr,
         )

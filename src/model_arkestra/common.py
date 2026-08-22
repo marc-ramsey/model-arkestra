@@ -12,6 +12,40 @@ import yaml
 # Subprocess env — convert os.environ to plain dict for uvloop compatibility
 SUBPROCESS_ENV: Dict[str, str] = dict(os.environ)
 
+# ── Default config directory ───────────────────────────────────────────────
+DEFAULT_CONFIG_DIR = Path.home() / ".config" / "arkestra"
+
+
+def resolve_config_path(config_path: Optional[str] = None) -> Path:
+    """Resolve config.yaml path from explicit arg or default location.
+
+    Resolution order:
+      1. Explicit ``config_path`` argument (absolute or relative)
+      2. ``DEFAULT_CONFIG_DIR / 'config.yaml'``
+
+    Does NOT create the directory — that's left to ConfigManager which will
+    raise FileNotFoundError with a clear message pointing users to
+    sample-config.yaml for scaffolding.
+    """
+    if config_path:
+        return Path(config_path).expanduser()
+    return DEFAULT_CONFIG_DIR / "config.yaml"
+
+
+def resolve_sources_path(config_dir: Optional[str] = None) -> Optional[Path]:
+    """Resolve sources.yaml path from explicit arg or default location.
+
+    Resolution order:
+      1. Explicit ``config_dir`` argument → ``{config_dir}/sources.yaml``
+      2. ``DEFAULT_CONFIG_DIR / 'sources.yaml'``
+
+    Returns None if neither resolves to an existing file (caller should
+    treat as "no sources configured" and fall back to Containerfile builds).
+    """
+    base = Path(config_dir).expanduser() if config_dir else DEFAULT_CONFIG_DIR
+    path = base / "sources.yaml"
+    return path if path.exists() else None
+
 
 def default_cache_root() -> Path:
     """Return a sensible default HuggingFace / GGUF model cache directory.
