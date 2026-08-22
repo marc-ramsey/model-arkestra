@@ -175,10 +175,6 @@ class ModelArkestra:
         for r in self._runners.values():
             if model_name in r._models and r._models[model_name].state == RunnerState.RUNNING:
                 return r
-        # Find the runner that has this model
-        for r in self._runners.values():
-            if model_name in r._models and r._models[model_name].state == RunnerState.RUNNING:
-                return r
         runner_type = self._resolve_runner_type(model_name, env_vars, backend)
         return self._get_runner_instance(runner_type, model_name)
 
