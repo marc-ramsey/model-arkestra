@@ -155,7 +155,7 @@ class ArkestraServer:
         ready_timeout: float = 120.0,
         openai_aliases: Optional[Dict[str, str]] = None,
         extra_headers: Optional[Dict[str, str]] = None,
-        broadcast_addr: Optional[str] = "127.0.0.1",
+        broadcast_addr: Optional[str] = None,
     ):
         self.port = port
         self.openai_aliases = openai_aliases or {}
@@ -200,7 +200,7 @@ class ArkestraServer:
 
         @app.post("/v1/chat/completions")
         async def chat_completions(req: ChatCompletionRequest):
-            model_name = self._resolve_model(req.model)
+            model_name = self.openai_aliases.get(req.model, req.model)
             # Only start if not already running — avoid consuming extra ports
             if not any(ctx.name == model_name for ctx in self._arkestra._get_model_contexts()):
                 try:
@@ -261,15 +261,6 @@ class ArkestraServer:
 
         self._app = app
         return app
-
-    # ── Model resolution ──────────────────────────────────────────
-
-    def _resolve_model(self, openai_id: str) -> str:
-        """Resolve an OpenAI-style model ID to our internal model name."""
-        if openai_id in self.openai_aliases:
-            return self.openai_aliases[openai_id]
-        # Try direct match first
-        return openai_id
 
     # ── Completion (non-streaming) ────────────────────────────────
 
@@ -377,7 +368,6 @@ class ArkestraServer:
 
         Sets ``self._server`` so the admin shutdown route can stop uvicorn cleanly.
         """
-        import uvicorn
 
         app = self.get_app()
         config = uvicorn.Config(app, host="0.0.0.0", port=self.port, log_level="info")
