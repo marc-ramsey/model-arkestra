@@ -35,12 +35,15 @@ MODEL_CONFIG_FIELDS = frozenset({"args", "checkpoint", "backend", "capabilities"
 INFRA_KEYS = frozenset({"args", "checkpoint", "backend", "runner", "max_log_lines"})
 
 # ── Capability resolution helpers ────────────────────────────────
-def _resolve_capabilities(model_cfg: dict | None, global_cfg: dict | None, backend_id: str | None = None) -> list[str]:
+def _resolve_capabilities(model_cfg: dict | None, global_cfg: dict | None,
+                          backend_id: str | None = None,
+                          backend_cfg: dict | None = None) -> list[str]:
     """Resolve available capability types using the normal chain:
 
     1. Per-model ``capabilities`` (explicit override)
     2. Backend-declared ``backends.<id>.capabilities``
-    3. Hardcoded fallback ``["chat"]``
+    3. Engine-declared ``engines.<name>.capabilities``
+    4. Hardcoded fallback ``["chat"]``
     """
     if model_cfg and model_cfg.get("capabilities"):
         return list(model_cfg["capabilities"])
@@ -53,6 +56,15 @@ def _resolve_capabilities(model_cfg: dict | None, global_cfg: dict | None, backe
             caps = (b.get(str(bid)) or {}).get("capabilities")
             if isinstance(caps, list) and caps:
                 return list(caps)
+
+    # Engine-declared capabilities (via backend's engine field)
+    bcfg = backend_cfg or b.get(str(bid or ""), {}) if bid else {}
+    engine_name = (bcfg or {}).get("engine")
+    if engine_name:
+        engines = (global_cfg or {}).get("engines") or {}
+        eng_caps = (engines.get(engine_name) or {}).get("capabilities")
+        if isinstance(eng_caps, list) and eng_caps:
+            return list(eng_caps)
 
     return ["chat"]
 
@@ -190,8 +202,11 @@ class ArkestraAdmin:
 
                     # Resolve available capabilities per-model (normal chain)
                     global_cfg = self.server._arkestra.cm.data or {}
+                    bcfg = (global_cfg.get("backends") or {}).get(str(entry.get("backend_id") or ""))
                     entry["available_capabilities"] = _resolve_capabilities(
-                        model_cfg, global_cfg, backend_id=str(entry.get("backend_id") or "") or None,
+                        model_cfg, global_cfg,
+                        backend_id=str(entry.get("backend_id") or "") or None,
+                        backend_cfg=bcfg if isinstance(bcfg, dict) else {},
                     )
                     data.append(entry)
 
@@ -340,9 +355,12 @@ class ArkestraAdmin:
 
             # Resolve available capabilities for this model
             global_cfg = self.server._arkestra.cm.data or {}
+            bid = cfg[model].get("backend")
+            bcfg = (global_cfg.get("backends") or {}).get(str(bid) if bid else "")
             available_caps = _resolve_capabilities(
                 cfg[model], global_cfg,
-                backend_id=str(cfg[model].get("backend") or "") or None,
+                backend_id=str(bid) if bid else None,
+                backend_cfg=bcfg if isinstance(bcfg, dict) else {},
             )
 
             return {

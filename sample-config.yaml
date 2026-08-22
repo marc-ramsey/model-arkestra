@@ -12,9 +12,23 @@ env:
   HF_HUB_CACHE: /home/lemonade/hub
   HF_HUB_CACHE: /home/lemonade/hub
 
+engines:
+  llama_cpp:
+    binary_dir: /home/marc/local/llama.cpp/build/bin
+    binary: llama-server
+    args:
+      ctx-size: 16384
+      jinja: true
+      n-gpu-layers: 999
+      no-mmap: true
+    capabilities:
+      - chat
+      - embed
+
 backends:
   default: vulkan-radv
   rocm:
+    engine: llama_cpp
     image: ark-llama:rocm
     container: Containerfile.rocm
     runner: podman
@@ -35,6 +49,7 @@ backends:
       GGML_CUDA_ENABLE_UNIFIED_MEMORY: 'ON'
       ROCBLAS_USE_HIPBLASLT: '1'
   vulkan-radv:
+    engine: llama_cpp
     image: ark-llama:vulkan-radv
     container: Containerfile.vulkan-radv
     runner: process

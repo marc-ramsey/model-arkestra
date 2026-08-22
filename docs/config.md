@@ -52,6 +52,32 @@ default-image: ark-llama:vulkan-radv
 
 The `default-image` top-level key serves as the ultimate fallback — when no images section, no backend `image:`, and no runner class has a configured value, this tag is used.
 
+## `engines:` Section — Inference Engine Registry
+
+Each engine defines shared defaults (binary location, default args, capabilities) that are inherited by backends referencing it via `engine: <name>`. Backend-level values override engine-level ones.
+
+```yaml
+engines:
+  llama_cpp:
+    binary_dir: /home/marc/local/llama.cpp/build/bin
+    binary: llama-server
+    args:
+      ctx-size: 16384
+      jinja: true
+    capabilities:
+      - chat
+      - embed
+```
+
+### Engine Configuration Keys
+
+| Key | Type | Description |
+|---|---|---|
+| `binary_dir` | str | Default directory containing the inference engine binary. Backends inherit this when they do not specify their own. |
+| `binary` | str | Default binary name (e.g. `"llama-server"`). Inherited by backends that omit it. |
+| `args` | dict | Default argument values for models using this engine. Deep-merged into the args cascade with engine values as fallbacks. |
+| `capabilities` | list[str] | Capability types supported by this engine (e.g. `["chat", "embed"]`). Used as a fallback when per-model and per-backend capabilities are not set. |
+
 ## `backends:` Section — Executable Registry
 
 Each backend entry specifies its argument list and which runner type should handle it. Backend args use the same YAML dict format as model args — a flat mapping of flag names to values that merges into the defaults cascade.
@@ -59,12 +85,14 @@ Each backend entry specifies its argument list and which runner type should hand
 ```yaml
 backends:
   vulkan-radv:
+    engine: llama_cpp
     runner: process     ← maps this backend to ProcessModelRunner
     args:
       flash-attn: "on"
       hf: ${CHECKPOINT}
     image: ark-llama:vulkan-radv
   rocm:
+    engine: llama_cpp
     runner: podman      ← maps this backend to PodmanModelRunner
     args:
       flash-attn: "on"
@@ -161,7 +189,7 @@ Arguments follow a six-layer resolution cascade — each layer fills in values m
 5. Engine + runner type defaults — inference engine and execution container baselines
 6. Hardcoded fallbacks on the base runner class
 
-Each backend (e.g., `rocm`, `vulkan-radv`) implies an inference engine (llama.cpp). The engine is resolved from the backend name — users do not specify it separately. This keeps config minimal while each engine maintains its own target registry and default chain.
+Each backend (e.g., `rocm`, `vulkan-radv`) declares its inference engine in `engine:`. Engine defaults (binary location, arg defaults, capabilities) are inherited by the backend — backend-level values override engine-level ones.
 
 ### Admin UI Rendering
 

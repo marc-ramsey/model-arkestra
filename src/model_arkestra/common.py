@@ -507,3 +507,41 @@ def _resolve_backend(
         f"No backend specified for model '{model_name}' "
         "(no override, no per-model 'backend' key, no 'backends.default')"
     )
+
+# ── Engine resolution helpers ───────────────────────────────────
+def _resolve_engine(cm: Any, engine_name: Optional[str] = None) -> Dict[str, Any]:
+    """Resolve an engine config dict by name from the ``engines:`` section.
+
+    Falls back to the first (and typically only) engine registered when
+    *engine_name* is not provided.
+    """
+    engines = (cm.data or {}).get("engines") or {}
+    if isinstance(engines, dict):
+        if engine_name and engine_name in engines:
+            eng = engines[engine_name]
+            return eng if isinstance(eng, dict) else {}
+        # No name specified — fall back to the first registered engine
+        for eid, ecfg in engines.items():
+            if isinstance(ecfg, dict):
+                return ecfg
+    return {}
+
+def _merge_engine_defaults(engine_cfg: Dict[str, Any], backend_cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge engine-level defaults into backend config.
+
+    Backend values override engine values at the top level.  The ``args``
+    sub-dict is deep-merged so that nested keys from the engine provide
+    fallbacks while backend-specific args take precedence.
+    """
+    merged: Dict[str, Any] = {}
+    # Top-level scalar/string fields — engine fallback → backend override
+    for key in (engine_cfg or {}):
+        merged[key] = engine_cfg.get(key)  # start with engine value
+    for key in (backend_cfg or {}):
+        if key == "args" and isinstance(merged.get("args"), dict):
+            # Deep-merge args dicts: engine values are fallbacks
+            deep_args = {**merged["args"], **backend_cfg["args"]}
+            merged[key] = deep_args
+        else:
+            merged[key] = backend_cfg[key]
+    return merged

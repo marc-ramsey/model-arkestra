@@ -4,7 +4,7 @@ import os
 import signal
 from typing import Any, Dict, List
 from model_arkestra.base import BaseModelRunner
-from model_arkestra.common import build_model_args
+from model_arkestra.common import _merge_engine_defaults, _resolve_engine, build_model_args
 from model_arkestra.llama_cpp import LlamaCppEngine
 from model_arkestra.types import _ModelContext
 
@@ -25,14 +25,19 @@ class ProcessModelRunner(BaseModelRunner):
     ) -> None:
         await self._ensure_port_available(ctx.port)
 
-        # Resolve backend for binary_dir, binary name, and env vars.
+        # Resolve backend and merge engine defaults.
         be_id = ctx.backend_id or model_data.get("backend")
         if not be_id:
             be_id = self.cm.data.get("backends", {}).get("default")
         backend = self.cm.get_backend(be_id) if be_id else {}
 
-        binary_dir = backend.get("binary_dir", "")
-        binary_name = backend.get("binary", "llama-server")
+        # Resolve engine and merge its defaults into the backend config.
+        engine_name = (backend or {}).get("engine", "llama_cpp")
+        engine_cfg = _resolve_engine(self.cm, engine_name)
+        merged = _merge_engine_defaults(engine_cfg, backend or {})
+
+        binary_dir = merged.get("binary_dir", "") or ""
+        binary_name = merged.get("binary", "llama-server") or "llama-server"
         binary_path = os.path.join(binary_dir, binary_name)
         if not os.path.isfile(binary_path):
             raise RuntimeError(
@@ -41,8 +46,12 @@ class ProcessModelRunner(BaseModelRunner):
 
         # Filter inference kwargs through engine — drop anything not valid for llama.cpp.
         raw_inference = self._inference_kwargs.get(ctx.name, {})
-        engine = LlamaCppEngine()
-        filtered_inference = engine.filter_infer_kwargs(raw_inference)
+        if engine_name == "llama_cpp":
+            from model_arkestra.llama_cpp import LlamaCppEngine
+            engine = LlamaCppEngine()
+        else:
+            engine = None  # future: resolve by name
+        filtered_inference = engine.filter_infer_kwargs(raw_inference) if engine else raw_inference
 
         # Build args from config backend + model + inference kwargs.
         result = build_model_args(
