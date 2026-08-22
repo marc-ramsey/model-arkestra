@@ -430,8 +430,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--ready-timeout", "-t",
-        type=float, default=60.0,
-        help='Seconds to wait for models during health checks (default: 60)',
+        type=float, default=120.0,
+        help='Seconds to wait for models during startup (default: 120)',
     )
     parser.add_argument(
         "--alias", "-a",
@@ -450,7 +450,7 @@ def main() -> None:
     parser.add_argument(
         "--cors",
         action="store_true", default=False,
-        help="Enable CORS headers (useful for browser-based clients)",
+        help="Enable full CORS via CORSMiddleware — handles preflight OPTIONS and all standard Access-Control headers.",
     )
     parser.add_argument(
         "--ssl-certfile",
