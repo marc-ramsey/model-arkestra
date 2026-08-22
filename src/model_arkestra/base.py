@@ -1,13 +1,12 @@
 from __future__ import annotations
 import asyncio
 import logging
-from collections import deque
 import json
 import time
 import os
 import socket
 from abc import ABC, abstractmethod
-from typing import Any, AsyncIterator, Dict, Optional, Iterator, Set
+from typing import Any, AsyncIterator, Dict, Optional, Set
 import aiohttp
 from model_arkestra.common import default_cache_root
 from model_arkestra.unicode_ringbuffer import UnicodeRingBuffer
@@ -377,10 +376,6 @@ class BaseModelRunner(ABC):
         """
         # ── Context lookup / creation ────────────────────────────────
         ctx = self._models.get(model_name)
-        if not ctx:
-            ctx = next(
-                (v for k, v in self._models.items() if k == model_name), None
-            )
 
         effective_backend: Optional[str] = backend
         eff_port = port  # default — overwritten by each path
