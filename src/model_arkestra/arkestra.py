@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import sys
+import yaml
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional, Set
 
@@ -34,9 +35,6 @@ class ModelArkestra:
         self._config_path = resolve_config_path(config_path)
         self._cm = ConfigManager(str(self._config_path))
         self._next_port = self._cm.data.get('models-start-port', start_port)
-        self._runners: Dict[str, BaseModelRunner] = {}
-        self._runner_kwargs = runner_kwargs
-        self._build_runner_class_map()
         # Load backends.yaml from same directory as config (if present)
         parent = self._config_path.parent
         backends_path = parent / "backends.yaml"
@@ -47,6 +45,20 @@ class ModelArkestra:
                 self._backends_cfg = yaml.safe_load(f) or {}
         else:
             self._backends_cfg = {}
+        # Merge backends.yaml into config data so cm.get_backend() finds both
+        be_section = self._backends_cfg.get("backends", {})
+        if be_section and isinstance(be_section, dict):
+            existing_backends = self._cm.data.get("backends") or {}
+            if not isinstance(existing_backends, dict):
+                existing_backends = {}
+            for k, v in be_section.items():
+                if k == "default":
+                    continue  # skip the 'default' key (just picks a backend name)
+                existing_backends[k] = v
+            self._cm.data["backends"] = existing_backends
+        self._runners: Dict[str, BaseModelRunner] = {}
+        self._runner_kwargs = runner_kwargs
+        self._build_runner_class_map()
         # Extract sources section for binary_downloader compatibility
         self._sources: Dict[str, Any] = self._backends_cfg.get("sources", {})
         # ── Global log buffer (single ring for all server-level events) ─
@@ -179,6 +191,11 @@ class ModelArkestra:
         return self._cm.get_models()
 
     def get_backend(self, backend_id: str) -> Optional[Dict[str, Any]]:
+        # Check backends.yaml first (preferred), then config.yaml (legacy)
+        be = self._backends_cfg.get("backends", {}).get(backend_id)
+        if be and isinstance(be, dict):
+            return be
+        # Fall back to config.yaml for legacy inline backend definitions
         return self._cm.get_backend(backend_id)
 
     # ── model introspection (runtime state) ────────────────────────────
