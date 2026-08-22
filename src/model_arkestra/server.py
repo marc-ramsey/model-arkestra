@@ -19,6 +19,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
 try:
     from fastapi import FastAPI, HTTPException, Response
+    from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import StreamingResponse
 except ImportError:
     raise RuntimeError(
@@ -142,6 +143,10 @@ class ArkestraServer:
         extra_headers: Extra response headers to inject on every response.
         admin_key: Admin panel API key — gates all /admin/* paths. Falls back
             to config.env.ADMIN_KEY if not provided.
+        allow_origins: List of origins allowed for CORS (e.g. ["*"] or
+            ["http://localhost:3000"]). When set, installs CORSMiddleware with
+            full preflight support. Mutually exclusive with manual
+            ``Access-Control-*`` headers in ``extra_headers``.
 
     Example embedding into an existing FastAPI app:
         proxy = ArkestraServer("config.yaml", port=8080)
@@ -159,11 +164,13 @@ class ArkestraServer:
         extra_headers: Optional[Dict[str, str]] = None,
         admin_key: Optional[str] = None,
         broadcast_addr: Optional[str] = None,
+        allow_origins: Optional[List[str]] = None,
     ):
         self.port = port
         self.openai_aliases = openai_aliases or {}
         self.extra_headers = extra_headers or {}
         self.admin_key = admin_key
+        self.allow_origins = allow_origins
 
         from model_arkestra.arkestra import ModelArkestra
         self._arkestra = ModelArkestra(
@@ -193,12 +200,17 @@ class ArkestraServer:
             lifespan=_lifespan,
         )
 
-        @app.middleware("http")
-        async def _add_headers(request, call_next):
-            response = await call_next(request)
-            for key, value in self.extra_headers.items():
-                response.headers[key] = value
-            return response
+        if self.allow_origins:
+            # Full CORS middleware — handles preflight OPTIONS and all standard
+            # access-control headers automatically.
+            app.add_middleware(CORSMiddleware, allow_origins=self.allow_origins)
+        elif self.extra_headers:
+            @app.middleware("http")
+            async def _add_headers(request, call_next):
+                response = await call_next(request)
+                for key, value in self.extra_headers.items():
+                    response.headers[key] = value
+                return response
 
         # ── Route: POST /v1/chat/completions ──────────────────────
 
@@ -486,7 +498,7 @@ def main() -> None:
         port=args.port,
         ready_timeout=args.ready_timeout,
         openai_aliases=aliases,
-        extra_headers={"Access-Control-Allow-Origin": "*"} if args.cors else {},
+        allow_origins=["*"] if args.cors else None,
         broadcast_addr=args.broadcast_addr,
     )
     app = proxy.get_app()
