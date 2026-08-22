@@ -167,8 +167,14 @@ class ModelArkestra:
 
     # ── backend resolution ─────────────────────────────────────────────
     def _resolve_backend_id(self, model_name: str, env_vars: Dict[str, Any], override: Optional[str] = None) -> str:
+        if override:
+            return override
+        ctx = self.find_context(model_name)
+        ctx_backend = getattr(ctx, "backend_id", None) if ctx else None
+        if ctx_backend:
+            return ctx_backend
         model = self.get_model(model_name) or {}
-        return _resolve_backend(self._cm, model, model_name, override)
+        return _resolve_backend(self._cm, model, model_name, None)
 
     def _get_runner(self, model_name: str, env_vars: Dict[str, Any], backend: Optional[str] = None) -> BaseModelRunner:
         # Find the runner that has this model
