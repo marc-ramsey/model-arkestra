@@ -163,8 +163,12 @@ class ArkestraAdmin:
 
                 data = []
 
-                # Resolve cache root once — it's a global config value, not per-model.
-                hf_cache = self._resolve_env("HF_HUB_CACHE") or str(default_cache_root())
+                # Resolve cache root — env var → config env → default.
+                hf_cache = os.environ.get("HF_HUB_CACHE")
+                if not hf_cache:
+                    hf_cache = self._resolve_env("HF_HUB_CACHE")
+                if not hf_cache:
+                    hf_cache = str(default_cache_root())
 
                 for model_name in self.server._arkestra.get_models():
                     ctx = contexts_by_name.get(model_name)

@@ -1,5 +1,6 @@
 """Tests for the BinaryDownloader module."""
 
+import asyncio
 import json
 import os
 import tempfile
@@ -10,7 +11,8 @@ import pytest
 
 from model_arkestra.binary_downloader import (
     BinaryDownloader, BinaryDownloaderError, ChecksumMismatch,
-    GITHUB_RELEASE, LOCAL_FILE, _file_lock,
+    GITHUB_RELEASE, LOCAL_FILE, RUNTIME_CHECK, RuntimeCheckError,
+    _file_lock,
 )
 from model_arkestra.common import resolve_config_path, resolve_backends_path
 
@@ -303,3 +305,131 @@ def test_per_source_overrides_global(tmp_cache, github_source_cfg):
     # Per-source defaults take priority
     assert dl._verify_checksum is True
     assert dl._cache_ttl_hours == 12
+
+
+# ── Runtime Check Tests ────────────────────────────────────────────────
+
+@pytest.fixture
+def runtime_check_source_cfg():
+    """Minimal runtime-check source config."""
+    return {
+        "type": RUNTIME_CHECK,
+        "checks": [
+            {"command": "true", "exit_code": 0},
+        ],
+    }
+
+
+@pytest.fixture
+def nvidia_check_source_cfg():
+    """NVIDIA runtime-check config."""
+    return {
+        "type": RUNTIME_CHECK,
+        "checks": [
+            {"command": "nvidia-smi", "exit_code": 0},
+            {"path": "/usr/lib/*/libcuda.so.1"},
+            {"path": "/usr/lib/*/libcudart.so.*"},
+        ],
+    }
+
+
+def test_runtime_check_passes(tmp_cache, runtime_check_source_cfg):
+    """Runtime check passes when all checks succeed."""
+    dl = BinaryDownloader(
+        cache_dir=tmp_cache,
+        backend_id="test-rt",
+        source_cfg=runtime_check_source_cfg,
+    )
+
+    result = asyncio.run(dl.resolve(version="latest"))
+    assert result == "runtime-ok"
+
+
+def test_runtime_check_command_fails(tmp_cache):
+    """Runtime check fails when a command exits non-zero."""
+    source_cfg = {
+        "type": RUNTIME_CHECK,
+        "checks": [
+            {"command": "false", "exit_code": 0},
+        ],
+    }
+
+    dl = BinaryDownloader(
+        cache_dir=tmp_cache,
+        backend_id="test-rt-fail",
+        source_cfg=source_cfg,
+    )
+
+    with pytest.raises(RuntimeCheckError) as exc_info:
+        asyncio.run(dl.resolve(version="latest"))
+
+    assert len(exc_info.value.checks) == 1
+    assert "'false' (exit 1)" in str(exc_info.value)
+
+
+@patch("glob.glob")
+def test_runtime_check_path_missing(mock_glob, tmp_cache):
+    """Runtime check fails when a glob pattern matches nothing."""
+    mock_glob.return_value = []
+
+    source_cfg = {
+        "type": RUNTIME_CHECK,
+        "checks": [
+            {"path": "/nonexistent/glob/**/*.txt"},
+        ],
+    }
+
+    dl = BinaryDownloader(
+        cache_dir=tmp_cache,
+        backend_id="test-rt-path",
+        source_cfg=source_cfg,
+    )
+
+    with pytest.raises(RuntimeCheckError) as exc_info:
+        asyncio.run(dl.resolve(version="latest"))
+
+    assert len(exc_info.value.checks) == 1
+    assert "/nonexistent/glob/**/*.txt" in str(exc_info.value)
+
+
+def test_runtime_check_partial_fail(tmp_cache):
+    """Runtime check fails when some checks pass and some fail."""
+    source_cfg = {
+        "type": RUNTIME_CHECK,
+        "checks": [
+            {"command": "true", "exit_code": 0},      # passes
+            {"command": "false", "exit_code": 0},      # fails
+            {"path": "/nonexistent/*.txt"},            # fails
+        ],
+    }
+
+    dl = BinaryDownloader(
+        cache_dir=tmp_cache,
+        backend_id="test-rt-partial",
+        source_cfg=source_cfg,
+    )
+
+    with pytest.raises(RuntimeCheckError) as exc_info:
+        asyncio.run(dl.resolve(version="latest"))
+
+    assert len(exc_info.value.checks) == 2
+
+
+@patch("subprocess.run")
+def test_runtime_check_default_checks_nvidia(mock_run, tmp_cache, nvidia_check_source_cfg):
+    """Default NVIDIA checks validate nvidia-smi and library paths."""
+    # nvidia-smi is not on this system — mock it to simulate failure
+    mock_run.side_effect = FileNotFoundError("nvidia-smi")
+
+    dl = BinaryDownloader(
+        cache_dir=tmp_cache,
+        backend_id="test-nvidia",
+        source_cfg=nvidia_check_source_cfg,
+    )
+
+    with pytest.raises(RuntimeCheckError) as exc_info:
+        asyncio.run(dl.resolve(version="latest"))
+
+    # nvidia-smi should have been called and failed
+    assert mock_run.called
+    assert len(exc_info.value.checks) >= 1

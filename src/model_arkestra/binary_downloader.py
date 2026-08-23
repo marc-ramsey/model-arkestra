@@ -18,6 +18,7 @@ import hashlib
 import logging
 import os
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -33,10 +34,35 @@ logger = logging.getLogger(__name__)
 GITHUB_RELEASE = "github-release"
 OCI_IMAGE = "oci-image"
 LOCAL_FILE = "local-file"
+RUNTIME_CHECK = "runtime-check"
 
 
 class BinaryDownloaderError(Exception):
     """Base exception for binary downloader failures."""
+
+
+class ChecksumMismatch(BinaryDownloaderError):
+    """SHA256 verification failed — downloaded file doesn't match source checksum."""
+
+    def __init__(self, expected: str, actual: str, asset_path: str):
+        self.expected = expected
+        self.actual = actual
+        self.asset_path = asset_path
+        super().__init__(
+            f"SHA256 mismatch for {asset_path}: "
+            f"expected {expected[:12]}… got {actual[:12]}…"
+        )
+
+
+class RuntimeCheckError(BinaryDownloaderError):
+    """Runtime prerequisites not satisfied — backend cannot run in process mode."""
+
+    def __init__(self, checks: List[str]):
+        self.checks = checks
+        super().__init__(
+            f"Runtime check failed for backend. Missing: {', '.join(checks)}. "
+            "Try container mode or install the required packages."
+        )
 
 
 class ChecksumMismatch(BinaryDownloaderError):
@@ -101,13 +127,60 @@ class BinaryDownloader:
             return await self._resolve_github_release(version)
         elif source_type == LOCAL_FILE:
             return await self._resolve_local_file()
+        elif source_type == RUNTIME_CHECK:
+            await self._resolve_runtime_check()
+            return "runtime-ok"  # no binary — user provides it or uses container mode
         else:
             raise BinaryDownloaderError(
                 f"Unsupported source type '{source_type}' for backend '{self.backend_id}'. "
-                f"Supported: {GITHUB_RELEASE}, {LOCAL_FILE}"
+                f"Supported: {GITHUB_RELEASE}, {LOCAL_FILE}, {RUNTIME_CHECK}"
             )
 
     # ── GitHub Release path ──────────────────────────────────────────────
+
+    async def _resolve_runtime_check(self) -> None:
+        """Verify CUDA/ROCm system prerequisites for process-mode backends.
+
+        This is a pre-flight check — no download or caching occurs. It validates
+        that the required runtime libraries and tools are available on the system.
+        If all checks pass, the backend can run in process mode (user must provide
+        the binary separately or use container mode).
+
+        Raises:
+            RuntimeCheckError: one or more prerequisite checks failed.
+        """
+        checks = self.source_cfg.get("checks", [])
+        if not checks:
+            # Default: check for nvidia-smi + CUDA runtime libraries
+            checks = [
+                {"command": "nvidia-smi", "exit_code": 0},
+                {"path": "/usr/lib/*/libcuda.so.1"},
+                {"path": "/usr/lib/*/libcudart.so.*"},
+            ]
+
+        failed: List[str] = []
+
+        for check in checks:
+            if "command" in check:
+                cmd = check["command"]
+                expected_code = check.get("exit_code", 0)
+                try:
+                    result = subprocess.run(
+                        [cmd], capture_output=True, timeout=10
+                    )
+                    if result.returncode != expected_code:
+                        failed.append(f"'{cmd}' (exit {result.returncode})")
+                except FileNotFoundError:
+                    failed.append(f"'{cmd}' not found")
+            elif "path" in check:
+                import glob
+                pattern = check["path"]
+                matches = glob.glob(pattern)
+                if not matches:
+                    failed.append(f"{pattern}")
+
+        if failed:
+            raise RuntimeCheckError(failed)
 
     async def _resolve_github_release(self, version: str) -> str:
         """Download from a GitHub release asset, verify checksum, cache locally."""

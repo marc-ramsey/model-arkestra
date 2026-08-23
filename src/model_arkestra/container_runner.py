@@ -75,10 +75,11 @@ def _build_container_cmd(
             devices = list(extra_devs)
         binary_dir = os.path.dirname(binary_path) or binary_dir
 
-    # Resolve host HF cache directory for volume mount
-    cache_path: str | None = (runner.cm.data.get("env") or {}).get("HF_HUB_CACHE")
+    # Resolve host HF cache directory for volume mount.
+    # Precedence: env var → config env → default.
+    cache_path = os.environ.get("HF_HUB_CACHE")
     if not cache_path:
-        cache_path = os.environ.get("HF_HUB_CACHE")
+        cache_path = (runner.cm.data.get("env") or {}).get("HF_HUB_CACHE")
     if not cache_path:
         cache_path = str(default_cache_root())
     cache_path = Path(cache_path).expanduser()

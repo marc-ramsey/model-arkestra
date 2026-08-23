@@ -339,11 +339,14 @@ class ModelArkestra:
     # ── cache helpers ────────────────────────────────────────────────
 
     def _cache_root(self) -> Path:
-        """Resolve HF_HUB_CACHE to a root Path."""
-        val = (self._cm.data.get("env") or {}).get("HF_HUB_CACHE")
+        """Resolve HF_HUB_CACHE to a root Path.
+
+        Precedence: env var → config env → default cache root.
+        """
+        val = os.environ.get("HF_HUB_CACHE")
         if val:
             return Path(val).expanduser()
-        val = os.environ.get("HF_HUB_CACHE")
+        val = (self._cm.data.get("env") or {}).get("HF_HUB_CACHE")
         if val:
             return Path(val).expanduser()
         return default_cache_root()

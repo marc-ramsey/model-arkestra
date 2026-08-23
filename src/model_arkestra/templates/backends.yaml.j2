@@ -22,7 +22,7 @@ backends:
     type: rocm
     description: "ROCm — best for AMD iGPU and discrete GPUs"
     runner: ProcessModelRunner
-    binary_source: lemonade-rocm-nightly
+    binary_source: ggml-org-rocm
     args:
       ngl: 999
       ctx-size: ${ctx-size}
@@ -31,7 +31,7 @@ backends:
     type: nvidia-cuda
     description: "NVIDIA CUDA — for NVIDIA discrete GPUs"
     runner: ProcessModelRunner
-    binary_source: official-cuda
+    binary_source: runtime-nvidia
     args:
       ngl: 999
       ctx-size: ${ctx-size}
@@ -57,19 +57,23 @@ sources:
     asset_pattern: "llama-server-*-bin-*-vulkan*"
     sha256_asset: "*.sha256"
 
-  lemonade-rocm-nightly:
-    type: github-release
-    repo: lemonade-sdk/llamacpp-rocm
-    release_type: latest
-    asset_pattern: "*-linux-x86_64.tar.gz"
-    sha256_asset: "*.sha256"
-
-  official-cuda:
+  # ROCm — uses system /opt/rocm/*/lib/*.so (SONAME stable across 7.x)
+  # Compatible with ROCm 7.x systems including ROCm 7.2.4
+  ggml-org-rocm:
     type: github-release
     repo: ggml-org/llama.cpp
     release_type: latest
-    asset_pattern: "llama-server-*-bin-*-cuda*"
+    asset_pattern: "llama-server-*-bin-*-rocm-*-x64.tar.gz"
     sha256_asset: "*.sha256"
+
+  # CUDA process mode — validate nvidia-smi + libcuda, no download
+  runtime-nvidia:
+    type: runtime-check
+    checks:
+      - command: nvidia-smi
+        exit_code: 0
+      - path: /usr/lib/*/libcuda.so.1
+      - path: /usr/lib/*/libcudart.so.*
 
   ggml-org-cpu:
     type: github-release
@@ -77,6 +81,26 @@ sources:
     release_type: latest
     asset_pattern: "llama-server-*-bin-*-static*"
     sha256_asset: ""
+
+
+# ── OCI images (container mode, not auto-assigned) ────────────────
+# Reference via container_image in backend config or use `model-arkestra pull-image`.
+
+oci_images:
+  amd-toolbox-rocm:
+    repository: docker.io/kyuz0/amd-strix-halo-toolboxes
+    tag: rocm-7.14
+    description: "ROCm toolboxes with nightly llama.cpp, bundled ROCm libs"
+
+  amd-toolbox-vulkan:
+    repository: docker.io/kyuz0/amd-strix-halo-toolboxes
+    tag: vulkan-radv
+    description: "Vulkan-RADV variant of the toolboxes"
+
+  community-cuda-container:
+    repository: docker.io/garenleeasa/llama.cpp
+    tag: cuda_13.3.0-b10107
+    description: "Community CUDA image (requires nvidia-container-toolkit)"
 
 
 defaults:

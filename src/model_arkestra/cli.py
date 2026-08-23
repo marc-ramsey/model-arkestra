@@ -205,9 +205,9 @@ TEMPLATE_FILES = ["config.yaml.j2", "backends.yaml.j2"]
 
 # Map backend names to source names in sources.yaml
 BACKEND_TO_SOURCE: dict[str, str] = {
-    "rocm": "lemonade-rocm-nightly",
+    "rocm": "ggml-org-rocm",
     "vulkan-radv": "official-vulkan-radv",
-    "nvidia-cuda": "official-cuda",
+    "nvidia-cuda": "runtime-nvidia",  # runtime-check — validates nvidia-smi + libs
     "cpu-optimized": None,  # no source yet — handled separately
 }
 
@@ -282,7 +282,11 @@ def cmd_download_backend(backend_name: str, version: str = "latest") -> int:
     Returns:
         0 on success, 1 on error.
     """
-    from model_arkestra.binary_downloader import BinaryDownloader, BinaryDownloaderError
+    from model_arkestra.binary_downloader import (
+    BinaryDownloader,
+    BinaryDownloaderError,
+    RuntimeCheckError,
+)
 
     config_dir = DEFAULT_CONFIG_DIR
     backends_file = config_dir / "backends.yaml"
@@ -337,17 +341,25 @@ def cmd_download_backend(backend_name: str, version: str = "latest") -> int:
             cache_dir=cache_dir,
             global_defaults=defaults if defaults else None,
         )
-        binary_path = asyncio.run(downloader.resolve(version=version))
+        result = asyncio.run(downloader.resolve(version=version))
     except BinaryDownloaderError as e:
         print(f"Download failed: {e}", file=sys.stderr)
         return 1
     
+    # Handle runtime-check (no binary to wire — just validation)
+    if result == "runtime-ok":
+        print(f"✓ Runtime check passed for {backend_name}")
+        print(f"  Source:      {source_name}")
+        print(f"  Status:      nvidia-smi + CUDA libs verified")
+        print(f"  Note:        Build from source or use container mode for the binary.")
+        return 0
+    
     # Wire the resolved binary path into backends.yaml so process.py can find it
-    binary_dir = str(Path(binary_path).parent)
-    binary_name = Path(binary_path).name
+    binary_dir = str(Path(result).parent)
+    binary_name = Path(result).name
     _set_binary_in_backend(backends_file, backend_name, binary_dir, binary_name)
     
-    print(f"✓ Downloaded {backend_name} to: {binary_path}")
+    print(f"✓ Downloaded {backend_name} to: {result}")
     print(f"  Version:   {version}")
     print(f"  Source:    {source_name}")
     print(f"  Cached in: {binary_dir}")
