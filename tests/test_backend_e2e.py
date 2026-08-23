@@ -54,21 +54,31 @@ backends:
       hf: ${CHECKPOINT}
       port: "${PORT}"
   docker-backend:
-    image: yusiwen/llama.cpp:b10499
+    source_ref: amd-toolbox-rocm
+    entrypoint: /usr/local/bin/llama-server
     runner: docker
-    entrypoint: /llama.cpp/llama-server
-    hf_flag: "--hf"
+    devices:
+      - /dev/kfd
+      - /dev/dri
     args:
       hf: ${CHECKPOINT}
-      port: "${PORT}"
+      ngl: 999
   podman-backend:
-    image: yusiwen/llama.cpp:b10499
+    source_ref: amd-toolbox-rocm
+    entrypoint: /usr/local/bin/llama-server
     runner: podman
-    entrypoint: /llama.cpp/llama-server
-    hf_flag: "--hf"
+    devices:
+      - /dev/kfd
+      - /dev/dri
     args:
       hf: ${CHECKPOINT}
-      port: "${PORT}"
+      ngl: 999
+
+sources:
+  amd-toolbox-rocm:
+    type: oci-image
+    repo: docker.io/kyuz0/amd-strix-halo-toolboxes
+    release_type: rocm-7.14
 
 runners:
   default: ProcessModelRunner

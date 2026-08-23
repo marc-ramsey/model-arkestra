@@ -129,11 +129,13 @@ class BinaryDownloader:
             return await self._resolve_local_file()
         elif source_type == RUNTIME_CHECK:
             await self._resolve_runtime_check()
-            return "runtime-ok"  # no binary — user provides it or uses container mode
+            return "runtime-ok"
+        elif source_type == OCI_IMAGE:
+            return await self._resolve_oci_image(version)
         else:
             raise BinaryDownloaderError(
                 f"Unsupported source type '{source_type}' for backend '{self.backend_id}'. "
-                f"Supported: {GITHUB_RELEASE}, {LOCAL_FILE}, {RUNTIME_CHECK}"
+                f"Supported: {GITHUB_RELEASE}, {LOCAL_FILE}, {RUNTIME_CHECK}, {OCI_IMAGE}"
             )
 
     # ── GitHub Release path ──────────────────────────────────────────────
@@ -388,6 +390,82 @@ class BinaryDownloader:
                 return candidate
         return None
 
+    # ── OCI Image path ────────────────────────────────────────────────
+
+    async def _resolve_oci_image(self, tag: str) -> str:
+        """Resolve an OCI container image via podman/docker.
+
+        Pulls the image if not present locally; returns the resolved image ref.
+        """
+        repo = self.source_cfg.get("repo", "")  # e.g. "docker.io/kyuz0/amd-strix-halo-toolboxes"
+        release_type = self.source_cfg.get("release_type", "latest") or "latest"
+
+        if not repo:
+            raise BinaryDownloaderError(
+                f"OCI-image source for backend '{self.backend_id}' has no 'repo' configured"
+            )
+
+        # Determine tag to use
+        image_tag = tag if tag != "latest" else release_type
+        cache_key = f"{self.backend_id}-{release_type}-{image_tag}"
+
+        # Check if already cached (image exists locally)
+        cached_info = self._lookup_cache(cache_key)
+        if cached_info and not self._is_stale(cached_info):
+            logger.debug(f"Using cached OCI image: {cached_info.get('ref', repo)}:{image_tag}")
+            return f"{repo}:{image_tag}"
+
+        # Pre-pull the image (with file lock to prevent concurrent pulls)
+        lock_path = self.cache_dir / f".{cache_key}-pull.lock"
+        async with _file_lock(lock_path):
+            # Re-check after acquiring lock
+            cached_info = self._lookup_cache(cache_key)
+            if cached_info and not self._is_stale(cached_info):
+                return f"{repo}:{image_tag}"
+
+            # Pull the image via podman (prefer podman, fall back to docker)
+            pull_cmd = None
+            for cmd_name in ("podman", "docker"):
+                try:
+                    result = subprocess.run(
+                        [cmd_name, "--version"],
+                        capture_output=True, timeout=5
+                    )
+                    if result.returncode == 0:
+                        pull_cmd = cmd_name
+                        break
+                except FileNotFoundError:
+                    pass
+
+            if pull_cmd is None:
+                raise BinaryDownloaderError(
+                    f"Neither podman nor docker found on system for OCI image source."
+                )
+
+            full_image = f"{repo}:{image_tag}"
+            logger.info(f"Pulling OCI image {full_image} via {pull_cmd}")
+            proc = await asyncio.create_subprocess_exec(
+                pull_cmd, "pull", full_image,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await proc.communicate()
+
+            if proc.returncode != 0:
+                err_msg = stderr.decode().strip() or f"exit code {proc.returncode}"
+                raise BinaryDownloaderError(
+                    f"Failed to pull OCI image {full_image}: {err_msg}"
+                )
+
+            logger.info(f"OCI image pulled successfully: {full_image}")
+
+        # Cache the reference
+        self._write_cache_entry(cache_key, {
+            "ref": full_image,
+            "updated_at": asyncio.get_event_loop().time(),
+        })
+        return full_image
+
     # ── Local File path ──────────────────────────────────────────────────
 
     async def _resolve_local_file(self) -> str:
@@ -426,7 +504,9 @@ class BinaryDownloader:
         return self.cache_dir / f".{self.backend_id}-cache-manifest.json"
 
     def _lookup_cache(self, cache_key: str) -> Optional[Dict[str, Any]]:
-        """Look up a cached binary by key. Returns dict with 'path' and 'updated_at'."""
+        """Look up a cached entry by key. Returns dict with 'path' (binaries) or
+        'ref' (OCI images), and 'updated_at'.
+        """
         manifest_path = self._get_cache_manifest_path()
         if not manifest_path.exists():
             return None
@@ -461,8 +541,18 @@ class BinaryDownloader:
             json.dump(manifest, f, indent=2)
 
     def _is_stale(self, entry: Dict[str, Any]) -> bool:
-        """Check if a cached binary is stale based on TTL."""
+        """Check if a cached entry is stale based on TTL. Works with both
+        binary entries (string path) and OCI entries (dict with 'ref')."""
+        if isinstance(entry, str):
+            # Legacy format: string binary path — use file mtime as fallback
+            p = Path(entry)
+            if p.is_file() and p.stat().st_mtime:
+                age_hours = (asyncio.get_event_loop().time() - p.stat().st_mtime) / 3600.0
+                return age_hours > self._cache_ttl_hours
+            return False
         updated_at = entry.get("updated_at", 0)
+        if not updated_at:
+            return False  # no timestamp — assume fresh
         age_hours = (asyncio.get_event_loop().time() - updated_at) / 3600.0
         return age_hours > self._cache_ttl_hours
 
@@ -509,6 +599,6 @@ class _AsyncFileLock:
         self._lock.release()
 
 
-async def _file_lock(path: Path) -> _AsyncFileLock:
+def _file_lock(path: Path) -> _AsyncFileLock:
     """Return an async file lock for the given path."""
     return _AsyncFileLock(path)

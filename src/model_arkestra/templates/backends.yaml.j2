@@ -15,6 +15,7 @@ backends:
     source_ref: official-vulkan-radv
     args:
       ngl: 999
+      hf: "${CHECKPOINT}"
       ctx-size: ${ctx-size}
 
   rocm:
@@ -23,7 +24,20 @@ backends:
     source_ref: ggml-org-rocm
     args:
       ngl: 999
+      hf: "${CHECKPOINT}"
       ctx-size: ${ctx-size}
+
+  rocm-container:
+    description: "ROCm container — kyuz0 toolbox with bundled ROCm libs"
+    runner: podman
+    source_ref: amd-toolbox-rocm
+    entrypoint: /usr/local/bin/llama-server
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    args:
+      hf: "${CHECKPOINT}"
+      ngl: 999
 
   cuda:
     description: "NVIDIA CUDA — for NVIDIA discrete GPUs"
@@ -31,6 +45,7 @@ backends:
     source_ref: runtime-nvidia
     args:
       ngl: 999
+      hf: "${CHECKPOINT}"
       ctx-size: ${ctx-size}
 
   cpu:
@@ -39,6 +54,7 @@ backends:
     source_ref: ggml-org-cpu
     args:
       threads: ${nproc}
+      hf: "${CHECKPOINT}"
       no-mmap: true
 
 
@@ -62,6 +78,12 @@ sources:
     asset_pattern: "llama-server-*-bin-*-rocm-*-x64.tar.gz"
     sha256_asset: "*.sha256"
 
+  # ROCm container image — kyuz0 toolbox with bundled ROCm libs, llama.cpp nightly
+  amd-toolbox-rocm:
+    type: oci-image
+    repo: docker.io/kyuz0/amd-strix-halo-toolboxes
+    release_type: rocm-7.14
+
   # CUDA process mode — validate nvidia-smi + libcuda, no download
   runtime-nvidia:
     type: runtime-check
@@ -77,26 +99,6 @@ sources:
     release_type: latest
     asset_pattern: "llama-server-*-bin-*-static*"
     sha256_asset: ""
-
-
-# ── OCI images (container mode, not auto-assigned) ────────────────
-# Reference via container_image in backend config or use `model-arkestra pull-image`.
-
-oci_images:
-  amd-toolbox-rocm:
-    repository: docker.io/kyuz0/amd-strix-halo-toolboxes
-    tag: rocm-7.14
-    description: "ROCm toolboxes with nightly llama.cpp, bundled ROCm libs"
-
-  amd-toolbox-vulkan:
-    repository: docker.io/kyuz0/amd-strix-halo-toolboxes
-    tag: vulkan-radv
-    description: "Vulkan-RADV variant of the toolboxes"
-
-  community-cuda-container:
-    repository: docker.io/garenleeasa/llama.cpp
-    tag: cuda_13.3.0-b10107
-    description: "Community CUDA image (requires nvidia-container-toolkit)"
 
 
 defaults:
