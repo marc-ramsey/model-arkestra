@@ -54,18 +54,18 @@ backends:
       hf: ${CHECKPOINT}
       port: "${PORT}"
   docker-backend:
-    binary_dir: /home/marc/local/llama.cpp/build-vulkan-radv/bin
-    binary: llama-server
-    image: ark-llama:vulkan-radv
+    image: yusiwen/llama.cpp:b10499
     runner: docker
+    entrypoint: /llama.cpp/llama-server
+    hf_flag: "--hf"
     args:
       hf: ${CHECKPOINT}
       port: "${PORT}"
   podman-backend:
-    binary_dir: /home/marc/local/llama.cpp/build-vulkan-radv/bin
-    binary: llama-server
-    image: ark-llama:vulkan-radv
+    image: yusiwen/llama.cpp:b10499
     runner: podman
+    entrypoint: /llama.cpp/llama-server
+    hf_flag: "--hf"
     args:
       hf: ${CHECKPOINT}
       port: "${PORT}"
@@ -98,7 +98,7 @@ models:
       ctx-size: 2048
 
   gemma-4-e2b-process:
-    checkpoint: unsloth/gemma-4-E2B-it-GGUF:Q4_K_M
+    checkpoint: unsloth/gemma-4-E2B-it-qat-GGUF:UD-Q4_K_XL
     args:
       temp: 0.7
       top-p: 0.95

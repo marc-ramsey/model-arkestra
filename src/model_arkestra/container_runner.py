@@ -76,10 +76,7 @@ def _build_container_cmd(
         binary_dir = os.path.dirname(binary_path) or binary_dir
 
     # Resolve host HF cache directory for volume mount.
-    # Precedence: env var → config env → default.
-    cache_path = os.environ.get("HF_HUB_CACHE")
-    if not cache_path:
-        cache_path = (runner.cm.data.get("env") or {}).get("HF_HUB_CACHE")
+    cache_path = runner._arkestra.resolve_config("HF_HUB_CACHE")
     if not cache_path:
         cache_path = str(default_cache_root())
     cache_path = Path(cache_path).expanduser()
@@ -131,6 +128,9 @@ def _build_container_cmd(
     if not fixed or "--host" not in fixed:
         fixed.extend(["--host", "0.0.0.0"])
 
+    # Override container entrypoint if specified by backend config.
+    if ep := (backend_config or {}).get("entrypoint"):
+        parts.extend(["--entrypoint", ep])
     parts.extend([image] + fixed)
     return parts
 

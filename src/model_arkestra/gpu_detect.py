@@ -120,7 +120,7 @@ def _detect_gpus() -> list[dict[str, Any]]:
         lower = desc.lower()
         if "nvidia" in lower:
             vendor = "nvidia"
-            backend = "nvidia-cuda"
+            backend = "cuda"
         elif "advanced micro devices" in lower or "amd/ati" in lower or "raadeon" in lower:
             vendor = "amd"
             # AMD Strix Halo / iGPU: rocm is preferred, vulkan-radv works too
@@ -158,7 +158,7 @@ def _detect_cpu() -> dict[str, Any]:
         "vendor": "unknown",
         "cores": 0,
         "features": [],
-        "compatible_backends": ["cpu-optimized"],
+        "compatible_backends": ["cpu"],
     }
 
     # Get CPU features from /proc/cpuinfo
@@ -248,7 +248,7 @@ def detect_all() -> dict[str, Any]:
         backend = primary_gpu["backend"]
         # Check if the recommended runtime exists
         runtime_map = {
-            "nvidia-cuda": "nvidia",
+            "cuda": "nvidia",
             "rocm": "rocm",
             "vulkan-radv": "vulkan",
         }
@@ -260,21 +260,21 @@ def detect_all() -> dict[str, Any]:
             if runtimes["vulkan"]:
                 recommendation = ("vulkan-radv", f"{_VENDOR_NAMES.get(primary_gpu['vendor'], primary_gpu['vendor'].title())} GPU detected (ROCm unavailable, using Vulkan)")
             else:
-                recommendation = ("cpu-optimized", "GPU detected but no GPU runtime available")
-        elif backend == "nvidia-cuda" and not runtimes["nvidia"]:
+                recommendation = ("cpu", f"GPU detected but no GPU runtime available")
+        elif backend == "cuda" and not runtimes["nvidia"]:
             # NVIDIA GPU but no CUDA — try vulkan as fallback
             if runtimes["vulkan"]:
                 recommendation = ("vulkan-radv", "NVIDIA GPU detected (CUDA unavailable, using Vulkan)")
             else:
-                recommendation = ("cpu-optimized", "GPU detected but no runtime available")
+                recommendation = ("cpu", f"GPU detected but no runtime available")
         elif backend == "vulkan-radv" and not runtimes["vulkan"]:
-            recommendation = ("cpu-optimized", f"{_VENDOR_NAMES.get(primary_gpu['vendor'], primary_gpu['vendor'].title())} GPU detected but no Vulkan runtime")
+            recommendation = ("cpu", f"{_VENDOR_NAMES.get(primary_gpu['vendor'], primary_gpu['vendor'].title())} GPU detected but no Vulkan runtime")
     else:
         # No GPU — use CPU
         if cpu["arch"] == "x86_64":
-            recommendation = ("cpu-optimized", "No GPU found — using CPU with compatible pre-built binary")
+            recommendation = ("cpu", "No GPU found — using CPU with compatible pre-built binary")
         else:
-            recommendation = ("cpu-optimized", f"No GPU found — CPU detected ({cpu['arch']})")
+            recommendation = ("cpu", f"No GPU found — CPU detected ({cpu['arch']})")
 
     # Build warnings for special cases
     warnings: list[str] = []
@@ -289,6 +289,6 @@ def detect_all() -> dict[str, Any]:
         "multi_gpu_warn": multi_gpu_warn,
         "cpu": cpu,
         "has_runtime": runtimes,
-        "recommendation": recommendation or ("cpu-optimized", "Defaulting to CPU"),
+        "recommendation": recommendation or ("cpu", "Defaulting to CPU"),
         "warnings": warnings,
     }

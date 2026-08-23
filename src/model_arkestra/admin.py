@@ -111,15 +111,6 @@ class ArkestraAdmin:
     def _backends_cfg(self) -> Dict[str, Any]:
         return self.server._arkestra.cm.data.get("backends") or {}
 
-    def _resolve_env(self, key: str, explicit: Optional[str] = None) -> str:
-        """Resolve an env var: method arg > config env > OS env."""
-        if explicit is not None:
-            return explicit
-        cfg_env = self.server._arkestra.cm.data.get("env", {})
-        if key in cfg_env and cfg_env[key]:
-            return str(cfg_env[key])
-        return os.environ.get(key, "")
-
     def _backend_for_image(self, image_tag: str) -> Optional[str]:
         """Return the backend_id whose ``image`` matches *image_tag*, or None."""
         backends = self._backends_cfg
@@ -164,9 +155,7 @@ class ArkestraAdmin:
                 data = []
 
                 # Resolve cache root — env var → config env → default.
-                hf_cache = os.environ.get("HF_HUB_CACHE")
-                if not hf_cache:
-                    hf_cache = self._resolve_env("HF_HUB_CACHE")
+                hf_cache = self.server._arkestra.resolve_config("HF_HUB_CACHE")
                 if not hf_cache:
                     hf_cache = str(default_cache_root())
 

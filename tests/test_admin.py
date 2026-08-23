@@ -76,22 +76,36 @@ class TestAdminModels:
 
         Cached-but-not-running models get status 'stopped'; truly uncached
         (no files in the cache dir) get 'uncached'.
+
+        Creates real temp dirs so it works on any machine — no hardcoded paths.
         """
-        client = live_server["client"]
-        r = client.get("/admin/models")
-        models_by_id = {m["id"]: m for m in r.json()["models"]}
+        import os as _os
+        from pathlib import Path
 
-        # Checkpoints cached at /home/lemonade/hub — mixed reality on a real machine
-        gemma  = models_by_id["gemma-4-e2b"]
-        qwen   = models_by_id["qwen3.5-4b"]
-        vox    = models_by_id["voxtral-mini"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            hf_cache = Path(tmpdir)
 
-        # Verify expected statuses based on actual cache presence:
-        # gemma & qwen are cached, so stopped (not running);
-        # vox is not cached, so uncached.
-        assert gemma["status"] == "stopped"
-        assert qwen["status"] == "stopped"
-        assert vox["status"] == "uncached"
+            # Create cache dirs for models that should be 'stopped'
+            (hf_cache / "models--unsloth--Qwen3.5-4B-GGUF").mkdir()
+            (hf_cache / "models--unsloth--gemma-4-E2B-it-GGUF").mkdir()
+
+            # Set env var so admin endpoint finds it
+            _os.environ["HF_HUB_CACHE"] = str(hf_cache)
+
+            try:
+                client = live_server["client"]
+                r = client.get("/admin/models")
+                models_by_id = {m["id"]: m for m in r.json()["models"]}
+
+                gemma = models_by_id["gemma-4-e2b"]
+                qwen = models_by_id["qwen3.5-4b"]
+                vox = models_by_id["voxtral-mini"]
+
+                assert gemma["status"] == "stopped"
+                assert qwen["status"] == "stopped"
+                assert vox["status"] == "uncached"
+            finally:
+                _os.environ.pop("HF_HUB_CACHE", None)
 
 
 # ── /admin/stop/{model} ────────────────────────────────────────────

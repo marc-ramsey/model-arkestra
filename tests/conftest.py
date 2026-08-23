@@ -409,3 +409,34 @@ async def podman_cleanup() -> _PodmanCleanupTracker:
     # Brief wait so listeners release their file descriptors.
     time.sleep(0.2)
 
+
+def _prune_containers(engine: str, full: bool = False) -> None:
+    """Prune dangling/orphaned containers and images for *engine*.
+
+    Parameters
+    ----------
+    engine : str
+        ``"podman"`` or ``"docker"``.
+    full : bool
+        When True also removes all unused images (``-a``). Use only for
+        end-of-series cleanup, never mid-run — it would destroy cached
+        build images needed by other tests.
+    """
+    prune_args = [engine, "system", "prune", "-f"]
+    if full and engine == "docker":
+        prune_args.append("-a")
+    prune_args.append("--volumes")
+    try:
+        subprocess.run(prune_args, capture_output=True, timeout=60)
+    except Exception:
+        pass
+
+
+# ── End-of-series cleanup hooks ───────────────────────────────────────
+
+
+def pytest_sessionfinish(session: Any, exitstatus: int) -> None:
+    """Remove all leftover containers/images after the full test suite."""
+    _prune_containers("podman")
+    _prune_containers("docker", full=True)
+

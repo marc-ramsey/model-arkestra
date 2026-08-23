@@ -14,7 +14,6 @@ images:
 default-image: ark-llama:vulkan-radv
 
 macros:
-  vulkan-build-dir: /home/marc/local/llama.cpp/build-vulkan-radv/bin
   ctx-size: 16384
 
 backends:

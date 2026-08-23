@@ -43,7 +43,8 @@ def make_ctx(name: str, port: int, state: RunnerState) -> _ModelContext:
 class TestCacheRoot:
     """Test ModelArkestra._cache_root() env resolution order."""
 
-    def test_config_hf_hub_cache(self):
+    def test_config_hf_hub_cache(self, monkeypatch):
+        monkeypatch.delenv("HF_HUB_CACHE", raising=False)
         with tempfile.TemporaryDirectory() as td:
             cfg_path = os.path.join(td, "cfg.yaml")
             with open(cfg_path, "w") as f:
@@ -60,14 +61,14 @@ class TestCacheRoot:
             monkeypatch.setenv("HF_HUB_CACHE", "/os-env/hf")
             assert ma._cache_root() == Path("/os-env/hf")
 
-    def test_config_env_takes_priority_over_os(self, monkeypatch):
+    def test_os_env_takes_priority_over_config(self, monkeypatch):
         with tempfile.TemporaryDirectory() as td:
             cfg_path = os.path.join(td, "cfg.yaml")
             with open(cfg_path, "w") as f:
                 f.write("env:\n  HF_HUB_CACHE: /config/hf\nmodels: {}\n")
             ma = ModelArkestra(cfg_path)
             monkeypatch.setenv("HF_HUB_CACHE", "/os-env/hf")
-            assert ma._cache_root() == Path("/config/hf")
+            assert ma._cache_root() == Path("/os-env/hf")
 
     def test_default_when_nothing_set(self, monkeypatch):
         with tempfile.TemporaryDirectory() as td:
@@ -118,8 +119,9 @@ class TestEjectMethod:
 
     # ── Happy path: cache dir exists on disk ──────────────────────────
 
-    def test_happy_path_cache_exists(self):
+    def test_happy_path_cache_exists(self, monkeypatch):
         """Cache present → deleted, result reflects success."""
+        monkeypatch.delenv("HF_HUB_CACHE", raising=False)
         ma = self._make_arkestra()
         with tempfile.TemporaryDirectory() as tmpdir:
             # Override cache root to our temp dir
@@ -146,8 +148,9 @@ class TestEjectMethod:
 
     # ── Happy path: cache dir doesn't exist on disk ───────────────────
 
-    def test_happy_path_no_cache_on_disk(self):
+    def test_happy_path_no_cache_on_disk(self, monkeypatch):
         """No physical cache → no deletion, but model still ejected."""
+        monkeypatch.delenv("HF_HUB_CACHE", raising=False)
         ma = self._make_arkestra()
         with tempfile.TemporaryDirectory() as tmpdir:
             ma._cm.data["env"] = {"HF_HUB_CACHE": tmpdir}
@@ -193,8 +196,9 @@ class TestEjectMethod:
 
     # ── Shared-cache conflict: two RUNNING models same checkpoint ─────
 
-    def test_shared_cache_conflict(self):
+    def test_shared_cache_conflict(self, monkeypatch):
         """Two different models share the same cache → eject blocked."""
+        monkeypatch.delenv("HF_HUB_CACHE", raising=False)
         ma = self._make_arkestra()
         with tempfile.TemporaryDirectory() as tmpdir:
             shared_checkpoint = "shared/same-model:Q4_K_M"
@@ -223,8 +227,9 @@ class TestEjectMethod:
 
     # ── Shared checkpoint but STOPPED model → no conflict ─────────────
 
-    def test_shared_checkpoint_no_conflict_stopped(self):
+    def test_shared_checkpoint_no_conflict_stopped(self, monkeypatch):
         """Shared checkpoint, but other model is STOPPED → eject succeeds."""
+        monkeypatch.delenv("HF_HUB_CACHE", raising=False)
         ma = self._make_arkestra()
         with tempfile.TemporaryDirectory() as tmpdir:
             shared_checkpoint = "shared/same-model:Q4_K_M"

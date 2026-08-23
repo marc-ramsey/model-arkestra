@@ -514,6 +514,19 @@ def build_model_args(
 
     # Return merged list: defaults → backend → model
     combined = default_arg_list + backend_arg_list + model_arg_list
+
+    # Apply per-backend hf_flag override (e.g. "--hf" for some container images)
+    hf_flag = (backend or {}).get("hf_flag")
+    if hf_flag:
+        result: List[str] = []
+        it = iter(combined)
+        for item in it:
+            if item == "-hf" and (next_val := next(it, None)):
+                result.extend([hf_flag, next_val])
+            else:
+                result.append(item)
+        combined = result
+
     return (combined, " ".join(combined))
 
 

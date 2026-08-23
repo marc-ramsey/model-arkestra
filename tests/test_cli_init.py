@@ -74,8 +74,8 @@ def test_backends_yaml_has_built_in_backends(tmp_path):
     backends = (tmp_path / "backends.yaml").read_text()
     assert "vulkan-radv:" in backends
     assert "rocm:" in backends
-    assert "nvidia-cuda:" in backends
-    assert "cpu-optimized:" in backends
+    assert "cuda:" in backends
+    assert "cpu:" in backends
 
 
 def test_default_config_dir_is_xdg_compliant():

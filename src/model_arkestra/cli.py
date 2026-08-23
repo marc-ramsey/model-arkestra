@@ -207,8 +207,8 @@ TEMPLATE_FILES = ["config.yaml.j2", "backends.yaml.j2"]
 BACKEND_TO_SOURCE: dict[str, str] = {
     "rocm": "ggml-org-rocm",
     "vulkan-radv": "official-vulkan-radv",
-    "nvidia-cuda": "runtime-nvidia",  # runtime-check — validates nvidia-smi + libs
-    "cpu-optimized": None,  # no source yet — handled separately
+    "cuda": "runtime-nvidia",  # runtime-check — validates nvidia-smi + libs
+    "cpu": "ggml-org-cpu",
 }
 
 
@@ -276,7 +276,7 @@ def cmd_download_backend(backend_name: str, version: str = "latest") -> int:
     into the backend entry so process.py can find it at runtime.
     
     Args:
-        backend_name: Name of backend (e.g., 'rocm', 'vulkan-radv', 'cpu-optimized').
+        backend_name: Name of backend (e.g., 'rocm', 'vulkan-radv', 'cpu').
         version: Version tag (default 'latest', or a pinned version like '2.95').
     
     Returns:
@@ -305,16 +305,16 @@ def cmd_download_backend(backend_name: str, version: str = "latest") -> int:
         return 1
 
     # Resolve backend → source name (check BACKEND_TO_SOURCE, direct source lookup,
-    # and the backends section's binary_source field)
+    # and the backends section's source_ref field)
     source_name = BACKEND_TO_SOURCE.get(backend_name)
     if source_name is None and backend_name in sources:
         source_name = backend_name  # direct source name
     
     if source_name is None:
-        # Try resolving via the backends section's binary_source field
+        # Try resolving via the backends section's source_ref field
         be_section = raw.get("backends", {})
         if backend_name in be_section:
-            source_ref = be_section[backend_name].get("binary_source")
+            source_ref = be_section[backend_name].get("source_ref")
             if source_ref and source_ref in sources:
                 source_name = source_ref
     
@@ -419,10 +419,10 @@ def cmd_download_all() -> int:
         primary_backend = "rocm"
         fallback = "vulkan-radv"
     elif result["primary_gpu"] and result["primary_gpu"]["vendor"] == "nvidia":
-        primary_backend = "nvidia-cuda"
+        primary_backend = "cuda"
         fallback = None
     else:
-        primary_backend = "cpu-optimized"
+        primary_backend = "cpu"
         fallback = None
 
     print(f"Downloading backend for detected hardware:")
@@ -586,7 +586,7 @@ def cmd_list_backends() -> int:
         if cache_dir.exists():
             bin_files = list(cache_dir.rglob(f"*{name}*llama-server*") or [])
             if not bin_files:
-                src_name = be_cfg.get("binary_source", "")
+                src_name = be_cfg.get("source_ref", "")
                 bin_files = list(cache_dir.rglob(f"*{src_name}*") or [])
             cached = len(bin_files) > 0
         
@@ -769,7 +769,7 @@ def main(argv: list[str] | None = None) -> None:
         "download-backend",
         help="Download a pre-built backend binary from backends.yaml sources",
     )
-    dl_parser.add_argument("backend", help="Backend name (rocm, vulkan-radv, cpu-optimized)")
+    dl_parser.add_argument("backend", help="Backend name (rocm, vulkan-radv, cpu)")
     dl_parser.add_argument(
         "--version", "-V", default="latest",
         help='Version tag (default: latest)',

@@ -34,8 +34,6 @@ backends:
 default-image: ark-llama:vulkan-radv
 env:
   ADMIN_KEY: test-admin-key
-  HF_HUB_CACHE: /home/lemonade/hub
-  HF_HUB_CACHE: /home/lemonade/hub
 model-ports: 32
 models:
   gemma-4-e2b:

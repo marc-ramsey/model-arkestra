@@ -138,37 +138,33 @@ models:
 backends:
 
   vulkan-radv:
-    type: vulkan-radv
     description: "Vulkan with RADV driver — works on AMD, NVIDIA, Intel"
     runner: ProcessModelRunner
-    binary_source: official-vulkan-radv
+    source_ref: official-vulkan-radv
     args:
       ngl: 999
       ctx-size: ${ctx-size}
 
   rocm:
-    type: rocm
     description: "ROCm — best for AMD iGPU and discrete GPUs"
     runner: ProcessModelRunner
-    binary_source: lemonade-rocm-nightly
+    source_ref: lemonade-rocm-nightly
     args:
       ngl: 999
       ctx-size: ${ctx-size}
 
-  nvidia-cuda:
-    type: nvidia-cuda
+  cuda:
     description: "NVIDIA CUDA — for NVIDIA discrete GPUs"
     runner: ProcessModelRunner
-    binary_source: official-cuda
+    source_ref: official-cuda
     args:
       ngl: 999
       ctx-size: ${ctx-size}
 
-  cpu-optimized:
-    type: cpu
+  cpu:
     description: "CPU-only mode — uses all available cores"
     runner: ProcessModelRunner
-    binary_source: ggml-org-cpu
+    source_ref: ggml-org-cpu
     args:
       threads: ${nproc}
       no-mmap: true
@@ -217,12 +213,14 @@ defaults:
 
 | Key | Type | Description |
 |---|---|---|
-| `type` | str | Backend type identifier (`rocm`, `vulkan-radv`, `nvidia-cuda`, `cpu`, or `custom`). Determines binary variant. |
 | `description` | str | Human-readable description shown in `list-backends`. |
-| `runner` | str | Runner class name (e.g., `"ProcessModelRunner"`). Always `ProcessModelRunner` for process runners. |
-| `binary_source` | str | Name of a source entry from the `sources:` section below. |
+| `runner` | str | Runner class name (e.g., `"ProcessModelRunner"`). |
+| `source_ref` | str | Name of a source entry from the `sources:` section below. |
 | `args` | dict | Default CLI arguments merged into model args during startup. |
-| `binary_path` | str | (Only for `type: custom`) Absolute path to an already-built llama-server binary. |
+| `hf_flag` | str | (Optional) Override for the HuggingFace flag format — e.g., `"--hf"` instead of default `"-hf"`. Used when container images or binaries use a different flag convention. |
+| `entrypoint` | str | (Container only) Override the container's ENTRYPOINT — e.g., `/llama.cpp/llama-server`. Prevents image defaults (like `tini`) from intercepting CLI args. |
+| `binary_dir` | str | (Written at runtime) Absolute directory containing the downloaded binary, populated by `download-backend`. |
+| `binary` | str | (Written at runtime) Binary filename, populated by `download-backend`. |
 
 ### Source Entry Keys
 
@@ -251,10 +249,8 @@ This appends to the `backends:` section of backends.yaml:
 
 ```yaml
 my-avx512:
-  type: custom
   description: "Custom AVX512 build"
   runner: ProcessModelRunner
-  binary_path: /opt/my-builds/llama-server
   args:
     ngl: 999
     ctx-size: ${ctx-size}

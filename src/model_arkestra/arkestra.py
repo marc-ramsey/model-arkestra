@@ -116,7 +116,7 @@ class ModelArkestra:
         runtime_checks = {
             "vulkan-radv": self._check_vulkan,
             "rocm": self._check_rocm,
-            "nvidia-cuda": self._check_nvidia,
+            "cuda": self._check_nvidia,
         }
         checker = runtime_checks.get(backend_id)
         if checker:
@@ -272,6 +272,7 @@ class ModelArkestra:
                     f"Available: {list(self._runner_classes.keys())}"
                 )
             self._runners[key] = cls(self._cm, **self._runner_kwargs)
+            self._runners[key]._arkestra = self  # reference for resolve_config
         return self._runners[key]
 
     # ── backward-compat shims (delegate to unified lazy factory) ─────────
@@ -338,15 +339,21 @@ class ModelArkestra:
 
     # ── cache helpers ────────────────────────────────────────────────
 
-    def _cache_root(self) -> Path:
-        """Resolve HF_HUB_CACHE to a root Path.
+    def resolve_config(self, key: str, explicit: Optional[str] = None) -> Optional[str]:
+        """Resolve a config value with unified precedence.
 
-        Precedence: env var → config env → default cache root.
+        Precedence: explicit arg → os.environ → config.env section → None.
         """
-        val = os.environ.get("HF_HUB_CACHE")
+        if explicit is not None and explicit != "":
+            return explicit
+        val = os.environ.get(key)
         if val:
-            return Path(val).expanduser()
-        val = (self._cm.data.get("env") or {}).get("HF_HUB_CACHE")
+            return val
+        return (self._cm.data.get("env") or {}).get(key)
+
+    def _cache_root(self) -> Path:
+        """Resolve HF_HUB_CACHE to a root Path."""
+        val = self.resolve_config("HF_HUB_CACHE")
         if val:
             return Path(val).expanduser()
         return default_cache_root()
