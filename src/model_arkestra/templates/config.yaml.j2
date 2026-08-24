@@ -13,6 +13,8 @@ app-log-lines: 2000
 env:
   HF_HUB_CACHE: ~/.cache/huggingface
 
+container_type: podman   # default container engine (podman or docker)
+
 backends:
   default: vulkan-radv   # references a backend name from backends.yaml
 
