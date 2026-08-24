@@ -109,6 +109,11 @@ class DockerModelRunner(ContainerModelRunner):
                 raw_image = ""
 
         image = await self._resolve_image_from_source(raw_image, source_ref)
+        if not image:
+            raise RuntimeError(
+                f"No container image resolved for docker backend '{ctx.backend_id}'. "
+                f"Configure an 'image' key or an oci-image 'source_ref' in the backend."
+            )
         if "/" not in image:
             image = f"localhost/{image}"
 
