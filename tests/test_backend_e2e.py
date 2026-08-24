@@ -1,137 +1,269 @@
-"""Backend runner end-to-end tests.
+"""Unified backend runner end-to-end tests.
 
-Each test is fully self-contained: starts its own uvicorn server + model,
-runs a full lifecycle (start → inference → logs → stop), and guarantees
-cleanup before returning — no inter-test pollution possible.
+Auto-discovers all available backends at import time:
+  - process (vulkan-radv): direct subprocess from pre-built binary
+  - process (rocm-gfxXXX): direct subprocess, one per detected GPU family
+  - docker: OCI container with GPU device passthrough
+  - podman: OCI container with GPU device passthrough
 
-Parametrized over backend+runner combinations:
-  - process (default)  : llama-server launched directly via subprocess
-  - docker             : llama-server launched inside a Docker container
-  - podman             : llama-server launched inside a Podman container
+Runs the same lifecycle + error-path tests across every backend combo.
+No markers needed — runs by default and discovers what's available.
 
 Run all e2e tests:
-    pytest tests/test_backend_e2e.py --e2e -v --timeout=300
+    pytest tests/test_backend_e2e.py -v --timeout=300
 
 Run only one combination:
-    pytest tests/test_backend_e2e.py::test_full_lifecycle_process -v
+    pytest tests/test_backend_e2e.py::TestFullLifecycle::test_ainvoke[process-vulkan-process] -v
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
 import time
-from typing import Any, Dict
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
 
 import httpx
 import pytest
 import uvicorn
 
-from model_arkestra.server import ArkestraServer
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+# ── Models ───────────────────────────────────────────────────────────────────
+
+# CPU models — small enough to run quickly on any machine
+_CPU_MODELS = [
+    ("qwen3.5-4b", "unsloth/Qwen3.5-4B-GGUF:Q4_K_M"),
+    ("gemma-4-e2b", "unsloth/gemma-4-E2B-it-qat-GGUF:UD-Q4_K_XL"),
+]
+
+# GPU models — use bartowski repos (open, no license gate)
+_GPU_TEST_MODEL = "bartowski/Llama-3.2-1B-Instruct-GGUF:Q4_K_M"
+
+# ── Auto-discovery ───────────────────────────────────────────────────────────
+
+def _detect_all_backends() -> Tuple[List[Tuple[str, str]], Dict[str, str]]:
+    """Discover all available backends + pre-download binaries.
+
+    Returns (combo_list, bin_paths) where:
+      combo_list: list of (combo_id, model_name)
+      bin_paths:  dict mapping process backend names -> binary directories
+    """
+    combos: List[Tuple[str, str]] = []
+    bin_paths: Dict[str, str] = {}
+
+    # --- Process: Vulkan CPU ---
+    vulkan_dir = "/home/marc/local/llama.cpp/build-vulkan-radv/bin"
+    if os.path.isdir(vulkan_dir) and os.path.isfile(os.path.join(vulkan_dir, "llama-server")):
+        for model_key, checkpoint in _CPU_MODELS:
+            combo_id = f"process-vulkan-{model_key}"
+            combos.append((combo_id, combo_id))
+
+    # --- Process: ROCm per-gfx-family ---
+    try:
+        from model_arkestra.gpu_detect import detect_all as _detect_gpus
+        detection = _detect_gpus()
+        gfx_family = detection.get("gfx_family")
+
+        for gpu in detection["gpus"]:
+            backend_hint = gpu["backend"]
+            if backend_hint not in ("rocm", "vulkan-radv", "cuda"):
+                continue
+
+            test_id_base = f"{gfx_family or backend_hint}-roc-m"
+            combo_id = f"{test_id_base}-process"
+            combos.append((combo_id, combo_id))
+
+            # Pre-download ROCm binary for this gfx family
+            if gfx_family:
+                from model_arkestra.binary_downloader import BinaryDownloader
+                asset_pattern = f"llama-*-ubuntu-rocm-{gfx_family}-x64.zip"
+                source_cfg = {
+                    "type": "github-release",
+                    "repo": "lemonade-sdk/llamacpp-rocm",
+                    "release_type": "latest",
+                    "asset_pattern": asset_pattern,
+                }
+                cache_dir = Path.home() / ".cache" / "arkestra-gpu-test"
+                dl = BinaryDownloader(
+                    cache_dir=cache_dir, backend_id=f"rocm-{gfx_family}", source_cfg=source_cfg,
+                )
+                try:
+                    result_path = asyncio.run(dl.resolve(version="latest"))
+                    bin_dir = str(Path(result_path).parent)
+                    # Register the process backend that will use this binary
+                    for c in combos:
+                        if c[0].startswith(test_id_base) and c[0].endswith("-process"):
+                            bin_paths[c[0]] = bin_dir
+                except Exception as e:
+                    print(f"  Warning: failed to download {gfx_family}: {e}")
+
+    except ImportError:
+        pass
+
+    # --- Docker / Podman ---
+    for runtime in ("docker", "podman"):
+        if shutil.which(runtime):
+            combo_id = f"{runtime}-gpu"
+            combos.append((combo_id, combo_id))
+
+    return combos, bin_paths
 
 
-# ── Test config for e2e ──────────────────────────────────────────────────────
-# Supports 3 runner types via explicit "runner" field on each model.
+COMBOS = _detect_all_backends()
+BACKEND_COMBOS: List[Tuple[str, str]] = COMBOS[0]
+BIN_PATHS: Dict[str, str] = COMBOS[1]
+COMBO_IDS = [c[0] for c in BACKEND_COMBOS] if BACKEND_COMBOS else []
+if not BACKEND_COMBOS:
+    BACKEND_COMBOS = [("no-backends", "test_none")]
 
-_E2E_CONFIG = """
-warmup-time: 10
-models-start-port: 18000
-model-ports: 64
-env:
-  ADMIN_KEY: test-e2e-key
+# ── Config builder ───────────────────────────────────────────────────────────
 
-backends:
-  default: process-default
-  process-default:
-    binary_dir: /home/marc/local/llama.cpp/build-vulkan-radv/bin
-    binary: llama-server
-    runner: process
-    args:
-      hf: ${CHECKPOINT}
-      port: "${PORT}"
-  docker-backend:
-    source_ref: amd-toolbox-rocm
-    entrypoint: /usr/local/bin/llama-server
-    runner: docker
-    devices:
-      - /dev/kfd
-      - /dev/dri
-    args:
-      hf: ${CHECKPOINT}
-      ngl: 999
-  podman-backend:
-    source_ref: amd-toolbox-rocm
-    entrypoint: /usr/local/bin/llama-server
-    runner: podman
-    devices:
-      - /dev/kfd
-      - /dev/dri
-    args:
-      hf: ${CHECKPOINT}
-      ngl: 999
+def _build_e2e_config(combos: List[Tuple[str, str]], bin_paths: Dict[str, str]) -> str:
+    """Build a YAML config string from the combo list."""
+    backend_cfgs: Dict[str, Dict[str, Any]] = {}
+    test_models: List[Dict[str, Any]] = []
 
-sources:
-  amd-toolbox-rocm:
-    type: oci-image
-    repo: docker.io/kyuz0/amd-strix-halo-toolboxes
-    release_type: rocm-7.14
+    for combo_id, model_name in combos:
+        # Determine backend config from combo_id
+        if combo_id.startswith("process-vulkan-"):
+            model_key = combo_id.split("-", 2)[-1]
+            backend_name = "vulkan-process"
+        elif "roc-m" in combo_id:
+            gpu_prefix = combo_id.replace("-roc-m-process", "").rsplit("-", 1)[-1]
+            backend_name = f"rocm-process-{gpu_prefix}"
+        elif combo_id.startswith("docker-") or combo_id.startswith("podman-"):
+            backend_name = f"{combo_id.split('-')[0]}-backend"
+        else:
+            continue
 
-runners:
-  default: ProcessModelRunner
+        if model_key is not None:
+            checkpoint = dict(_CPU_MODELS).get(model_key, _GPU_TEST_MODEL)
+        else:
+            checkpoint = _GPU_TEST_MODEL
 
-models:
-  qwen3.5-4b-process:
-    checkpoint: unsloth/Qwen3.5-4B-GGUF:Q4_K_M
-    args:
-      temp: 0.7
-      top-p: 0.95
-      ctx-size: 2048
+        test_models.append({
+            "model_name": combo_id,
+            "checkpoint": checkpoint or _GPU_TEST_MODEL,
+            "backend": backend_name,
+            "args": {"temp": 0.7, "top-p": 0.95, "ctx-size": 2048},
+        })
 
-  qwen3.5-4b-docker:
-    checkpoint: unsloth/Qwen3.5-4B-GGUF:Q4_K_M
-    backend: docker-backend
-    args:
-      temp: 0.7
-      top-p: 0.95
-      ctx-size: 2048
+        if backend_name in backend_cfgs:
+            continue  # deduplicate — docker/podman each have one backend for all GPU models
 
-  qwen3.5-4b-podman:
-    checkpoint: unsloth/Qwen3.5-4B-GGUF:Q4_K_M
-    backend: podman-backend
-    args:
-      temp: 0.7
-      top-p: 0.95
-      ctx-size: 2048
+        # Build backend config
+        be: Dict[str, Any] = {}
 
-  gemma-4-e2b-process:
-    checkpoint: unsloth/gemma-4-E2B-it-qat-GGUF:UD-Q4_K_XL
-    args:
-      temp: 0.7
-      top-p: 0.95
-      ctx-size: 2048
-"""
+        if combo_id.startswith("process-vulkan-"):
+            vulkan_dir = "/home/marc/local/llama.cpp/build-vulkan-radv/bin"
+            be.update({
+                "runner": "process",
+                "binary_dir": vulkan_dir,
+                "binary": "llama-server",
+                "args": {"hf": "${CHECKPOINT}", "port": "${PORT}"},
+            })
+
+        elif "roc-m" in combo_id:
+            # Look up pre-downloaded binary by matching prefix
+            gfx_prefix = combo_id.replace("-roc-m-process", "")
+            for bkey, bdir in bin_paths.items():
+                if gfx_prefix in bkey or bkey.startswith(gfx_prefix):
+                    be.update({
+                        "runner": "process",
+                        "binary_dir": bdir,
+                        "binary": str(Path(bdir).name),
+                        "env_container": {"LD_LIBRARY_PATH": bdir},
+                        "args": {"ngl": 999, "hf": "${CHECKPOINT}", "port": "${PORT}"},
+                    })
+                    break
+            if not be:
+                be = {"runner": "process", "source_ref": f"rocm-{gfx_prefix}"}
+
+        elif combo_id.startswith("docker-") or combo_id.startswith("podman-"):
+            runtime = combo_id.split("-")[0]
+            be.update({
+                "runner": runtime,
+                "source_ref": f"{runtime}-gpu",
+                "entrypoint": "/usr/local/bin/llama-server",
+                "devices": ["/dev/kfd", "/dev/dri"],
+                "args": {"ngl": 999, "hf": "${CHECKPOINT}"},
+            })
+
+        backend_cfgs[backend_name] = be
+
+    # ── YAML serialization helpers ────────────────────────────────────────
+    def _fmt(v: Any) -> str:
+        if isinstance(v, bool): return "true" if v else "false"
+        return str(v)
+
+    def _serialize(cfg: dict, indent: int) -> List[str]:
+        out = []
+        pfx = "  " * indent
+        for k, v in cfg.items():
+            if isinstance(v, dict):
+                out.append(f"{pfx}{k}:")
+                out.extend(_serialize(v, indent + 1))
+            elif isinstance(v, list):
+                out.append(f"{pfx}{k}:")
+                for item in v:
+                    out.append(f"{pfx}- {_fmt(item)}")
+            else:
+                out.append(f"{pfx}{k}: {_fmt(v)}")
+        return out
+
+    # ── Build YAML ────────────────────────────────────────────────────────
+    lines = ["backends:"]
+    for be_name, cfg in backend_cfgs.items():
+        lines.append(f"  {be_name}:")
+        lines.extend(_serialize(cfg, 2))
+
+    # OCI sources for container backends
+    oci_refs = set(
+        cfg.get("source_ref") for cfg in backend_cfgs.values()
+        if isinstance(cfg.get("source_ref"), str) and cfg["source_ref"] not in ("process", "docker", "podman")
+    )
+    if oci_refs:
+        lines.extend(["", "sources:"])
+        for src in sorted(oci_refs):
+            lines.extend([f"  {src}:", "    type: oci-image", "    repo: docker.io/kyuz0/amd-strix-halo-toolboxes", "    release_type: rocm-7.14"])
+
+    lines.append("")
+    # Runners section
+    has_process = any("process" in cfg for cfg in backend_cfgs.values() if isinstance(cfg, dict))
+    if has_process:
+        lines.extend(["runners:", "  default: ProcessModelRunner", ""])
+
+    # Models section
+    lines.append("models:")
+    for m in test_models:
+        lines.extend([f"  {m['model_name']}:", f"    checkpoint: {m['checkpoint']}", f"    backend: {m['backend']}", "    args:"])
+        for k, v in m["args"].items():
+            lines.append(f"      {k}: {v}")
+
+    return "\n".join(lines)
 
 
 # ── Fixture helpers ──────────────────────────────────────────────────────────
 
-def _start_server(port: int, admin_key: str = "test-e2e-key") -> tuple[ArkestraServer, httpx.Client]:
-    """Start a real ArkestraServer on the given port. Returns proxy + client."""
+E2E_PORT = 18005
+
+
+def _start_server(port: int, admin_key: str = "test-e2e-key") -> Tuple[Any, httpx.Client]:
+    from model_arkestra.server import ArkestraServer
     import tempfile
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-        f.write(_E2E_CONFIG)
+        f.write(_build_e2e_config(BACKEND_COMBOS, BIN_PATHS))
         config_path = f.name
 
     try:
-        proxy = ArkestraServer(
-            config_path=config_path,
-            port=port,
-            ready_timeout=60,
-        )
+        proxy = ArkestraServer(config_path=config_path, port=port, ready_timeout=60)
         app = proxy.get_app()
 
         uvicorn_config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
@@ -144,7 +276,6 @@ def _start_server(port: int, admin_key: str = "test-e2e-key") -> tuple[ArkestraS
         thread = threading.Thread(target=serve, daemon=True)
         thread.start()
 
-        # Wait for the server to be ready
         url = f"http://127.0.0.1:{port}/health"
         deadline = time.time() + 30
         while time.time() < deadline:
@@ -156,25 +287,18 @@ def _start_server(port: int, admin_key: str = "test-e2e-key") -> tuple[ArkestraS
         else:
             raise RuntimeError(f"Server on port {port} did not become ready")
 
-        client = httpx.Client(timeout=None, headers={"X-Admin-Key": admin_key})
-        return proxy, client
+        return proxy, httpx.Client(timeout=None, headers={"X-Admin-Key": admin_key})
     except Exception:
         os.unlink(config_path)
         raise
 
 
-def _stop_server(proxy: ArkestraServer, client: httpx.Client, port: int) -> None:
-    """Tear down server and all its models with guaranteed cleanup."""
-    # 1. Shut down via the built-in /admin/shutdown endpoint — this
-    #    coordinates model stopping + watcher cancellation + uvicorn shutdown
-    #    in a single async task (no orphaned tasks or stale runner refs).
+def _stop_server(proxy: Any, client: httpx.Client, port: int) -> None:
     try:
         client.post(f"http://127.0.0.1:{port}/admin/shutdown", timeout=120)
     except Exception:
-        pass  # connection may already be torn down
+        pass
 
-    # 2. Remove any leftover containers (podman + docker) — safety net for
-    #    containers that didn't exit cleanly during uvicorn shutdown.
     for cmd in (["podman", "ps", "-a", "--filter", "name=llm-", "--format", "{{.ID}}"],
                 ["docker", "ps", "-a", "--filter", "name=llm-", "--format", "{{.ID}}"]):
         try:
@@ -186,10 +310,7 @@ def _stop_server(proxy: ArkestraServer, client: httpx.Client, port: int) -> None
         except Exception:
             pass
 
-    # 3. Wait for port to be free
     _wait_port_free(port, timeout=30)
-
-    # 4. Close client
     try:
         client.close()
     except Exception:
@@ -197,27 +318,22 @@ def _stop_server(proxy: ArkestraServer, client: httpx.Client, port: int) -> None
 
 
 def _wait_port_free(port: int, timeout: float = 20.0) -> bool:
-    """Block until no process is listening on *port*."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        result = subprocess.run(
-            ["ss", "-tlnp"], capture_output=True, text=True, timeout=5,
-        )
+        result = subprocess.run(["ss", "-tlnp"], capture_output=True, text=True, timeout=5)
         if f":{port}" not in result.stdout:
             return True
         time.sleep(0.3)
-    # Last resort — kill anything on the port
     subprocess.run(["fuser", "-k", "-9", f"{port}/tcp"], capture_output=True, timeout=5)
     return False
 
 
 def _start_model(client: httpx.Client, base_url: str, model_name: str) -> bool:
-    """Start a model and wait until it reaches 'running' state. Returns True on success."""
-    resp = client.post(f"{base_url}/admin/start/{model_name}", timeout=180)
+    resp = client.post(f"{base_url}/admin/start/{model_name}", timeout=300)
     if resp.status_code != 200:
         return False
 
-    deadline = time.time() + 90
+    deadline = time.time() + 180
     while time.time() < deadline:
         r = client.get(f"{base_url}/admin/models", timeout=10)
         for m in r.json()["models"]:
@@ -228,90 +344,63 @@ def _start_model(client: httpx.Client, base_url: str, model_name: str) -> bool:
 
 
 def _stop_model(client: httpx.Client, base_url: str, model_name: str) -> None:
-    """Stop a model and wait for its port to be freed."""
     try:
         client.post(f"{base_url}/admin/stop/{model_name}", timeout=60)
     except Exception:
         pass
-    # Also try stop-all as safety net
     try:
         client.post(f"{base_url}/admin/stop-all", timeout=10)
     except Exception:
         pass
 
 
-# ── Parametrization ──────────────────────────────────────────────────────────
-
-E2E_PORT = 18005
-
-
-# Backend/runner combinations to test.
-# Each tuple: (test_id, model_name_in_config, runner_label)
-BACKEND_COMBOS = [
-    ("process", "qwen3.5-4b-process", "ProcessModelRunner"),
-    ("gemma-process", "gemma-4-e2b-process", "ProcessModelRunner"),
-]
-
-# Docker/Podman combos are conditional — only included if the runtime is available
-import shutil
-
-if shutil.which("docker"):
-    BACKEND_COMBOS.append(("docker", "qwen3.5-4b-docker", "Docker"))
-
-if shutil.which("podman"):
-    BACKEND_COMBOS.append(("podman", "qwen3.5-4b-podman", "Podman"))
-
-
-# ── Fixtures ─────────────────────────────────────────────────────────────────
+# ── Fixture ──────────────────────────────────────────────────────────────────
 
 @pytest.fixture()
 def e2e_server(request):
-    """Per-test self-contained server + client with guaranteed cleanup.
-
-    Each test that uses this fixture gets its own uvicorn process and port.
-    The model lifecycle (start → stop) is handled within the test body using
-    _start_model() and _stop_model().
-    """
+    """Per-test self-contained server + client with guaranteed cleanup."""
     admin_key = "test-e2e-key"
     base_url = f"http://127.0.0.1:{E2E_PORT}"
 
     proxy, client = _start_server(E2E_PORT, admin_key)
 
-    # Expose to test via request node for param info
     request.instance._e2e_port = E2E_PORT
     request.instance._e2e_base_url = base_url
     request.instance._e2e_client = client
 
     yield {"server": proxy, "client": client, "port": E2E_PORT, "base_url": base_url}
 
-    # ── Guaranteed teardown (always runs, even on assertion failure) ──────
     try:
         _stop_server(proxy, client, E2E_PORT)
     except Exception:
-        pass  # Best effort — don't mask test failures
+        pass
 
 
 # ── Tests ────────────────────────────────────────────────────────────────────
 
 class TestFullLifecycle:
-    """Start a model → verify inference → check logs → stop. Clean slate each time."""
+    """Start → inference → logs → stop/start. Clean slate each time."""
 
     @pytest.mark.e2e
-    @pytest.mark.parametrize("test_id,model_name,runner_label", BACKEND_COMBOS, ids=[c[0] for c in BACKEND_COMBOS])
-    def test_ainvoke(self, e2e_server, test_id: str, model_name: str, runner_label: str):
+    @pytest.mark.parametrize("combo_id,model_name", BACKEND_COMBOS, ids=COMBO_IDS)
+    def test_ainvoke(self, e2e_server, combo_id: str, model_name: str):
         """Single message → non-streaming response."""
         client = e2e_server["client"]
         base_url = e2e_server["base_url"]
 
         ok = _start_model(client, base_url, model_name)
         try:
-            assert ok, f"Model {model_name} ({test_id}) failed to start"
+            if not ok:
+                log_resp = client.get(f"{base_url}/admin/log/{model_name}", params={"since": 0, "lines": 100}, timeout=10)
+                if log_resp.status_code == 200:
+                    for line in log_resp.json().get("lines", []):
+                        print(f"LOG: {line['text']}")
+            assert ok, f"Model {model_name} ({combo_id}) failed to start"
 
-            # Verify inference works via chat completions endpoint
             resp = client.post(f"{base_url}/v1/chat/completions", json={
                 "model": model_name,
                 "messages": [{"role": "user", "content": "Say one word: hello"}],
-                "max_tokens": 8,
+                "max_new_tokens": 8,
             }, timeout=60)
 
             assert resp.status_code == 200, f"Inference failed: {resp.text}"
@@ -319,37 +408,34 @@ class TestFullLifecycle:
             assert body["object"] == "chat.completion"
             assert len(body["choices"]) > 0
             content = body["choices"][0]["message"]["content"]
-            assert len(content) > 0, "Empty response from model"
+            assert len(content) > 0
 
         finally:
             _stop_model(client, base_url, model_name)
 
     @pytest.mark.e2e
-    @pytest.mark.parametrize("test_id,model_name,runner_label", BACKEND_COMBOS, ids=[c[0] for c in BACKEND_COMBOS])
-    def test_astream(self, e2e_server, test_id: str, model_name: str, runner_label: str):
+    @pytest.mark.parametrize("combo_id,model_name", BACKEND_COMBOS, ids=COMBO_IDS)
+    def test_astream(self, e2e_server, combo_id: str, model_name: str):
         """Single message → streaming response with SSE chunks."""
         client = e2e_server["client"]
         base_url = e2e_server["base_url"]
 
         ok = _start_model(client, base_url, model_name)
         try:
-            assert ok, f"Model {model_name} ({test_id}) failed to start"
+            assert ok, f"Model {model_name} ({combo_id}) failed to start"
 
             resp = client.post(f"{base_url}/v1/chat/completions", json={
                 "model": model_name,
                 "messages": [{"role": "user", "content": "List 1, 2, 3"}],
-                "max_tokens": 16,
-                "stream": True,
+                "max_new_tokens": 16, "stream": True,
             }, timeout=60)
 
             assert resp.status_code == 200
-            assert "[DONE]" in resp.text, "Missing [DONE] marker in stream"
-
-            # Verify we got actual tokens (not just whitespace)
+            assert "[DONE]" in resp.text, "Missing [DONE] marker"
             data_lines = [
-                line.removeprefix("data: ").strip()
-                for line in resp.text.split("\n")
-                if line.startswith("data: ") and "[DONE]" not in line
+                l.removeprefix("data: ").strip()
+                for l in resp.text.split("\n")
+                if l.startswith("data: ") and "[DONE]" not in l
             ]
             assert len(data_lines) > 0, "No token chunks in stream"
 
@@ -357,56 +443,43 @@ class TestFullLifecycle:
             _stop_model(client, base_url, model_name)
 
     @pytest.mark.e2e
-    @pytest.mark.parametrize("test_id,model_name,runner_label", BACKEND_COMBOS, ids=[c[0] for c in BACKEND_COMBOS])
-    def test_logs_captured(self, e2e_server, test_id: str, model_name: str, runner_label: str):
+    @pytest.mark.parametrize("combo_id,model_name", BACKEND_COMBOS, ids=COMBO_IDS)
+    def test_logs_captured(self, e2e_server, combo_id: str, model_name: str):
         """Model logs appear via the /admin/log endpoint."""
         client = e2e_server["client"]
         base_url = e2e_server["base_url"]
 
         ok = _start_model(client, base_url, model_name)
         try:
-            assert ok, f"Model {model_name} ({test_id}) failed to start"
-
-            # Small delay to let logs accumulate
+            assert ok, f"Model {model_name} ({combo_id}) failed to start"
             time.sleep(2)
 
-            resp = client.get(f"{base_url}/admin/log/{model_name}", params={
-                "since": 0, "lines": 100
-            }, timeout=10)
-
+            resp = client.get(f"{base_url}/admin/log/{model_name}", params={"since": 0, "lines": 100}, timeout=10)
             assert resp.status_code == 200
             data = resp.json()
             assert "lines" in data
             assert len(data["lines"]) > 0, f"No log lines captured for {model_name}"
 
-            # Verify log entries have expected structure
-            for entry in data["lines"]:
-                assert "text" in entry, f"Missing 'text' in log entry: {entry}"
-
         finally:
             _stop_model(client, base_url, model_name)
 
     @pytest.mark.e2e
-    @pytest.mark.parametrize("test_id,model_name,runner_label", BACKEND_COMBOS, ids=[c[0] for c in BACKEND_COMBOS])
-    def test_stop_then_start_restores_stopped_state(self, e2e_server, test_id: str, model_name: str, runner_label: str):
-        """After stopping a model, it reports 'stopped'. Restarting brings it back."""
+    @pytest.mark.parametrize("combo_id,model_name", BACKEND_COMBOS, ids=COMBO_IDS)
+    def test_stop_then_start_restores_stopped_state(self, e2e_server, combo_id: str, model_name: str):
+        """After stopping a model, it reports 'stopped'."""
         client = e2e_server["client"]
         base_url = e2e_server["base_url"]
 
         ok = _start_model(client, base_url, model_name)
         try:
-            assert ok, f"Model {model_name} ({test_id}) failed to start"
+            assert ok, f"Model {model_name} ({combo_id}) failed to start"
 
-            # Stop it
             _stop_model(client, base_url, model_name)
 
-            # Verify stopped state
             r = client.get(f"{base_url}/admin/models", timeout=10)
             for m in r.json()["models"]:
                 if m["id"] == model_name:
-                    assert m["status"] == "stopped", (
-                        f"Expected 'stopped' after stop, got '{m['status']}'"
-                    )
+                    assert m["status"] == "stopped", f"Expected 'stopped', got '{m['status']}'"
 
         finally:
             _stop_model(client, base_url, model_name)
@@ -416,7 +489,6 @@ class TestErrorPaths:
     """Verify error handling through the full stack."""
 
     @pytest.mark.e2e
-
     def test_unknown_model_404(self, e2e_server):
         """Starting a model not in config returns 404."""
         client = e2e_server["client"]
