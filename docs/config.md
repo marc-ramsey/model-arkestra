@@ -85,6 +85,7 @@ models:
 | `warmup-time` | `float` | `10.0` | Seconds to wait after `/health` returns OK before marking the model as `"running"`. |
 | `app-log-lines` | `int` | `2000` | Number of server-level log entries retained in the global ring buffer (Admin API → `/admin/logs`). Each entry ~200 bytes. |
 | `env` | `dict` | — | Environment variables merged into model subprocesses at startup (e.g., `HF_HUB_CACHE`). |
+| `container_type` | `str` | `"process"` | Default container runner when a backend uses `runner: container`. Valid values: `"podman"`, `"docker"`. Set to `"process"` to disable containers by default.
 
 ### `backends.default:` Key
 
@@ -214,7 +215,7 @@ defaults:
 | Key | Type | Description |
 |---|---|---|
 | `description` | str | Human-readable description shown in `list-backends`. |
-| `runner` | str | Runner class name (e.g., `"ProcessModelRunner"`). |
+| `runner` | str | Runner type: `"process"`, `"podman"`, `"docker"`, or `"container"`. Use `"container"` to defer to the top-level `container_type:` config value. |
 | `source_ref` | str | Name of a source entry from the `sources:` section below. |
 | `args` | dict | Default CLI arguments merged into model args during startup. |
 | `hf_flag` | str | (Optional) Override for the HuggingFace flag format — e.g., `"--hf"` instead of default `"-hf"`. Used when container images or binaries use a different flag convention. |

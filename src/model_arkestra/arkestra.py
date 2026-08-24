@@ -322,7 +322,11 @@ class ModelArkestra:
             )
             be = backends.get(backend_id, {})
             if isinstance(be, dict) and "runner" in be:
-                return str(be["runner"])
+                rtype = str(be["runner"])
+                # Resolve special "container" runner to the top-level default
+                if rtype == "container":
+                    rtype = self._cm.data.get("container_type", "process") or "process"
+                return rtype
         runners_cfg = self._cm.data.get("runners", {})
         if isinstance(runners_cfg, dict):
             default_type = str(runners_cfg.get("default", "process"))
@@ -385,10 +389,13 @@ class ModelArkestra:
           as bare kwargs. Converted to ``--flag value`` CLI flags at subprocess
           boundary.
 
+        Runner values: ``process``, ``podman``, ``docker``, or ``container``
+        (resolves to ``container_type`` from top-level config).
+
         Example::
 
             await arkestra.start("qwen3-4b", temp=1.0, top_k=20)
-            await arkestra.start("qwen3-4b", port=18000, backend="rocm", temp=0.9)
+            await arkestra.start("qwen3-4b", port=18000, backend="rocm-container", temp=0.9)
         """
         # Validate inputs before allocating anything
         model = self.get_model(model_name)
@@ -433,6 +440,8 @@ class ModelArkestra:
         be_id = self._resolve_backend_id(model_name, {}, backend)
         be_cfg = backends_cfg.get(be_id, {})
         resolved_runner = str(be_cfg.get("runner", "process"))
+        if resolved_runner == "container":
+            resolved_runner = self._cm.data.get("container_type", "process") or "process"
 
         if resolved_runner not in runners_cfg and resolved_runner not in ("process", "podman", "docker"):
             raise ValueError(

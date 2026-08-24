@@ -62,6 +62,17 @@ await runner.start("qwen3.6-35B-think", port=18005)
 await runner.start("qwen3-4b", runner="podman")
 ```
 
+### Backend with `runner: container` resolves to `container_type` from config
+
+When a backend entry uses `runner: container`, the actual engine is taken from the top-level `container_type:` key in `config.yaml`:
+
+```yaml
+# config.yaml
+container_type: podman   # or "docker"
+```
+
+A backend with `runner: container` will use whichever runner that resolves to — you can change it globally without touching individual backend definitions.
+
 ### Running multiple models concurrently
 
 ```python
