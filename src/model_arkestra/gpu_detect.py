@@ -317,19 +317,6 @@ def detect_all() -> dict[str, Any]:
     gpus = _detect_gpus()
     cpu = _detect_cpu()
 
-    # Detect exact GFX architecture for ROCm binary selection
-    gfx_family = None
-    if primary_gpu and primary_gpu["vendor"] == "amd":
-        gfx_family = detect_gfx_version()
-
-    # Determine runtime availability
-    runtimes = {
-        "vulkan": has_vulkan(),
-        "rocm": has_rocm(),
-        "nvidia": has_nvidia(),
-        "cpu": True,  # always available if binary can be downloaded
-    }
-
     # Sort GPUs: NVIDIA first (best performance), then AMD/Intel
     gpu_order = {"nvidia": 0, "amd": 1, "intel": 1, "unknown": 2}
     gpus.sort(key=lambda g: gpu_order.get(g["vendor"], 3))
@@ -337,6 +324,17 @@ def detect_all() -> dict[str, Any]:
     # Pick primary GPU and its recommended backend
     primary_gpu = gpus[0] if gpus else None
     multi_gpu_warn = len(gpus) > 1
+
+    # Detect exact GFX architecture for ROCm binary selection
+    gfx_family = None
+    if primary_gpu and primary_gpu["vendor"] == "amd":
+        gfx_family = detect_gfx_version()
+    runtimes = {
+        "vulkan": has_vulkan(),
+        "rocm": has_rocm(),
+        "nvidia": has_nvidia(),
+        "cpu": True,  # always available if binary can be downloaded
+    }
 
     recommendation: tuple[str, str] | None = None
 
