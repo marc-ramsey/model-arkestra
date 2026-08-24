@@ -610,7 +610,7 @@ class BinaryDownloader:
             return False
         updated_at = entry.get("updated_at", 0)
         if not updated_at:
-            return False  # no timestamp — assume fresh
+            return True  # no timestamp — assume stale (no valid cache)
         age_hours = (asyncio.get_event_loop().time() - updated_at) / 3600.0
         return age_hours > self._cache_ttl_hours
 

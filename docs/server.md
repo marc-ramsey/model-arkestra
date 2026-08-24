@@ -115,6 +115,9 @@ def custom_endpoint():
 | `GET` | `/v1/models` | List all tracked models in OpenAI format |
 | `GET` | `/health` | Health check — returns running model count |
 | `GET` | `/v1/health` | Alias for `/health` (OpenAI compat) |
+| `POST` | `/v1/embeddings` | Text embeddings — ONNX models with `capabilities: [embed]` |
+| `POST` | `/v1/audio/transcriptions` | Speech-to-text (Whisper) — ONNX models with `capabilities: [stt]` |
+| `POST` | `/v1/audio/speech` | Text-to-speech (Kokoro) — ONNX models with `capabilities: [tts]` |
 
 ### POST /v1/chat/completions
 
@@ -189,6 +192,29 @@ Returns all configured models in OpenAI-compatible format:
 | `status` | Lowercase state string: `running`, `stopped`, `uncached`, `error`, etc. |
 
 See [Model Introspection](./usage.md#model-introspection) for equivalent Python API methods.
+
+### POST /v1/embeddings
+
+Text embeddings via ONNX inference server (models with `capabilities: [embed]`):
+
+```json
+{ "input": "hello world" }
+```
+
+Response:
+
+```json
+{
+  "object": "list",
+  "data": [{ "object": "embedding", "index": 0, "embedding": [0.1, -0.2, ...] }],
+  "model": "model.onnx",
+  "usage": { "prompt_tokens": 0, "total_tokens": 0 }
+}
+```
+
+The `embedding` array length depends on the model (e.g., BGE-small → 384-dim). Models are loaded lazily — the first request triggers ONNX session warmup.
+
+Requires `onnxruntime>=1.28` and optionally `transformers>=4.40` for tokenization (`pip install 'model-arkestra[onnx]'`).
 
 ## Model Resolution — Aliases
 

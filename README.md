@@ -17,6 +17,7 @@ This is **not** a replacement for [Lemonade](https://github.com/ollama/lemonade)
 | Run the OpenAI-compatible API server | [Server Documentation](./docs/server.md) |
 | Manage models via web UI / Admin panel | [Admin API & Dashboard](./docs/admin.md) |
 | Use the `arkestra-admin` CLI | See below |
+| Offload embeddings/TTS/STT to ONNX | [ONNX Server](./docs/onnx-server.md) |
 | Understand how routing, ports, and runners work | [Architecture](./docs/architecture.md) |
 | Write or modify `config.yaml` | [Configuration Format](./docs/config.md) |
 
@@ -89,6 +90,23 @@ rocm-container:
 
 This lets you swap between Podman and Docker globally without editing individual backends.
 
+### Quick Start — Auxiliary Workloads (ONNX)
+
+Offload Whisper (STT), Kokoro TTS, or embedding models to a separate lightweight HTTP server — preserving GPU VRAM for LLM inference. Install with `pip install 'model-arkestra[onnx]'`:
+
+```bash
+# Standalone ONNX server for embeddings
+python -m model_arkestra.onnx_server \
+    --model /path/to/model.onnx \
+    --type embedding \
+    --port 8090 \
+    --tokenizer Xenova/bge-small-en-v1.5
+```
+
+Or via config with the `ModelArkestra` Python API — models marked with `capabilities: [embed]` or `capabilities: [stt]` spin up a separate ONNX process automatically.
+
+See [ONNX Server](./docs/onnx-server.md) for full documentation.
+
 ### Hugging Face Cache Location
 
 Models are downloaded via HuggingFace Hub. Control where they land by setting `HF_HUB_CACHE`:
@@ -121,6 +139,7 @@ from model_arkestra.container_runner import ContainerModelRunner  # container ba
 from model_arkestra.http_client import ModelHttpClient         # lightweight HTTP client
 from model_arkestra.langchain_adapter import LangChainModelAdapter  # LangChain LCEL wrapper
 from model_arkestra.server import ArkestraServer             # OpenAI v1-compatible API server
+from model_arkestra.onnx_server import OnnxServer            # ONNX inference (auxiliary workloads)
 
 # Convenience re-exports from __init__.py:
 from model_arkestra import RunnerState, RunnerError, ServerReadyTimeout
@@ -134,6 +153,7 @@ from model_arkestra import ModelNotStarted, MaxRestartsExceeded, ModelShutdown
 - [LangChain Integration](./docs/langchain.md)
 - [Error Hierarchy](./docs/errors.md)
 - [HTTP Client](./docs/http-client.md)
+- [ONNX Server](./docs/onnx-server.md) — auxiliary workloads (embeddings, TTS, STT)
 - [Contributing & Tests](./docs/contributing.md)
 
 ## Running tests

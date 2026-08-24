@@ -67,6 +67,15 @@ models:
       presence-penalty: 1.5
       chat-template-kwargs: '{"reasoning_effort":"medium"}'
 
+# ── Auxiliary models (ONNX) run on a separate inference server ────
+
+  bge-embeddings:
+    model_path: /path/to/model.onnx
+    type: embedding
+    tokenizer: Xenova/bge-small-en-v1.5
+    capabilities: [embed]
+    port: 8090   # separate from LLM port range
+
   qwen3.6-27b-mtp:
     checkpoint: unsloth/Qwen3.6-27B-MTP-GGUF:UD-Q4_K_XL
     args:
@@ -75,6 +84,24 @@ models:
       top-k: 20
       chat-template-kwargs: '{"enable_thinking":true}'
 ```
+
+### Auxiliary Models (ONNX)
+
+Models marked with `capabilities` run on a separate ONNX inference server, preserving GPU VRAM for LLM inference.
+
+| Capability | Value | Endpoint | Model Type |
+|---|---|---|---|
+| `embed` | `["embed"]` | `/v1/embeddings` | Embedding encoder (BERT-style) |
+| `stt` | `["stt"]` | `/v1/audio/transcriptions` | Whisper ASR |
+| `tts` | `["tts"]` | `/v1/audio/speech` | Kokoro TTS |
+
+ONNX model keys:
+- `model_path: /path/to/model.onnx` — path to ONNX model file (required)
+- `type: embedding|whisper|tts` — inference type (required)
+- `tokenizer: Xenova/bge-small-en-v1.5` — HF tokenizer repo or local dir (embedding only)
+- `port:` — HTTP port for the ONNX server instance (separate from LLM port range)
+
+See [ONNX Server](./onnx-server.md) for full documentation.
 
 ### Top-Level Settings
 

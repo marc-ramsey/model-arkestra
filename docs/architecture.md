@@ -21,9 +21,25 @@ Model Arkestra handles port allocation and backend→runner routing.
 │              │  ├────────────┬───────────┤
 │subprocesses  │  │PodmanModel │ DockerModel│
 │              │  │   Runner   │  Runner   │
-└──────────────┘  │            │           │
-                  │OCI containers│OCI cont.│
-                  └────────────┴───────────┘
+└──────┬───────┘  │            │           │
+       │          │OCI containers│OCI cont.│
+       │          └────────────┴───────────┘
+       ▼
+┌─────────────────────────────────────────────┐
+│  llama.cpp / Container Process              │
+│  (llama-server on ROCm/Vulkan/CUDA)         │
+└─────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────┐
+│  ONNX Inference Server (optional)           │
+│  ── separate process, distinct port range    │
+│                                              │
+│  /v1/embeddings   → BERT-style encoders     │
+│  /v1/audio/*      → Whisper / Kokoro        │
+│                                              │
+│  --device cpu   → CPUExecutionProvider       │
+│  --device npu   → NPUExecutionProvider (AMD) │
+└─────────────────────────────────────────────┘
 ```
 
 ## Runner Routing — Explicit Args Override Config
