@@ -391,9 +391,16 @@ class BinaryDownloader:
                 )
 
             # Move binary to final cache location
+            # For multi-binary builds (llama.cpp), ALL files including .so
+            # shared libraries must be kept together in the same directory.
             final_dest = self.cache_dir / f"bin-{cache_key}"
-            shutil.move(str(binary_path), str(final_dest))
-            os.chmod(final_dest, 0o755)  # ensure executable
+            shutil.copytree(str(extract_dir), str(final_dest), dirs_exist_ok=True)
+
+            # Rename the found binary to match cache-key naming convention
+            renamed = final_dest / f"bin-{cache_key}"
+            os.rename(str(binary_path.resolve()), str(renamed))
+            os.chmod(str(renamed), 0o755)  # ensure executable
+            result_path = str(renamed)
 
         finally:
             # Cleanup temp files
@@ -404,7 +411,7 @@ class BinaryDownloader:
             if extract_dir.exists():
                 shutil.rmtree(extract_dir, ignore_errors=True)
 
-        return final_dest
+        return result_path
 
     def _find_binary_in_tree(self, root: Path) -> Optional[Path]:
         """Locate the 'llama-server' executable in the extracted tree.
