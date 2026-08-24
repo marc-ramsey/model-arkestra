@@ -16,6 +16,7 @@ This is **not** a replacement for [Lemonade](https://github.com/ollama/lemonade)
 | Start using Model Arkestra in Python code | [Usage Guide](./docs/usage.md) |
 | Run the OpenAI-compatible API server | [Server Documentation](./docs/server.md) |
 | Manage models via web UI / Admin panel | [Admin API & Dashboard](./docs/admin.md) |
+| Use the `arkestra-admin` CLI | See below |
 | Understand how routing, ports, and runners work | [Architecture](./docs/architecture.md) |
 | Write or modify `config.yaml` | [Configuration Format](./docs/config.md) |
 
@@ -60,6 +61,34 @@ arkestra-server --config config.yaml --port 8080
 
 Then hit `POST /v1/chat/completions` with any OpenAI-compatible client, or visit the admin dashboard at `http://localhost:8080/`.
 
+### Quick Start — Admin CLI
+
+```bash
+arkestra-admin models -x http://localhost:8080 --api-key SECRET
+arkestra-admin start qwen3-4b temp=0.7 backend=vulkan-radv
+arkestra-admin config get qwen3-4b
+arkestra-admin logs qwen3-4b --lines 100
+arkestra-admin images list
+arkestra-admin shutdown -x http://localhost:8080
+```
+
+See [Admin API & Dashboard](./docs/admin.md) for the full CLI reference.
+
+### Quick Start — Container Runners
+
+Set `container_type: podman` (or `docker`) in `config.yaml`, then use `runner: container` in any backend to defer to the global default:
+
+```yaml
+# config.yaml
+container_type: podman   # or "docker" — change all containers with one line
+
+# backends.yaml  
+rocm-container:
+  runner: container      # resolves to "podman" above
+```
+
+This lets you swap between Podman and Docker globally without editing individual backends.
+
 ### Hugging Face Cache Location
 
 Models are downloaded via HuggingFace Hub. Control where they land by setting `HF_HUB_CACHE`:
@@ -75,7 +104,7 @@ The default is `~/.cache/huggingface/hub`. The [`config.md`](./docs/config.md#en
 
 ## Architecture Overview
 
-Model Arkestra routes models through a config-driven runner registry — each model selects a backend, which maps to a runner type (process, podman, or docker). A global port allocator distributes ports from a configured range. Port assignments are sticky: stopping and restarting a model reuses the same port.
+Model Arkestra routes models through a config-driven runner registry — each model selects a backend, which maps to a runner type (process, podman, docker, or container). The `runner: container` value resolves against the top-level `container_type:` in `config.yaml`, enabling global engine swapping. A global port allocator distributes ports from a configured range. Port assignments are sticky: stopping and restarting a model reuses the same port.
 
 For details see [Architecture](./docs/architecture.md) and [Lifecycle](./docs/lifecycle.md).
 

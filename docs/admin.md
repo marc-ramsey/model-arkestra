@@ -528,3 +528,64 @@ State management:
 - [Configuration Format](./config.md) — YAML config that admin endpoints modify
 - [Usage Guide](./usage.md) — Python API equivalent of admin operations
 - [Lifecycle](./lifecycle.md) — state transitions reflected in `/admin/models`
+
+## `arkestra-admin` CLI Tool
+
+A command-line interface for all admin endpoints, installed alongside `arkestra-cli` and `arkestra-server`. Reads `ADMIN_KEY` from config.yaml by default.
+
+```bash
+arkestra-admin --server http://localhost:8080 --api-key SECRET <command>
+```
+
+### Authentication Priority
+1. `--api-key KEY` flag (highest)
+2. `$ADMIN_KEY` environment variable
+3. `ADMIN_KEY` from `config.yaml`'s `env:` section
+
+### Commands
+
+| Command | Description |
+|---|---|
+| `arkestra-admin models` | List all configured models with status, port, backend |
+| `arkestra-admin start <name>` | Start a model (supports `--port`, `--backend`, `--runner`, `key=value` params) |
+| `arkestra-admin stop <name>` | Stop a running model |
+| `arkestra-admin stop-all` | Stop all running models |
+| `arkestra-admin config list` | List model names in config |
+| `arkestra-admin config get <name>` | Show one model's full config + runtime status |
+| `arkestra-admin config set <name> key=value` | Update a model field (e.g., `backend=rocm`) |
+| `arkestra-admin config create --checkpoint PATH` | Add a new model to config |
+| `arkestra-admin config rm <name>` | Remove a model from config |
+| `arkestra-admin logs <name\|all> [--lines 100]` | Tail model or global server logs |
+| `arkestra-admin eject <name>` | Stop model and delete checkpoint cache |
+| `arkestra-admin images list` | Show OCI image availability per backend |
+| `arkestra-admin images build <backend> [--tag TAG]` | Build an OCI container image |
+| `arkestra-admin images rm <image_tag>` | Remove a container image |
+| `arkestra-admin shutdown` | Gracefully stop the server |
+
+### Examples
+
+```bash
+# List models (auto-reads ADMIN_KEY from config)
+arkestra-admin --server http://127.0.0.1:8080 models
+
+# Start with overrides
+arkestra-admin start qwen3-4b --backend vulkan-radv temp=0.7 top-k=20
+
+# Tail logs with custom count
+arkestra-admin logs gemma-4-e2b --lines 50
+
+# Build and check OCI images
+arkestra-admin images build rocm-container --tag rocm-7.14
+arkestra-admin images list
+
+# Full server shutdown on remote host
+arkestra-admin shutdown -x http://remote-host:8080 --api-key mysecret
+```
+
+### JSON Output
+
+Add `--json` to any command for machine-readable output:
+
+```bash
+arkestra-admin --server http://localhost:8080 config get qwen3-4b --json
+```
