@@ -1,90 +1,93 @@
 models-start-port: 18000
 model-ports: 32
 warmup-time: 10
-defaults:
-  ctx-size: 16384
-  jinja: true
-  n-gpu-layers: 999
-  no-mmap: true
 
 env:
   ADMIN_KEY: whatever
   HF_HUB_CACHE: /home/lemonade/hub
-  HF_HUB_CACHE: /home/lemonade/hub
-
-engines:
-  llama_cpp:
-    binary_dir: /home/marc/local/llama.cpp/build/bin
-    binary: llama-server
-    args:
-      ctx-size: 16384
-      jinja: true
-      n-gpu-layers: 999
-      no-mmap: true
-    capabilities:
-      - chat
-      - embed
 
 backends:
   default: vulkan-radv
   rocm:
-    engine: llama_cpp
-    image: ark-llama:rocm
-    container: Containerfile.rocm
+    runner: ProcessModelRunner
+    source_ref: rocm-gfx1151
+    args:
+      hf: ${CHECKPOINT}
+      port: "${PORT}"
+      ngl: 999
+      ctx-size: ${ctx-size}
+  rocm-container:
     runner: podman
+    source_ref: amd-toolbox-rocm
+    entrypoint: /usr/local/bin/llama-server
+    devices:
+    - /dev/kfd
+    - /dev/dri
     args:
-      flash-attn: "on"
+      hf: ${CHECKPOINT}
+      ngl: 999
+  cuda:
+    runner: ProcessModelRunner
+    source_ref: official-cuda
+    args:
       hf: ${CHECKPOINT}
       port: "${PORT}"
       ngl: 999
-      no-mmap: true
-      np: 1
-      threads: ${NPROC}
-    binary_dir: /home/marc/local/llama.cpp/build-rocm/bin
-    devices:
-    - /dev/kfd
-    - /dev/dri/card1:rwm
-    - /dev/dri/renderD128:rwm
-    env_container:
-      GGML_CUDA_ENABLE_UNIFIED_MEMORY: 'ON'
-      ROCBLAS_USE_HIPBLASLT: '1'
+      ctx-size: ${ctx-size}
   vulkan-radv:
-    engine: llama_cpp
-    image: ark-llama:vulkan-radv
-    container: Containerfile.vulkan-radv
-    runner: process
+    runner: ProcessModelRunner
+    source_ref: official-vulkan-radv
     args:
-      flash-attn: "on"
       hf: ${CHECKPOINT}
       port: "${PORT}"
       ngl: 999
-      no-mmap: true
-      np: 1
+      ctx-size: ${ctx-size}
+  cpu:
+    runner: ProcessModelRunner
+    source_ref: ggml-org-cpu
+    args:
+      hf: ${CHECKPOINT}
       threads: ${NPROC}
-    binary_dir: /home/marc/local/llama.cpp/build-vulkan-radv/bin
-    devices:
-    - /dev/kfd
-    - /dev/dri/card1:rwm
-    - /dev/dri/renderD128:rwm
-    env_container:
-      GGML_CUDA_ENABLE_UNIFIED_MEMORY: 'ON'
-      ROCBLAS_USE_HIPBLASLT: '1'
+      no-mmap: true
 
-runners:
-  default: ProcessModelRunner
+sources:
+  official-vulkan-radv:
+    type: github-release
+    repo: ggml-org/llama.cpp
+    release_type: latest
+    asset_pattern: llama-*-bin-*-vulkan-x64*
+  rocm-gfx1151:
+    type: github-release
+    repo: lemonade-sdk/llamacpp-rocm
+    release_type: latest
+    asset_pattern: llama-*-ubuntu-rocm-gfx1151-x64.zip
+  amd-toolbox-rocm:
+    type: oci-image
+    repo: docker.io/kyuz0/amd-strix-halo-toolboxes
+    release_type: rocm-7.14
+  official-cuda:
+    type: github-release
+    repo: ai-dock/llama.cpp-cuda
+    release_type: latest
+    asset_pattern: llama.cpp-*-cuda-*-amd64.tar.gz
+  ggml-org-cpu:
+    type: github-release
+    repo: ggml-org/llama.cpp
+    release_type: latest
+    asset_pattern: llama-*-bin-*-static-x86_64*
 
 models:
   gemma-4-e2b:
-    checkpoint: unsloth/gemma-4-E2B-it-GGUF:Q4_K_M
+    checkpoint: unsloth/gemma-4-E2B-it-qat-GGUF:UD-Q4_K_XL
+    backend: vulkan-radv
     args:
       temp: 0.7
       top-p: 0.95
+      ctx-size: 2048
   qwen3.5-4b:
-    backend: rocm
     checkpoint: unsloth/Qwen3.5-4B-GGUF:Q4_K_M
+    backend: rocm
     args:
-      presence-penalty: 1.5
-  voxtral-mini:
-    checkpoint: unsloth/Voxtral-Mini-3B-2507-GGUF:Q4_K_M
-    args:
+      temp: 0.7
       top-p: 0.95
+      ctx-size: 2048

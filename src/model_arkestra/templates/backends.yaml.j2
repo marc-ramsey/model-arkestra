@@ -10,7 +10,7 @@ backends:
   rocm:
     description: "ROCm \u2014 best for AMD iGPU and discrete GPUs"
     runner: ProcessModelRunner
-    source_ref: ggml-org-rocm-7.14
+    source_ref: rocm-gfx1151
     args:
       ngl: 999
       hf: ${CHECKPOINT}
@@ -29,7 +29,7 @@ backends:
   cuda:
     description: "NVIDIA CUDA \u2014 for NVIDIA discrete GPUs"
     runner: ProcessModelRunner
-    source_ref: runtime-nvidia
+    source_ref: official-cuda
     args:
       ngl: 999
       hf: ${CHECKPOINT}
@@ -83,13 +83,11 @@ sources:
     type: oci-image
     repo: docker.io/kyuz0/amd-strix-halo-toolboxes
     release_type: rocm-7.14
-  runtime-nvidia:
-    type: runtime-check
-    checks:
-    - command: nvidia-smi
-      exit_code: 0
-    - path: /usr/lib/*/libcuda.so.1
-    - path: /usr/lib/*/libcudart.so.*
+  official-cuda:
+    type: github-release
+    repo: ai-dock/llama.cpp-cuda
+    release_type: latest
+    asset_pattern: llama.cpp-*-cuda-*-amd64.tar.gz
   ggml-org-cpu:
     type: github-release
     repo: ggml-org/llama.cpp

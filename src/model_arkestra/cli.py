@@ -207,7 +207,7 @@ TEMPLATE_FILES = ["config.yaml.j2", "backends.yaml.j2"]
 BACKEND_TO_SOURCE: dict[str, str] = {
     "rocm": "ggml-org-rocm",
     "vulkan-radv": "official-vulkan-radv",
-    "cuda": "runtime-nvidia",  # runtime-check — validates nvidia-smi + libs
+    "cuda": "official-cuda",
     "cpu": "ggml-org-cpu",
 }
 
@@ -265,7 +265,7 @@ def _set_rocm_source_in_backends(backends_path: Path, gfx_family: str) -> None:
         return
 
     # Map gfx ID → source_ref (must match a source entry in backends.yaml)
-    source_key = f"rocm-gfx{gfx_family}"
+    source_key = f"rocm-{gfx_family}"
     rocm_backend["source_ref"] = source_key
 
     # Re-serialize YAML preserving structure
