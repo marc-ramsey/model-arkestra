@@ -498,6 +498,14 @@ class ArkestraAdmin:
                 if backend_id == "default" or not isinstance(be_cfg, dict):
                     continue
                 image_tag = str(be_cfg.get("image", ""))
+                source_ref = be_cfg.get("source_ref", "")
+                sources = cm_data.get("sources", {}) or {}
+                src_cfg = sources.get(source_ref) if source_ref else {}
+                # For OCI-image sources, show the full image reference
+                if not image_tag and src_cfg and src_cfg.get("type") == "oci-image":
+                    repo = src_cfg.get("repo", "")
+                    release = src_cfg.get("release_type", "")
+                    image_tag = f"{repo}:{release}" if repo else source_ref
                 container_path = be_cfg.get("container", "")
                 _, runner_type = image_and_runner_for_backend(cm_data, backend_id)
                 runtime_detected = _runtime_binary(runner_type) is not None
@@ -505,7 +513,8 @@ class ArkestraAdmin:
                     "backend_id": backend_id,
                     "runner": runner_type,
                     "runtime_detected": runtime_detected,
-                    "image": image_tag,
+                    "image": image_tag if image_tag else None,
+                    "source_ref": source_ref if source_ref else None,
                     "containerfile": container_path,
                     "available": False,  # default; may be overwritten below
                 })
