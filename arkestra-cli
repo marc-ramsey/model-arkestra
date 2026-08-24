@@ -10,6 +10,13 @@ Types ``/help`` for commands, ``/quit`` or ``Ctrl+D`` to exit.
 Supports streaming output and full multi-turn conversation history.
 """
 from __future__ import annotations
+import os, sys
+
+# Auto-activate venv if present in project tree
+_venv = os.path.join(os.path.dirname(os.path.abspath(__file__)), "venv", "bin", "activate_this.py")
+if os.path.isfile(_venv):
+    exec(open(_venv).read(), {"__file__": _venv})  # noqa: S102
+
 import argparse
 import asyncio
 import json

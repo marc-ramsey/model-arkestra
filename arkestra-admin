@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Arkestra OpenAI-compatible proxy server.
+"""Arkestra Admin CLI.
 
 Usage:
-    arkestra-server --config config.yaml [--port 8080] [--broadcast-addr 127.0.0.1] ...
-
-This is a convenience wrapper around ``python -m model_arkestra.proxy`` with the same
-CLI flags. Install via ``pip install "model-arkestra[proxy]"`` to get it on PATH.
+    arkestra-admin models -x http://localhost:8080
+    arkestra-admin start qwen3-4b temp=0.7 --api-key secret
+    arkestra-admin logs qwen3-4b --lines 50
 """
 from __future__ import annotations
 import os, sys
@@ -17,11 +16,13 @@ if os.path.isfile(_venv):
 
 import sys
 
+try:
+    from aiohttp import ClientSession, ClientTimeout
+except ImportError:
+    print("Error: aiohttp required. Install with: pip install \"model-arkestra[proxy]\"", file=sys.stderr)
+    sys.exit(1)
 
-def main() -> None:
-    from model_arkestra.server import main as _server_main
-    _server_main()
-
+from model_arkestra.admin_cli import main
 
 if __name__ == "__main__":
     try:
