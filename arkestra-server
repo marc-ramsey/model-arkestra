@@ -12,8 +12,8 @@ import sys
 
 
 def main() -> None:
-    from model_arkestra.proxy import main as _proxy_main
-    _proxy_main()
+    from model_arkestra.server import main as _server_main
+    _server_main()
 
 
 if __name__ == "__main__":
