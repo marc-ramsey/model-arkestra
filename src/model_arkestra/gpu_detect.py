@@ -68,6 +68,48 @@ def has_nvidia() -> bool:
         return False
 
 
+def detect_cuda_compute_cap() -> str | None:
+    """Detect the CUDA compute capability from nvidia-smi.
+
+    Returns the compute cap string suitable for ai-dock/llama.cpp-cuda
+    release asset matching, e.g. 'cuda-12.8', or None if unavailable.
+    """
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,cuda_version,major,minor",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode != 0:
+            return None
+        for line in result.stdout.strip().splitlines()[:1]:  # only primary GPU
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) >= 4:
+                major, minor = int(parts[2]), int(parts[3])
+                # Map to ai-dock CUDA version they ship (12.8)
+                return f"cuda-12.8"
+    except (FileNotFoundError, OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def get_cuda_gpu_names() -> list[str]:
+    """Return list of NVIDIA GPU names detected by nvidia-smi."""
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            return [
+                name.strip() for name in result.stdout.strip().splitlines()
+                if name.strip()
+            ]
+    except (FileNotFoundError, OSError):
+        pass
+    return []
+
+
 def has_cpu_binary() -> bool:
     """Check if a llama-server CPU binary exists or can be downloaded.
 

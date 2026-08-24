@@ -106,6 +106,45 @@ def _detect_all_backends() -> Tuple[List[Tuple[str, str]], Dict[str, str]]:
     except ImportError:
         pass
 
+    # --- Process: CUDA (ai-dock/llama.cpp-cuda) ---
+    try:
+        from model_arkestra.gpu_detect import (
+            has_nvidia, detect_cuda_compute_cap, get_cuda_gpu_names,
+        )
+        if has_nvidia():
+            cuda_version = detect_cuda_compute_cap()
+            gpu_names = get_cuda_gpu_names()
+            gpu_tag = "-".join(gpu_names[:1]).replace(" ", "_") if gpu_names else "cuda"
+
+            combo_id = f"process-cuda-{gpu_tag}"
+            combos.append((combo_id, combo_id))
+
+            # Pre-download CUDA binary from ai-dock releases
+            if cuda_version:
+                from model_arkestra.binary_downloader import BinaryDownloader
+                asset_pattern = "llama.cpp-*-cuda-*-amd64.tar.gz"
+                source_cfg = {
+                    "type": "github-release",
+                    "repo": "ai-dock/llama.cpp-cuda",
+                    "release_type": "latest",
+                    "asset_pattern": asset_pattern,
+                }
+                cache_dir = Path.home() / ".cache" / "arkestra-gpu-test"
+                dl = BinaryDownloader(
+                    cache_dir=cache_dir, backend_id="cuda-12.8", source_cfg=source_cfg,
+                )
+                try:
+                    result_path = asyncio.run(dl.resolve(version="latest"))
+                    bin_dir = str(Path(result_path).parent)
+                    # Register the process backend that will use this binary
+                    for c in combos:
+                        if c[0].startswith("process-cuda-") and c[0].endswith("-process"):
+                            bin_paths[c[0]] = bin_dir
+                except Exception as e:
+                    print(f"  Warning: failed to download CUDA binary: {e}")
+    except ImportError:
+        pass
+
     # --- Docker / Podman ---
     for runtime in ("docker", "podman"):
         if shutil.which(runtime):
@@ -131,12 +170,16 @@ def _build_e2e_config(combos: List[Tuple[str, str]], bin_paths: Dict[str, str]) 
 
     for combo_id, model_name in combos:
         # Determine backend config from combo_id
+        model_key = None  # set by CPU model branches below
         if combo_id.startswith("process-vulkan-"):
             model_key = combo_id.split("-", 2)[-1]
             backend_name = "vulkan-process"
         elif "roc-m" in combo_id:
             gpu_prefix = combo_id.replace("-roc-m-process", "").rsplit("-", 1)[-1]
             backend_name = f"rocm-process-{gpu_prefix}"
+        elif combo_id.startswith("process-cuda-"):
+            gpu_tag = combo_id.replace("process-cuda-", "")
+            backend_name = f"cuda-process-{gpu_tag}"
         elif combo_id.startswith("docker-") or combo_id.startswith("podman-"):
             backend_name = f"{combo_id.split('-')[0]}-backend"
         else:
@@ -184,6 +227,22 @@ def _build_e2e_config(combos: List[Tuple[str, str]], bin_paths: Dict[str, str]) 
                     break
             if not be:
                 be = {"runner": "process", "source_ref": f"rocm-{gfx_prefix}"}
+
+        elif combo_id.startswith("process-cuda-"):
+            # CUDA process — look up pre-downloaded binary
+            gpu_tag = combo_id.replace("process-cuda-", "").replace("-process", "")
+            for bkey, bdir in bin_paths.items():
+                if "cuda" in bkey.lower() or "ai-dock" in bkey.lower():
+                    be.update({
+                        "runner": "process",
+                        "binary_dir": bdir,
+                        "binary": str(Path(bdir).name),
+                        "env_container": {"LD_LIBRARY_PATH": bdir},
+                        "args": {"ngl": 999, "hf": "${CHECKPOINT}", "port": "${PORT}"},
+                    })
+                    break
+            if not be:
+                be = {"runner": "process", "source_ref": f"cuda-{gpu_tag}"}
 
         elif combo_id.startswith("docker-") or combo_id.startswith("podman-"):
             runtime = combo_id.split("-")[0]
