@@ -84,7 +84,98 @@ def has_cpu_binary() -> bool:
     return False  # Will be downloaded during model start via backends.yaml
 
 
-# ── GPU detection ──────────────────────────────────────────────────
+# ── ROCm GFX architecture detection ────────────────────────────────
+
+# Maps exact gfx IDs (from rocm-smi rocminfo) to lemonade-sdk build families.
+# lemonade-sdk ships per-family binaries: gfx110X, gfx1151, etc.
+_GFX_TO_FAMILY = {
+    # RDNA 4 — Strix Halo desktop / mobile
+    "gfx1151": "gfx1151",
+    "gfx1152": "gfx1151",   # some SKUs share the build
+    # RDNA 3 — Strix Point iGPU (Ryzen AI 9 HX 370)
+    "gfx1150": "gfx1150",
+    # RDNA 3 — Desktop: 7800XT/7900XTX, Laptop: 7600M/7700M
+    "gfx1102": "gfx110X",
+    "gfx1103": "gfx110X",
+    # RDNA 4 — Desktop: Radeon 9070 series
+    "gfx1200": "gfx120X",
+    "gfx1201": "gfx120X",
+    # RDNA 3 — Desktop: RX 6500/6600/6700/7600 (Navi-3)
+    "gfx1032": "gfx103X",
+    # CDNA / GCN legacy
+    "gfx906": "gfx906",      # Vega
+    "gfx908": "gfx908",      # MI50/MI25
+    "gfx90a": "gfx90a",      # MI300X / MI250X
+    "gfx940": "gfx942",      # CDNA 2 (MI250X) — use latest available
+    "gfx941": "gfx942",
+    "gfx942": "gfx942",
+}
+
+
+def detect_gfx_version() -> str | None:
+    """Detect the exact GFX microarchitecture via rocm-smi.
+
+    Returns e.g. 'gfx1151', or None if ROCm tools unavailable / no GPU found.
+    Falls back to lspci PCI device ID for AMD GPUs as a secondary method.
+    """
+    # Primary: rocm-smi --showproductname → GFX Version
+    result = subprocess.run(
+        ["rocm-smi", "--showproductname"],
+        capture_output=True, text=True, timeout=5,
+    )
+    if result.returncode == 0:
+        for line in result.stdout.splitlines():
+            if "GFX Version:" in line:
+                raw = line.split(":")[-1].strip()
+                return _resolve_gfx_family(raw)
+
+    # Secondary: lspci + PCI device ID lookup
+    result = _run_cmd(["lspci", "-nnk"])
+    if result and result.stdout:
+        for line in result.stdout.splitlines():
+            if not any(kw in line.lower() for kw in ("vga", "3d controller", "display controller")):
+                continue
+            if "amd" not in line.lower() and "ati" not in line.lower():
+                continue
+            # Extract device ID like [1002:1586]
+            import re
+            m = re.search(r"\[1002:([0-9a-fA-F]{4})\]", line)
+            if m:
+                dev_id = m.group(1).lower()
+                return _pci_to_gfx_family(dev_id)
+
+    return None
+
+
+def _resolve_gfx_family(raw_version: str) -> str | None:
+    """Map a raw gfx version string (e.g. 'gfx1151') to the build family."""
+    ver = raw_version.strip().lower()
+    if ver not in _GFX_TO_FAMILY:
+        return None
+    return _GFX_TO_FAMILY[ver]
+
+
+def _pci_to_gfx_family(dev_id: str) -> str | None:
+    """Map an AMD PCI device ID to a GFX family for the lemonade-sdk build."""
+    _PCI_TO_GFX = {
+        # RDNA 4 — Strix Halo
+        "1586": "gfx1151",   # Radeon 8050S / 8060S
+        # RDNA 3 — Desktop
+        "743c": "gfx110X",   # RX 7900 XTX
+        "743f": "gfx110X",   # RX 7900 XT
+        "741f": "gfx110X",   # RX 7800 XT
+        "742f": "gfx110X",   # RX 7700 XT
+        "747f": "gfx110X",   # RX 7600 XT
+        "739f": "gfx110X",   # RX 7600
+        "73ef": "gfx110X",   # RX 7500 XT
+        # RDNA 2 — Desktop / Laptop
+        "164e": "gfx103X",   # RX 6600/6600XT
+        "1638": "gfx103X",   # RX 6700 XT / 6800 XT
+        "164c": "gfx103X",   # RX 6900 XT
+        # RDNA 4 — Laptop
+        "155f": "gfx1150",   # Ryzen AI 9 HX 370 (Strix Point)
+    }
+    return _PCI_TO_GFX.get(dev_id)
 
 
 def _run_cmd(cmd: list[str], timeout: int = 5) -> subprocess.CompletedProcess[str] | None:
@@ -226,6 +317,11 @@ def detect_all() -> dict[str, Any]:
     gpus = _detect_gpus()
     cpu = _detect_cpu()
 
+    # Detect exact GFX architecture for ROCm binary selection
+    gfx_family = None
+    if primary_gpu and primary_gpu["vendor"] == "amd":
+        gfx_family = detect_gfx_version()
+
     # Determine runtime availability
     runtimes = {
         "vulkan": has_vulkan(),
@@ -286,6 +382,7 @@ def detect_all() -> dict[str, Any]:
         "gpus": gpus,
         "primary_gpu": primary_gpu,
         "primary_backend": primary_gpu["backend"] if primary_gpu else None,
+        "gfx_family": gfx_family,          # e.g. 'gfx1151', 'gfx110X'
         "multi_gpu_warn": multi_gpu_warn,
         "cpu": cpu,
         "has_runtime": runtimes,

@@ -248,6 +248,31 @@ def _set_backend_in_config(config_path: Path, backend: str) -> None:
         config_path.write_text("".join(new_lines))
 
 
+def _set_rocm_source_in_backends(backends_path: Path, gfx_family: str) -> None:
+    """Update the 'rocm' backend's source_ref to use the per-GFX-family source.
+
+    e.g. 'gfx1151' → sets rocm.source_ref = rocm-gfx1151
+    """
+    try:
+        import yaml as _yaml
+        data = _yaml.safe_load(backends_path.read_text()) or {}
+    except Exception:
+        return
+
+    backends = data.setdefault("backends", {})
+    rocm_backend = backends.get("rocm")
+    if not isinstance(rocm_backend, dict):
+        return
+
+    # Map gfx ID → source_ref (must match a source entry in backends.yaml)
+    source_key = f"rocm-gfx{gfx_family}"
+    rocm_backend["source_ref"] = source_key
+
+    # Re-serialize YAML preserving structure
+    backends_path.write_text(_yaml.dump(data, default_flow_style=False, sort_keys=False))
+    print(f"\nWrote rocm.source_ref: {source_key}  (GFX {gfx_family})")
+
+
 # ── Download backend commands ───────────────────────────────────────
 
 def _load_sources(config_dir: Path) -> tuple[dict, dict]:
@@ -513,6 +538,16 @@ def cmd_init(force: bool = False) -> int:
     _set_backend_in_config(config_file, backend)
     print(f"\nWrote backends.default: {backend}")
     print(f"(reason: {reason})")
+
+    # ── ROCm gfx family → source_ref wiring ────────────────────
+    if backend == "rocm":
+        gfx = result.get("gfx_family")
+        if gfx:
+            _set_rocm_source_in_backends(backends_file, gfx)
+        else:
+            # Fallback to generic ggml-org source
+            print(f"\n  ℹ Could not detect exact GFX version — using default ROCm source.")
+            print("     To use the optimal per-GPU binary, ensure rocm-smi is available.")
 
     print(f"\nConfig files scaffolded to {config_dir}")
     print("  config.yaml      — model configs (edit freely)")

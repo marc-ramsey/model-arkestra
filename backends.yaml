@@ -1,99 +1,100 @@
-# ═══════════════════════════════════════════
-# backends.yaml — Backend definitions & download sources
-# ═══════════════════════════════════════════
-# Reference configuration. Users get a fresh copy from `model-arkestra init`.
-
 backends:
-
-  # ── Built-in backends ────────────────────────────────────────────────
-
   vulkan-radv:
-    description: "Vulkan with RADV driver — works on AMD, NVIDIA, and Intel GPUs"
+    description: "Vulkan with RADV driver \u2014 works on AMD, NVIDIA, and Intel GPUs"
     runner: ProcessModelRunner
     source_ref: official-vulkan-radv
     args:
       ngl: 999
-      hf: "${CHECKPOINT}"
+      hf: ${CHECKPOINT}
       ctx-size: ${ctx-size}
-
   rocm:
-    description: "ROCm — best for AMD iGPU and discrete GPUs"
+    description: "ROCm \u2014 best for AMD iGPU and discrete GPUs"
     runner: ProcessModelRunner
-    source_ref: lemonade-rocm-nightly
+    source_ref: rocm-gfx1151
     args:
       ngl: 999
-      hf: "${CHECKPOINT}"
+      hf: ${CHECKPOINT}
       ctx-size: ${ctx-size}
-
   rocm-container:
-    description: "ROCm container — kyuz0 toolbox with bundled ROCm libs"
+    description: "ROCm container \u2014 kyuz0 toolbox with bundled ROCm libs"
     runner: podman
     source_ref: amd-toolbox-rocm
     entrypoint: /usr/local/bin/llama-server
     devices:
-      - /dev/kfd
-      - /dev/dri
+    - /dev/kfd
+    - /dev/dri
     args:
-      hf: "${CHECKPOINT}"
+      hf: ${CHECKPOINT}
       ngl: 999
-
   cuda:
-    description: "NVIDIA CUDA — for NVIDIA discrete GPUs"
+    description: "NVIDIA CUDA \u2014 for NVIDIA discrete GPUs"
     runner: ProcessModelRunner
     source_ref: official-cuda
     args:
       ngl: 999
-      hf: "${CHECKPOINT}"
+      hf: ${CHECKPOINT}
       ctx-size: ${ctx-size}
-
   cpu:
-    description: "CPU-only mode — uses all available cores"
+    description: "CPU-only mode \u2014 uses all available cores"
     runner: ProcessModelRunner
     source_ref: ggml-org-cpu
     args:
       threads: ${nproc}
-      hf: "${CHECKPOINT}"
+      hf: ${CHECKPOINT}
       no-mmap: true
-
-
-# ── Download sources (used by backends above) ─────────────────────
-
 sources:
-
   official-vulkan-radv:
     type: github-release
     repo: ggml-org/llama.cpp
     release_type: latest
-    asset_pattern: "llama-server-*-bin-*-vulkan*"
-    sha256_asset: "*.sha256"
-
-  lemonade-rocm-nightly:
+    asset_pattern: llama-*-bin-*-vulkan-x64*
+    sha256_asset: '*.sha256'
+  rocm-gfx110X:
     type: github-release
     repo: lemonade-sdk/llamacpp-rocm
     release_type: latest
-    asset_pattern: "*-linux-x86_64.tar.gz"
-    sha256_asset: "*.sha256"
-
+    asset_pattern: llama-*-ubuntu-rocm-gfx110X-x64.zip
+  rocm-gfx1150:
+    type: github-release
+    repo: lemonade-sdk/llamacpp-rocm
+    release_type: latest
+    asset_pattern: llama-*-ubuntu-rocm-gfx1150-x64.zip
+  rocm-gfx1151:
+    type: github-release
+    repo: lemonade-sdk/llamacpp-rocm
+    release_type: latest
+    asset_pattern: llama-*-ubuntu-rocm-gfx1151-x64.zip
+  rocm-gfx120X:
+    type: github-release
+    repo: lemonade-sdk/llamacpp-rocm
+    release_type: latest
+    asset_pattern: llama-*-ubuntu-rocm-gfx120X-x64.zip
+  rocm-gfx90a:
+    type: github-release
+    repo: lemonade-sdk/llamacpp-rocm
+    release_type: latest
+    asset_pattern: llama-*-ubuntu-rocm-gfx90a-x64.zip
+  rocm-gfx103X:
+    type: github-release
+    repo: lemonade-sdk/llamacpp-rocm
+    release_type: latest
+    asset_pattern: llama-*-ubuntu-rocm-gfx103X-x64.zip
   amd-toolbox-rocm:
     type: oci-image
     repo: docker.io/kyuz0/amd-strix-halo-toolboxes
     release_type: rocm-7.14
-
   official-cuda:
     type: github-release
     repo: ggml-org/llama.cpp
     release_type: latest
-    asset_pattern: "llama-server-*-bin-*-cuda*"
-    sha256_asset: "*.sha256"
-
+    asset_pattern: llama-*-bin-*-cuda-x64*
+    sha256_asset: '*.sha256'
   ggml-org-cpu:
     type: github-release
     repo: ggml-org/llama.cpp
     release_type: latest
-    asset_pattern: "llama-server-*-bin-*-static*"
-    sha256_asset: ""
-
-
+    asset_pattern: llama-*-bin-*-static-x86_64*
+    sha256_asset: ''
 defaults:
   release_type: latest
   verify_checksum: true

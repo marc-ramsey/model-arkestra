@@ -14,6 +14,7 @@ the caller should fall back to its existing Containerfile-based build path.
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import hashlib
 import logging
 import os
@@ -222,17 +223,48 @@ class BinaryDownloader:
         return str(binary_path)
 
     async def _fetch_latest_tag(self, repo: str) -> Optional[str]:
-        """Query GitHub API for the newest release tag."""
+        """Query GitHub API for the newest release tag with binary assets.
+
+        First tries ``/releases/latest`` (stable). If that has no real binary
+        assets, falls back to the latest pre-release with at least one .tar.gz
+        or .zip asset.
+        """
+        _BINARY_EXTENSIONS = ('.tar.gz', '.tgz', '.tar.bz2', '.tar.xz', '.zip', '.exe')
+
+        def has_binary_assets(assets: list) -> bool:
+            """True if any asset is an archive/binary (not just a text file)."""
+            for a in assets:
+                name = a.get("name", "")
+                if name.endswith(_BINARY_EXTENSIONS):
+                    return True
+            return False
+
+        # 1. Try stable release first
         url = f"https://api.github.com/repos/{repo}/releases/latest"
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, timeout=15) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        return data.get("tag_name")
-                    logger.warning(f"GitHub API returned {resp.status} for {repo}/latest")
+                        tag = data.get("tag_name")
+                        assets = data.get("assets", [])
+                        if tag and has_binary_assets(assets):
+                            return tag
         except Exception as exc:
-            logger.debug(f"Failed to fetch latest tag from GitHub: {exc}")
+            logger.debug(f"Failed to fetch latest stable release: {exc}")
+
+        # 2. Fallback: paginate releases looking for one with binary assets
+        try:
+            url = f"https://api.github.com/repos/{repo}/releases?per_page=30"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=15) as resp:
+                    if resp.status == 200:
+                        releases = await resp.json()
+                        for rel in releases:
+                            if has_binary_assets(rel.get("assets", [])):
+                                return rel.get("tag_name")
+        except Exception as exc:
+            logger.debug(f"Failed to fetch releases list: {exc}")
         return None
 
     async def _fetch_release_asset(self, repo: str, tag: str) -> Tuple[str, Optional[str]]:
@@ -266,22 +298,20 @@ class BinaryDownloader:
         matched_asset = None
         for asset in assets:
             name = asset.get("name", "")
-            # Try with variant suffix first, then without (for backwards compatibility)
+            # Try with variant suffix first (for backward compat)
             if variant_suffix and name.endswith(f"{variant_suffix}.tar.gz"):
                 matched_asset = asset
                 break
-            elif not variant_suffix and pattern.replace("*", "") in name:
-                # For generic patterns like "llama-server-*-bin-*"
-                stripped_pattern = pattern.replace("*.gz", "*")
-                if stripped_pattern.replace("-", "").replace("_", "") in name.replace("-", "").replace("_", ""):
-                    matched_asset = asset
-                    break
+            # Use fnmatch for proper glob matching (handles * in patterns)
+            elif fnmatch.fnmatch(name, pattern):
+                matched_asset = asset
+                break
 
         if not matched_asset and variant_suffix:
             # Retry without variant suffix as fallback
             for asset in assets:
                 name = asset.get("name", "")
-                if pattern.replace("*", "") in name:
+                if fnmatch.fnmatch(name, pattern):
                     matched_asset = asset
                     break
 
@@ -300,7 +330,7 @@ class BinaryDownloader:
         if sha256_pattern:
             for asset in assets:
                 name = asset.get("name", "")
-                if sha256_pattern.replace("*", "") in name:
+                if fnmatch.fnmatch(name, sha256_pattern):
                     sha256_url = asset["browser_download_url"]
                     break
 
@@ -377,18 +407,39 @@ class BinaryDownloader:
         return final_dest
 
     def _find_binary_in_tree(self, root: Path) -> Optional[Path]:
-        """Search extracted directory tree for an executable binary."""
-        for candidate in root.rglob("*"):
-            if candidate.is_file() and os.access(str(candidate), os.X_OK):
-                name = candidate.name.lower()
-                # Prefer llama-server variants
-                if "llama" in name or "server" in name:
-                    return candidate
-        # Fallback to first executable found
-        for candidate in root.rglob("*"):
-            if candidate.is_file() and os.access(str(candidate), os.X_OK):
+        """Locate the 'llama-server' executable in the extracted tree.
+
+        Searches for a file named exactly ``llama-server`` (including nested
+        subdirectories) that is either an ELF binary or a script with shebang.
+        Returns None if not found.
+        """
+        candidates = list(root.rglob("llama-server"))
+        for candidate in candidates:
+            if not candidate.is_file():
+                continue
+            # Check shebang (scripts)
+            try:
+                with open(candidate, "rb") as f:
+                    header = f.read(2)
+                    if header == b"#!":
+                        os.chmod(str(candidate), 0o755)
+                        return candidate
+            except OSError:
+                pass
+            # Check ELF magic (compiled binaries)
+            if self._is_elf(candidate):
+                os.chmod(str(candidate), 0o755)
                 return candidate
         return None
+
+    @staticmethod
+    def _is_elf(path: Path) -> bool:
+        """Check if a file is an ELF executable by reading its magic bytes."""
+        try:
+            with open(path, "rb") as f:
+                return f.read(4) == b"\x7fELF"
+        except OSError:
+            return False
 
     # ── OCI Image path ────────────────────────────────────────────────
 
