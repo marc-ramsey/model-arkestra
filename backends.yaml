@@ -42,6 +42,12 @@ backends:
       threads: ${nproc}
       hf: ${CHECKPOINT}
       no-mmap: true
+  onnx:
+    description: "ONNX in-memory runner \u2014 loads models directly, no subprocess"
+    runner: onnx
+  onnx-oga:
+    description: ONNX OGG model runner for whisper/embedding tasks
+    runner: onnx
 sources:
   official-vulkan-radv:
     type: github-release
@@ -99,3 +105,9 @@ defaults:
   release_type: latest
   verify_checksum: true
   cache_ttl_hours: 24
+  onnx:
+    description: "ONNX in-memory runner \u2014 loads models directly, no subprocess"
+    runner: onnx
+  onnx-oga:
+    description: ONNX OGG model runner for whisper/embedding tasks
+    runner: onnx

@@ -12,13 +12,14 @@ Or embed into your own FastAPI app:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
 try:
-    from fastapi import FastAPI, HTTPException, Response
+    from fastapi import FastAPI, HTTPException, Request, Response
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import StreamingResponse
 except ImportError:
@@ -36,6 +37,7 @@ except ImportError:
     )
 
 from model_arkestra.common import resolve_config_path
+
 
 try:
     from pydantic import BaseModel, Field
@@ -185,6 +187,28 @@ class ArkestraServer:
         self._app: Optional[FastAPI] = None
         self._server: Any = None
 
+    # ── ONNX auxiliary model management ───────────────────────────
+
+    def _is_onnx_model(self, model_name: str) -> bool:
+        """Check if a model is an ONNX auxiliary model (embedding/whisper/tts)."""
+        cfg = self._get_aux_model_cfg(model_name)
+        if not cfg:
+            return False
+        return bool(cfg.get("type") in ("embedding", "whisper", "tts"))
+
+    def _get_aux_model_cfg(self, model_name: str) -> Optional[Dict]:
+        """Get config for a model by name."""
+        if not model_name:
+            return None
+        cfg = self._arkestra.cm.data.get("models") or {}
+        model = cfg.get(model_name)
+        if isinstance(model, dict):
+            return model
+        # Check all keys for partial match (e.g. "default-whisper" → first key containing it)
+        if model_name in cfg:
+            return cfg[model_name]
+        return None
+
     # ── FastAPI app factory ───────────────────────────────────────
 
     def get_app(self) -> FastAPI:
@@ -272,6 +296,129 @@ class ArkestraServer:
         @app.get("/v1/health")
         async def health_v1():
             return await health()
+
+        # ── Route: POST /v1/embeddings (ONNX auxiliary models) ───────
+
+        @app.post("/v1/embeddings")
+        async def embeddings_endpoint(
+            req_body: Dict[str, Any],
+        ) -> Any:
+            """Embedding endpoint — routes to ONNX auxiliary model.
+
+            Expects {\'model\': \'<name>\', \'input\': \'text\'} where \<name>
+            is an ONNX model configured with type: embedding.
+            Falls through to chat if no matching aux model found.
+            """
+            model_name = req_body.get("model", "")
+            cfg = self._get_aux_model_cfg(model_name)
+            if not cfg:
+                raise HTTPException(
+                    status_code=404,
+                    detail=(f"Model '{model_name}' not found. "
+                            "Use a model configured with type: embedding."),
+                )
+
+            input_text = req_body.get("input", "")
+            try:
+                result = await self._arkestra.embed(model_name, input_text)
+            except Exception as e:
+                # Auto-start ONNX model on first access if not yet loaded
+                if "not started" in str(e).lower() or "not found in config" not in str(e).lower():
+                    await self._arkestra.start(model_name)
+                    result = await self._arkestra.embed(model_name, input_text)
+                else:
+                    raise HTTPException(status_code=500, detail=str(e))
+            return Response(content=json.dumps(result), media_type="application/json")
+
+        # ── Route: POST /v1/audio/transcriptions (ONNX auxiliary models) ───
+
+        @app.post("/v1/audio/transcriptions")
+        async def transcriptions_endpoint(
+            request: Request,
+        ) -> Any:
+            """Audio transcription endpoint — routes to ONNX Whisper model.
+
+            Expects multipart form (file) or JSON with {\'model\': \'<name>\', 'audio_b64': ...}
+            where \<name> is configured with type: whisper.
+            """
+            if request.headers.get("Content-Type", "").startswith("multipart"):
+                data = await request.form()
+                model_name = str(data.get("model", "default-whisper"))
+                audio_file = data.get("file")
+                if not audio_file:
+                    raise HTTPException(status_code=400, detail="No file provided")
+                audio_bytes = await audio_file.read()
+            else:
+                req_body = await request.json()
+                model_name = str(req_body.get("model", "default-whisper"))
+                b64_audio = req_body.get("audio_b64", req_body.get("audio", ""))
+                if isinstance(b64_audio, str):
+                    import base64
+                    try:
+                        audio_bytes = base64.b64decode(b64_audio)
+                    except Exception:
+                        raise HTTPException(status_code=400, detail="Invalid audio data")
+                elif isinstance(b64_audio, bytes):
+                    audio_bytes = b64_audio
+                else:
+                    audio_bytes = b""
+
+            cfg = self._get_aux_model_cfg(model_name)
+            if not cfg:
+                # Try "default-whisper" key
+                cfg = self._get_aux_model_cfg("default-whisper")
+            if not cfg:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Whisper model '{model_name}' not found.")
+
+            lang = None
+            if request.headers.get("Content-Type", "").startswith("multipart"):
+                lang = str(data.get("language")) if data.get("language") else None
+            else:
+                lang = str(req_body.get("language")) if req_body.get("language") else None
+
+            try:
+                result = await self._arkestra.transcribe(model_name, audio_bytes, lang)
+            except Exception as e:
+                if "not started" in str(e).lower() or "not found in config" not in str(e).lower():
+                    await self._arkestra.start(model_name)
+                    result = await self._arkestra.transcribe(model_name, audio_bytes, lang)
+                else:
+                    raise HTTPException(status_code=500, detail=str(e))
+            return Response(content=json.dumps(result), media_type="application/json")
+
+        # ── Route: POST /v1/audio/speech (ONNX auxiliary models) ───────
+
+        @app.post("/v1/audio/speech")
+        async def speech_endpoint(
+            req_body: Dict[str, Any],
+        ) -> Any:
+            """Text-to-speech endpoint — routes to ONNX TTS model.
+
+            Expects {\'model\': \'<name>\', \'input\': \'text\'} where \<name>
+            is configured with type: tts.
+            Returns WAV audio bytes.
+            """
+            model_name = req_body.get("model", "default-tts")
+            cfg = self._get_aux_model_cfg(model_name)
+            if not cfg:
+                cfg = self._get_aux_model_cfg("default-tts")
+            if not cfg:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"TTS model '{model_name}' not found.")
+
+            text_input = req_body.get("input", "")
+            try:
+                wav_bytes = await self._arkestra.synthesize(model_name, text_input)
+            except Exception as e:
+                if "not started" in str(e).lower() or "not found in config" not in str(e).lower():
+                    await self._arkestra.start(model_name)
+                    wav_bytes = await self._arkestra.synthesize(model_name, text_input)
+                else:
+                    raise HTTPException(status_code=500, detail=str(e))
+            return Response(content=wav_bytes, media_type="audio/wav")
 
         # ── Admin subcomponent ───────────────────────────────────
         from model_arkestra.admin import ArkestraAdmin

@@ -70,6 +70,88 @@ def default_cache_root() -> Path:
     return home / ".cache" / "huggingface" / "hub"
 
 
+def download_onnx_model(
+    repo_id: str,
+    pattern: Optional[str] = None,
+    allow_patterns: Optional[List[str]] = None,
+    cache_dir: Optional[Path] = None,
+) -> Path:
+    """Download an ONNX model from HuggingFace into the standard HF_HUB cache.
+
+    Mirrors the llama.cpp GGUF caching convention — uses the same
+    ``HF_HUB_CACHE`` / ``XDG_CACHE_HOME/huggingface`` directory tree so all
+    models live in one place.
+
+    Args:
+        repo_id:      HuggingFace repo ID (e.g. "Xenova/bge-small-en-v1.5").
+        pattern:      Single glob pattern to download (shorthand for allow_patterns).
+        allow_patterns: List of glob patterns to include. Defaults to ``onnx/*.onnx``.
+        cache_dir:    Override HF_HUB_CACHE location. Uses ``default_cache_root()``
+                      if not specified.
+
+    Returns:
+        Path to the downloaded ONNX model file.
+
+    Example::
+
+        >>> download_onnx_model("Xenova/bge-small-en-v1.5")
+        # Downloads into ~/.cache/huggingface/hub/models--Xenova--bge-small-en-v1.5/
+        # Returns: Path('/.../onnx/model.onnx')
+    """
+    if cache_dir is None:
+        cache_dir = default_cache_root()
+
+    from huggingface_hub import snapshot_download
+
+    # Default to ONNX artifacts only
+    if not allow_patterns and not pattern:
+        allow_patterns = ["onnx/*.onnx", "tokenization*", "tokenizer.json", "vocab*"]
+
+    snap = snapshot_download(
+        repo_id,
+        allow_patterns=allow_patterns,
+        cache_dir=str(cache_dir),
+    )
+
+    # Find the .onnx file inside the snapshot
+    for p in Path(snap).rglob("*.onnx"):
+        return p
+
+    raise FileNotFoundError(
+        f"No *.onnx found in '{repo_id}' snapshots at {snap}. "
+        f"Use 'pattern' or 'allow_patterns' to match specific files."
+    )
+
+
+def resolve_onnx_model_path(
+    model_ref: str,
+    cache_dir: Optional[Path] = None,
+) -> Path:
+    """Resolve an ONNX model reference to a concrete file path.
+
+    Accepts either a local filesystem path or a HuggingFace repo ID.
+
+    Args:
+        model_ref: Either an absolute/relative path to ``*.onnx``, or a HF repo ID.
+        cache_dir: Cache directory for downloads. Defaults to ``default_cache_root()``.
+
+    Returns:
+        Absolute path to the ONNX model file.
+    """
+    ref_path = Path(model_ref)
+    if ref_path.exists():
+        return ref_path.resolve()
+
+    # Treat as repo ID — download into HF cache
+    try:
+        return download_onnx_model(model_ref, cache_dir=cache_dir)
+    except ImportError:
+        raise FileNotFoundError(
+            f"'{model_ref}' does not exist on disk and huggingface_hub is not installed. "
+            f"Install with: pip install 'model-arkestra[onnx]'"
+        )
+
+
 
 INSPECT_RE = re.compile(r"^(exited|dead|paused|removing)\s*$", re.IGNORECASE)
 

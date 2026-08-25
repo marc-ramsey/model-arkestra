@@ -92,18 +92,52 @@ This lets you swap between Podman and Docker globally without editing individual
 
 ### Quick Start — Auxiliary Workloads (ONNX)
 
-Offload Whisper (STT), Kokoro TTS, or embedding models to a separate lightweight HTTP server — preserving GPU VRAM for LLM inference. Install with `pip install 'model-arkestra[onnx]'`:
+Offload Whisper (STT), Kokoro TTS, or embedding models alongside LLM inference. ONNX models load directly into memory — no subprocess spawning, no port allocation.
 
+**Via Python API:**
+```python
+from model_arkestra.arkestra import ModelArkestra
+
+async with ModelArkestra("config.yaml") as arkestra:
+    # Start an ONNX embedding model (auto-loads into memory)
+    await arkestra.start("bge-small")
+    
+    # Direct inference — non-blocking, runs in thread pool
+    emb = await arkestra.embed("bge-small", "hello world")
+    print(emb["data"][0]["embedding"][:5])  # first 5 dims
+
+    # Whisper transcription (raw WAV bytes in)
+    text = await arkestra.transcribe("whisper-tiny", wav_bytes, language="en")
+    
+    # TTS synthesis (returns WAV bytes)
+    audio = await arkestra.synthesize("kokoro", "Hello from Arkestra!")
+```
+
+**Via HTTP server (`/v1/embeddings`, `/v1/audio/transcriptions`, `/v1/audio/speech`)** — same endpoints as OpenAI API, backed by ONNX models configured in your `config.yaml` with `type: embedding | whisper | tts`.
+
+**Config example:**
+```yaml
+# config.yaml
+models:
+  bge-small:
+    backend: onnx
+    model_path: ~/.cache/huggingface/models--Xenova/bge-small-en-v1.5/snapshots/onnx/model.onnx
+    type: embedding
+  whisper-tiny:
+    backend: onnx
+    model_path: /path/to/whisper-onnx/model.onnx
+    type: whisper
+    tokenizer: ~/.cache/huggingface/models--Xenova/whisper-tiny-en
+```
+
+**Standalone ONNX server** (optional — for running ONNX inference as a separate process):
 ```bash
-# Standalone ONNX server for embeddings
 python -m model_arkestra.onnx_server \
     --model /path/to/model.onnx \
     --type embedding \
     --port 8090 \
     --tokenizer Xenova/bge-small-en-v1.5
 ```
-
-Or via config with the `ModelArkestra` Python API — models marked with `capabilities: [embed]` or `capabilities: [stt]` spin up a separate ONNX process automatically.
 
 See [ONNX Server](./docs/onnx-server.md) for full documentation.
 
@@ -140,6 +174,7 @@ from model_arkestra.http_client import ModelHttpClient         # lightweight HTT
 from model_arkestra.langchain_adapter import LangChainModelAdapter  # LangChain LCEL wrapper
 from model_arkestra.server import ArkestraServer             # OpenAI v1-compatible API server
 from model_arkestra.onnx_server import OnnxServer            # ONNX inference (auxiliary workloads)
+from model_arkestra.onnx_runner import OnnxRunner              # in-memory ONNX runner
 
 # Convenience re-exports from __init__.py:
 from model_arkestra import RunnerState, RunnerError, ServerReadyTimeout

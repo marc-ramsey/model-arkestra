@@ -15,6 +15,7 @@ from model_arkestra.common import (
     _resolve_backend, default_cache_root, resolve_config_path,
 )
 from model_arkestra.docker import DockerModelRunner
+from model_arkestra.onnx_runner import OnnxRunner
 from model_arkestra.podman import PodmanModelRunner
 from model_arkestra.process import ProcessModelRunner
 from model_arkestra.types import RunnerState, _ModelContext
@@ -248,7 +249,7 @@ class ModelArkestra:
         self._runner_classes: Dict[str, type] = {}
 
         # Built-in concrete runners keyed by their lowercase short name.
-        for _cls in (ProcessModelRunner, PodmanModelRunner, DockerModelRunner):
+        for _cls in (ProcessModelRunner, PodmanModelRunner, DockerModelRunner, OnnxRunner):
             key = _cls.__name__.lower().replace("modelrunner", "")
             self._runner_classes[key] = _cls
 
@@ -418,6 +419,13 @@ class ModelArkestra:
                 f"Unknown backend '{backend}'. Available: {list(backends_cfg.keys())}"
             )
 
+        # Detect ONNX models — they don't need ports or HTTP health checks
+        resolved_backend = backend or self._resolve_backend_id(model_name, {})
+        is_onnx = str(resolved_backend) == "onnx"
+
+        if is_onnx:
+            return await self._start_onnx_model(model_name, inference_kwargs)
+
         # Allocate port if not explicitly provided.
         # Check for existing stopped context first — reuse its port to avoid
         # exhausting the port pool on repeated stop/start cycles (the same model).
@@ -443,7 +451,7 @@ class ModelArkestra:
         if resolved_runner == "container":
             resolved_runner = self._cm.data.get("container_type", "process") or "process"
 
-        if resolved_runner not in runners_cfg and resolved_runner not in ("process", "podman", "docker"):
+        if resolved_runner not in runners_cfg and resolved_runner not in ("process", "podman", "docker", "onnx"):
             raise ValueError(
                 f"Backend '{be_id}' resolves to unknown runner type '{resolved_runner}'. "
                 f"Available runners: {list(runners_cfg.keys())}"
@@ -455,6 +463,69 @@ class ModelArkestra:
         ctx.runner_type = resolved_runner
         ctx._runner = runner
         await self._log(f"[action=start model={model_name} port={port}]")
+
+    async def _start_onnx_model(
+        self, model_name: str, inference_kwargs: Dict[str, Any],
+    ) -> None:
+        """Start an ONNX model — load into memory, no subprocess needed.
+
+        Skips port allocation and HTTP health checks since ONNX models
+        run in-process. The runner manages the InferenceSession lifecycle.
+        """
+        # Find or create the onnx runner for this model
+        runner = self._get_runner_instance("onnx", model_name)
+
+        # Create context manually — no port allocation needed
+        ctx = self.find_context(model_name)
+        if ctx is None:
+            eff_port = inference_kwargs.get("port") or 0  # dummy port for context compatibility
+            log_size = inference_kwargs.get("max_log_lines", self.log_buffer_size)
+            model_data = self.get_model(model_name, env_vars={})
+            model_path_str = str((model_data or {}).get("model_path", ""))
+            if not model_path_str:
+                checkpoint = (model_data or {}).get("checkpoint", "")
+                model_path_str = checkpoint  # fall back to checkpoint field
+
+            from model_arkestra.types import _ModelContext
+            ctx = _ModelContext(model_name, eff_port, max_log_lines=log_size)
+            ctx.backend_id = "onnx"
+            ctx._model_path = model_path_str  # store for runner to use
+            ctx._runner = runner
+            ctx.state = RunnerState.LOADING
+            runner._models[model_name] = ctx  # noqa: SLF001
+
+        # Start the ONNX model (loads InferenceSession into memory)
+        await runner.start(model_name, port=ctx.port, backend="onnx",
+                           **{k: v for k, v in inference_kwargs.items()})
+        ctx = runner._models[model_name]  # noqa: SLF001
+        ctx.runner_type = "onnx"
+
+        logger.info("ONNX model '%s' loaded into memory", model_name)
+
+    async def embed(self, model_name: str, text: str) -> Dict[str, Any]:
+        """Encode text → embedding vector via ONNX model.
+
+        Returns OpenAI-compatible response with ``data[].embedding`` list.
+        """
+        runner = self._get_runner("onnx", {}, None)
+        return await runner.embed(model_name, text)  # type: ignore[attr-defined]
+
+    async def transcribe(self, model_name: str, audio_bytes: bytes,
+                         language: Optional[str] = None) -> Dict[str, Any]:
+        """Transcribe audio → text via Whisper ONNX model.
+
+        Expects raw WAV audio bytes. Returns {"text": "...", "language": "..."}.
+        """
+        runner = self._get_runner("onnx", {}, None)
+        return await runner.transcribe(model_name, audio_bytes, language)  # type: ignore[attr-defined]
+
+    async def synthesize(self, model_name: str, text: str) -> bytes:
+        """Generate speech from text via TTS ONNX model.
+
+        Returns raw WAV audio bytes.
+        """
+        runner = self._get_runner("onnx", {}, None)
+        return await runner.synthesize(model_name, text)  # type: ignore[attr-defined]
 
     async def stop(self, model_name: str) -> None:
         """Stop the named model."""
