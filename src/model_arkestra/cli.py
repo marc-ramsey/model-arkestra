@@ -35,7 +35,7 @@ DEFAULT_SYS_PROMPT = "You are a helpful assistant."
 
 # ── Direct mode ─────────────────────────────────────────────────────
 
-async def chat_direct(config_path: str, model_name: str, broadcast_addr: str) -> None:
+async def chat_direct(config_path: Optional[str], model_name: str, broadcast_addr: str) -> None:
     """Chat directly against ModelArkestra — no server needed."""
     from model_arkestra.arkestra import ModelArkestra
 
@@ -770,8 +770,8 @@ def main(argv: list[str] | None = None) -> None:
         "chat",
         help="Interactive chat client for ModelArkestra models",
     )
-    chat_group = chat_parser.add_mutually_exclusive_group(required=True)
-    chat_group.add_argument("--config", "-c", help="YAML config file path (direct mode)")
+    chat_group = chat_parser.add_mutually_exclusive_group(required=False)
+    chat_group.add_argument("--config", "-c", default=None, help="YAML config file path (direct mode, default: ~/.config/arkestra/config.yaml)")
     chat_group.add_argument("--server", "-x", default=None, help="Server URL")
     chat_parser.add_argument("--model", "-m", required=True, help="Model name to chat with")
     chat_parser.add_argument("--broadcast-addr", default=None,

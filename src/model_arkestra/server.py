@@ -587,8 +587,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--config", "-c",
-        required=True,
-        help="Path to YAML config file (required)",
+        default=None,
+        help="Path to YAML config file (default: ~/.config/arkestra/config.yaml)",
     )
     parser.add_argument(
         "--port", "-p",
