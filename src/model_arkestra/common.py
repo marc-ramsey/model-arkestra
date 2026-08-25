@@ -529,8 +529,18 @@ def build_model_args(
     if port is None:
         port = str(cm.data.get("models-start-port", 18000))
 
-    # Build a temporary macro map for this resolution pass
-    resolve_macros = dict(cm.data.get("macros", {}))
+    # Build macro map: top-level scalar keys + expanded macros section.
+    # Structural dict keys (models, env, backends, runners) are excluded,
+    # but macros is special-cased: its individual key-value pairs become resolvers.
+    _STRUCTURAL_KEYS = {"models", "env", "backends", "runners"}
+    resolve_macros: Dict[str, Any] = {
+        k: v for k, v in cm.data.items()
+        if k not in _STRUCTURAL_KEYS and not isinstance(v, dict)
+    }
+    # Expand macros section (individual entries become resolvers).
+    for k, v in (cm.data.get("macros") or {}).items():
+        resolve_macros[k] = v
+    # Built-in overrides take precedence over config keys.
     resolve_macros["CHECKPOINT"] = checkpoint
     resolve_macros["PORT"] = port
     resolve_macros["NPROC"] = str(os.cpu_count())
