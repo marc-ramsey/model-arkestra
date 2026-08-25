@@ -163,10 +163,10 @@ class ArkestraAdmin:
                     model_cfg = self.server._arkestra.get_model(model_name) or {}
 
                     if ctx:
-                        status = str(ctx.state).lower().replace("runnerstate.", "")
+                        webui_status = self.server._arkestra._state_to_webui_status(ctx)
                         entry = {
                             "id": ctx.name,
-                            "status": status,
+                            "status": webui_status,
                             "port": ctx.port,
                             "runner_type": ctx.runner_type,
                             "backend_id": ctx.backend_id or model_cfg.get("backend"),
@@ -176,15 +176,12 @@ class ArkestraAdmin:
                         }
                     else:
                         checkpoint = model_cfg.get("checkpoint", "")
-                        # Strip revision tag (e.g. :Q4_K_M) — HF Hub directories
-                        # store models under the base name only.
                         base_checkpoint = checkpoint.split(":")[0] if ":" in checkpoint else checkpoint
                         cache_path = Path(hf_cache).expanduser() / f"models--{base_checkpoint.replace('/', '--')}" if base_checkpoint else None
                         is_cached = cache_path.exists() if cache_path else False
-
                         entry = {
                             "id": model_name,
-                            "status": "stopped" if is_cached else "uncached",
+                            "status": {"value": "unloaded"} if not is_cached else {"value": "sleeping"},
                             "port": None,
                             "runner_type": None,
                             "backend_id": model_cfg.get("backend"),
@@ -344,7 +341,7 @@ class ArkestraAdmin:
             # Also resolve current runtime status if the model is loaded
             contexts = {ctx.name: ctx for ctx in self.server._arkestra._get_model_contexts()}
             ctx = contexts.get(model)
-            status = str(ctx.state).lower().replace("runnerstate.", "") if ctx else None
+            status = self.server._arkestra._state_to_webui_status(ctx) if ctx else {"value": "stopped"}
 
             # Resolve available capabilities for this model
             global_cfg = self.server._arkestra.cm.data or {}

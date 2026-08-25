@@ -116,7 +116,7 @@ class ModelInfo(BaseModel):
     object: str = "model"
     created: int = Field(default_factory=lambda: int(time.time()))
     owned_by: str = "local"
-    status: str = "running"
+    status: Any = "running"
 
 
 class ListModelsResponse(BaseModel):
@@ -287,7 +287,7 @@ class ArkestraServer:
         async def health():
             try:
                 v1_data = self._arkestra.get_v1_models()
-                running = sum(1 for m in v1_data.get("data", []) if m.get("status") == "running")
+                running = sum(1 for m in v1_data.get("data", []) if m.get("status", {}).get("value") == "loaded")
             except Exception:
                 running = 0
 

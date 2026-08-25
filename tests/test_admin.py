@@ -101,9 +101,9 @@ class TestAdminModels:
                 qwen = models_by_id["qwen3.5-4b"]
                 vox = models_by_id["voxtral-mini"]
 
-                assert gemma["status"] == "stopped"
-                assert qwen["status"] == "stopped"
-                assert vox["status"] == "uncached"
+                assert gemma["status"]["value"] == "sleeping"
+                assert qwen["status"]["value"] == "sleeping"
+                assert vox["status"]["value"] == "unloaded"
             finally:
                 _os.environ.pop("HF_HUB_CACHE", None)
 

@@ -215,8 +215,22 @@ class ModelArkestra:
                 return ctx
         return None
 
+    def _state_to_webui_status(ctx: _ModelContext) -> Dict[str, Any]:
+        """Map our RunnerState to Open WebUI status + optional metadata."""
+        state_map = {
+            RunnerState.LOADING:  {"value": "loading"},
+            RunnerState.RUNNING:  {"value": "loaded"},
+            RunnerState.STOPPED:  {"value": "sleeping"},
+            RunnerState.STOPPING: {"value": "sleeping"},
+            RunnerState.UNCACHED: {"value": "unloaded"},
+        }
+        entry = state_map.get(ctx.state, {})
+        if ctx.state == RunnerState.ERROR:
+            return {"value": "error", "error_message": ctx.last_error or "unknown error"}
+        return entry
+
     def get_v1_models(self) -> Dict[str, Any]:
-        """OpenAI-compatible ``/v1/models`` response."""
+        """OpenAI-compatible ``/v1/models`` response with WebUI status fields."""
         from time import time
 
         contexts_by_name = {ctx.name: ctx for ctx in self._get_model_contexts()}
@@ -225,15 +239,16 @@ class ModelArkestra:
             ctx = contexts_by_name.get(model_name)
             model_cfg = self.get_model(model_name) or {}
             owned_by = str(model_cfg.get("owned_by", "local")) if isinstance(model_cfg, dict) else "local"
-            state_label = str(ctx.state).lower().replace("runnerstate.", "") if ctx else "stopped"
 
-            data.append({
+            entry: Dict[str, Any] = {
                 "id": model_name,
                 "object": "model",
                 "created": int(time()),
                 "owned_by": owned_by,
-                "status": state_label,
-            })
+                "status": {"value": "stopped"} if not ctx else _state_to_webui_status(ctx),
+            }
+
+            data.append(entry)
 
         return {"object": "list", "data": data}
 
