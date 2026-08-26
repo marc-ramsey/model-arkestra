@@ -24,21 +24,26 @@ except ImportError:
 
 # ── Config reading (lightweight, no ModelArkestra instance needed) ─────────
 
-def _read_admin_key(config_path: str | None = None) -> str | None:
-    """Read ADMIN_KEY from config.yaml env section or return None."""
+def _load_config(path: str | None = None) -> dict:
+    """Load config.yaml and return parsed dict, or {} on failure."""
     try:
         import yaml
     except ImportError:
-        return None
+        return {}
 
-    path = config_path or os.path.expanduser("~/.config/arkestra/config.yaml")
+    p = path or os.path.expanduser("~/.config/arkestra/config.yaml")
     try:
-        with open(path) as f:
-            data = yaml.safe_load(f) or {}
-        env = data.get("env") or {}
-        return env.get("ADMIN_KEY")
+        with open(p) as f:
+            data = yaml.safe_load(f)
+        return data if isinstance(data, dict) else {}
     except (FileNotFoundError, OSError):
-        return None
+        return {}
+
+
+def _read_admin_key(config_path: str | None = None) -> str | None:
+    """Read ADMIN_KEY from config.yaml env section or return None."""
+    data = _load_config(config_path)
+    return (data.get("env") or {}).get("ADMIN_KEY")
 
 
 # ── HTTP helpers ───────────────────────────────────────────────────────
@@ -345,9 +350,9 @@ def build_parser() -> argparse.ArgumentParser:
         prog="arkestra-admin",
         description="ModelArkestra admin CLI — manage models via the HTTP server API.",
     )
-    parser.add_argument("--server", "-x", default="http://127.0.0.1:8080", help="Server URL (default: 127.0.0.1:8080)")
+    parser.add_argument("--server", "-x", default=None, help="Server URL (default: read from env or config)")
     parser.add_argument("--api-key", default=None, help="Admin API key (overrides config env)")
-    parser.add_argument("--config", "-c", default=None, help="Config path for auto-reading ADMIN_KEY")
+    parser.add_argument("--config", "-c", default=None, help="Config path for auto-reading ADMIN_KEY and server URL")
 
     sub = parser.add_subparsers(dest="command", help="Available commands")
 
@@ -431,6 +436,19 @@ def main(argv: list[str] | None = None) -> None:
     if not args.command:
         parser.print_help()
         sys.exit(1)
+
+    # ── Resolve server URL: CLI > env > config > hardwired default ───
+    if not args.server:
+        url_env = os.environ.get("ARKESTRA_ADMIN_URL")
+        if url_env:
+            args.server = url_env
+        else:
+            data = _load_config(args.config)
+            port = data.get("admin-port") or (data.get("env") or {}).get("PORT")
+            if port is not None:
+                args.server = f"http://127.0.0.1:{port}"
+    if not args.server:
+        args.server = "http://127.0.0.1:8080"  # hardwired default
 
     # ── Resolve auth ──
     api_key = args.api_key or os.environ.get("ADMIN_KEY") or _read_admin_key(args.config)
