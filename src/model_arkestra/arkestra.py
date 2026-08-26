@@ -18,6 +18,7 @@ from model_arkestra.docker import DockerModelRunner
 from model_arkestra.onnx_runner import OnnxRunner
 from model_arkestra.podman import PodmanModelRunner
 from model_arkestra.process import ProcessModelRunner
+from model_arkestra.remote import RemoteModelRunner
 from model_arkestra.types import RunnerState, _ModelContext
 from model_arkestra.unicode_ringbuffer import UnicodeRingBuffer
 
@@ -215,6 +216,7 @@ class ModelArkestra:
                 return ctx
         return None
 
+    @staticmethod
     def _state_to_webui_status(ctx: _ModelContext) -> Dict[str, Any]:
         """Map our RunnerState to Open WebUI status + optional metadata."""
         state_map = {
@@ -264,7 +266,7 @@ class ModelArkestra:
         self._runner_classes: Dict[str, type] = {}
 
         # Built-in concrete runners keyed by their lowercase short name.
-        for _cls in (ProcessModelRunner, PodmanModelRunner, DockerModelRunner, OnnxRunner):
+        for _cls in (ProcessModelRunner, PodmanModelRunner, DockerModelRunner, OnnxRunner, RemoteModelRunner):
             key = _cls.__name__.lower().replace("modelrunner", "")
             self._runner_classes[key] = _cls
 
@@ -441,6 +443,14 @@ class ModelArkestra:
         if is_onnx:
             return await self._start_onnx_model(model_name, inference_kwargs)
 
+        # Detect remote models — proxy all calls to target worker
+        resolved_be_id = backend or self._resolve_backend_id(model_name, {})
+        be_cfg = backends_cfg.get(str(resolved_be_id), {})
+        is_remote = str(be_cfg.get("runner", "")) == "remote"
+
+        if is_remote:
+            return await self._start_remote_model(model_name, inference_kwargs, be_cfg)
+
         # Allocate port if not explicitly provided.
         # Check for existing stopped context first — reuse its port to avoid
         # exhausting the port pool on repeated stop/start cycles (the same model).
@@ -466,7 +476,7 @@ class ModelArkestra:
         if resolved_runner == "container":
             resolved_runner = self._cm.data.get("container_type", "process") or "process"
 
-        if resolved_runner not in runners_cfg and resolved_runner not in ("process", "podman", "docker", "onnx"):
+        if resolved_runner not in runners_cfg and resolved_runner not in ("process", "podman", "docker", "onnx", "remote"):
             raise ValueError(
                 f"Backend '{be_id}' resolves to unknown runner type '{resolved_runner}'. "
                 f"Available runners: {list(runners_cfg.keys())}"
@@ -494,7 +504,7 @@ class ModelArkestra:
         ctx = self.find_context(model_name)
         if ctx is None:
             eff_port = inference_kwargs.get("port") or 0  # dummy port for context compatibility
-            log_size = inference_kwargs.get("max_log_lines", self.log_buffer_size)
+            log_size = inference_kwargs.get("max_log_lines", self.cm.data.get('log-buffer-size') or 2000)
             model_data = self.get_model(model_name, env_vars={})
             model_path_str = str((model_data or {}).get("model_path", ""))
             if not model_path_str:
@@ -516,6 +526,38 @@ class ModelArkestra:
         ctx.runner_type = "onnx"
 
         logger.info("ONNX model '%s' loaded into memory", model_name)
+
+    async def _start_remote_model(
+        self, model_name: str, inference_kwargs: Dict[str, Any], backend_cfg: Dict[str, Any],
+    ) -> None:
+        """Start a remote model — proxy lifecycle to the target arkestra worker.
+
+        No local port is allocated. All HTTP calls (start, stop, chat, embed)
+        are forwarded to ``base_url`` from the backend configuration.
+        """
+        base_url = str(backend_cfg.get("base_url", "")).rstrip("/")
+        if not base_url:
+            raise ValueError(f"Backend '{model_name}' uses runner: remote but has no base_url.")
+
+        # Find or create the remote runner instance (by backend_id)
+        backends_section = self._cm.data.get("backends", {})
+        runner = self._get_runner_instance("remote")  # single shared runner per base_url
+        runner._backend_id = str(backend_cfg)  # tag for routing
+        ctx = self.find_context(model_name)
+        if ctx is None:
+            log_size = inference_kwargs.get("max_log_lines", self.cm.data.get('log-buffer-size') or 2000)
+            from model_arkestra.types import _ModelContext as MC
+            ctx = MC(model_name, 0, max_log_lines=log_size)  # port=0 for remote models
+            ctx.backend_id = backend_cfg.get("runner")
+            ctx._remote_base_url = base_url
+            runner._models[model_name] = ctx  # noqa: SLF001
+
+        # Pass inference kwargs and start (proxies to worker)
+        runner._inference_kwargs[model_name] = inference_kwargs
+        await runner.start(model_name, port=ctx.port, backend="remote", **inference_kwargs)
+        ctx.runner_type = "remote"
+        ctx._runner = runner  # noqa: SLF001
+        await self._log(f"[action=start model={model_name} remote={base_url}]")
 
     async def embed(self, model_name: str, text: str) -> Dict[str, Any]:
         """Encode text → embedding vector via ONNX model.

@@ -44,6 +44,7 @@ class _ModelContext:
         self.restart_count = 0
         self.last_error: Optional[str] = None
         self.broadcast_addr: str = "0.0.0.0"
+        self._remote_base_url: Optional[str] = None  # actual URL for remote models (callers can bypass proxy)
 
         # Line sequence counter
         self._log_seq: int = 0

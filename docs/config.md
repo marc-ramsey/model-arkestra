@@ -242,7 +242,9 @@ defaults:
 | Key | Type | Description |
 |---|---|---|
 | `description` | str | Human-readable description shown in `list-backends`. |
-| `runner` | str | Runner type: `"process"`, `"podman"`, `"docker"`, or `"container"`. Use `"container"` to defer to the top-level `container_type:` config value. |
+| `runner` | str | Runner type: `"process"`, `"podman"`, `"docker"`, `"container"`, or `"remote"`. Use `"container"` to defer to the top-level `container_type:` config value. |
+| `base_url` | str | (Remote only) URL of the target arkestra worker — e.g. `"http://192.168.1.42:18000"`. All inference and lifecycle calls proxy to this host. |
+| `admin_key` | str | (Remote optional) API key forwarded as `x-admin-key` header to workers requiring authentication. If the target worker also proxies, forward its `admin_key` value here.
 | `source_ref` | str | Name of a source entry from the `sources:` section below. |
 | `args` | dict | Default CLI arguments merged into model args during startup. |
 | `hf_flag` | str | (Optional) Override for the HuggingFace flag format — e.g., `"--hf"` instead of default `"-hf"`. Used when container images or binaries use a different flag convention. |
@@ -290,6 +292,35 @@ Then select it in config.yaml:
 backends:
   default: my-avx512
 ```
+
+### Remote Federation (`runner: remote`)
+
+The `remote` runner type enables **distributed inference** — the master server proxies all inference and lifecycle commands to another arkestra worker. This is useful when you have a GPU-rich worker machine but want to manage everything from a central CPU-only host.
+
+```yaml
+# config.yaml (master host, no GPU needed)
+models:
+  gpu-server/gemma-4b:
+    checkpoint: unsloth/gemma-4-E2B-it-GGUF:Q4_K_M
+    backend: remote-gpu-worker
+
+backends_section:  # or backends.yaml
+  remote-gpu-worker:
+    runner: remote
+    base_url: "http://192.168.1.42:18000"   # worker's admin port
+    admin_key: "my-secret"                    # if worker requires auth
+```
+
+**How it works:**
+- The master server **never downloads, spawns, or allocates ports** for remote models.
+- `POST /admin/start/<model>` → proxies to `http://worker/v1/admin/models/{name}/start`
+- `POST /v1/chat/completions` with `model: "gpu-server/gemma"` → streams SSE from worker
+- Model names use the `<worker-name>/<model-id>` convention (e.g., `gpu-server/qwen3`) to identify which worker hosts each model.
+
+**Important:**
+- The master does **not** auto-discover workers — each remote backend must be explicitly configured.
+- If the worker runs raw `llama-server` (no admin routes), start/stop become no-ops on the master side, but inference still proxies correctly via direct HTTP calls to the worker's `/v1/*` endpoints.
+- Administration of individual workers is done by pointing a browser directly to `http://<worker-ip>:18000/admin`.
 
 ---
 

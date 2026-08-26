@@ -213,7 +213,7 @@ class ArkestraAdmin:
                 raise HTTPException(status_code=503, detail=str(e))
 
     def _add_stop_route(self) -> None:
-        @self._app.post("/admin/stop/{model}")
+        @self._app.post("/admin/stop/{model:path}")
         async def admin_stop(model: str):
             ctx = self.server._arkestra.find_context(model)
             if not ctx:
@@ -330,7 +330,7 @@ class ArkestraAdmin:
                 content={"ok": True, "model": name},
             )
 
-        @self._app.get("/admin/config/{model}")
+        @self._app.get("/admin/config/{model:path}")
         async def admin_config_get(model: str):
             """Return a single model's configuration."""
             cfg = self._models_cfg
@@ -360,7 +360,7 @@ class ArkestraAdmin:
                 "available_capabilities": available_caps,
             }
 
-        @self._app.put("/admin/config/{model}")
+        @self._app.put("/admin/config/{model:path}")
         async def admin_config_update(model: str, body: Dict[str, Any]):
             """Update an existing model's configuration."""
             cfg = self._models_cfg
@@ -383,7 +383,7 @@ class ArkestraAdmin:
                 raise HTTPException(status_code=500, detail=f"Save failed: {exc}")
 
     def _add_start_route(self) -> None:
-        @self._app.post("/admin/start/{model}")
+        @self._app.post("/admin/start/{model:path}")
         async def admin_start(model: str, body: Dict[str, Any] | None = None):
             cfg = self._models_cfg
             if model not in cfg:
@@ -419,7 +419,7 @@ class ArkestraAdmin:
                 raise HTTPException(status_code=503, detail=f"Start failed: {exc}")
 
     def _add_log_route(self) -> None:
-        @self._app.get("/admin/log/{model}")
+        @self._app.get("/admin/log/{model:path}")
         async def admin_log(
             model: str,
             since: int = 0,
@@ -437,6 +437,14 @@ class ArkestraAdmin:
                     status_code=200,
                     content={"since": 0, "missed_lines": 0, "lines": []},
                     headers={"X-Missed-Lines": "0", "X-Current-Max": "0"},
+                )
+
+            # Remote models — logs are on the worker server
+            if getattr(ctx, '_remote_base_url', None):
+                return JSONResponse(
+                    status_code=200,
+                    content={"since": 0, "missed_lines": 0, "lines": []},
+                    headers={"X-Missed-Lines": "0", "X-Current-Max": "0", "X-Note": "remote-worker"},
                 )
 
             # Read delta from ring buffer
@@ -588,7 +596,7 @@ class ArkestraAdmin:
             }
 
     def _add_eject_route(self) -> None:
-        @self._app.post("/admin/eject/{model}")
+        @self._app.post("/admin/eject/{model:path}")
         async def admin_eject(model: str):
             try:
                 result = await self.server._arkestra.eject(model)

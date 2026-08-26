@@ -105,7 +105,7 @@ def _build_app(mock_arkestra, aliases=None):
             data.append(ModelInfo(
                 id=entry.get("id", "unknown"),
                 owned_by=entry.get("owned_by", "local"),
-                status=entry.get("status", "stopped"),
+                status=entry.get("status", {"value": "stopped"}),
                 port=entry.get("port"),
                 runner_type=entry.get("runner_type"),
                 backend_id=entry.get("backend_id"),
@@ -119,7 +119,7 @@ def _build_app(mock_arkestra, aliases=None):
         try:
             v1_data = await mock_arkestra.get_v1_models()
             running = sum(
-                1 for m in v1_data.get("data", []) if m.get("status") == "running"
+                1 for m in v1_data.get("data", []) if m.get("status", {}).get("value") in ("loaded", "running")
             )
         except Exception:
             running = 0
@@ -168,7 +168,7 @@ def mock_arkestra():
             {
                 "id": "qwen3-4b",
                 "owned_by": "local",
-                "status": "running",
+                "status": {"value": "loaded"},
                 "port": 18000,
                 "runner_type": "process",
                 "backend_id": None,
@@ -176,7 +176,7 @@ def mock_arkestra():
             {
                 "id": "gemma-4-e2b",
                 "owned_by": "local",
-                "status": "stopped",
+                "status": {"value": "sleeping"},
                 "port": 18001,
                 "runner_type": "podman",
                 "backend_id": "rocm",
@@ -388,7 +388,7 @@ class TestListModels:
         qwen = next(m for m in data if m["id"] == "qwen3-4b")
         assert qwen["object"] == "model"
         assert qwen["owned_by"] == "local"
-        assert qwen["status"] == "running"
+        assert qwen.get("status", {}).get("value") == "loaded"
 
     def test_list_models_stopped_model(self, mock_arkestra):
         """Stopped models are listed with correct status."""
@@ -398,7 +398,7 @@ class TestListModels:
         data = body["data"]
 
         gemma = next(m for m in data if m["id"] == "gemma-4-e2b")
-        assert gemma["status"] == "stopped"
+        assert gemma.get("status", {}).get("value") == "sleeping"
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -666,7 +666,7 @@ class TestImports:
         assert d["choices"][0]["delta"]["content"] == "Hi"
 
         # Model info
-        model_info = ModelInfo(id="qwen3-4b", status="running", port=18000)
+        model_info = ModelInfo(id="qwen3-4b", status={"value": "loaded"}, port=18000)
         d = model_info.model_dump()
         assert d["id"] == "qwen3-4b"
-        assert d["status"] == "running"
+        assert d.get("status", {}).get("value") == "loaded"

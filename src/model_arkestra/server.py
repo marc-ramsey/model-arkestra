@@ -17,6 +17,7 @@ import json
 import time
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
+import aiohttp
 
 try:
     from fastapi import FastAPI, HTTPException, Request, Response
@@ -209,6 +210,68 @@ class ArkestraServer:
             return cfg[model_name]
         return None
 
+    def _get_remote_base_url(self, model_name: str) -> Optional[str]:
+        """Return the base_url for a remote model, or None."""
+        model = self._arkestra.get_model(model_name)
+        if not model:
+            return None
+        backend_id = model.get("backend")
+        if not backend_id:
+            return None
+        backends_cfg = self._arkestra.cm.data.get("backends", {})
+        be = backends_cfg.get(str(backend_id), {})
+        if be.get("runner") == "remote" and "base_url" in be:
+            return str(be["base_url"]).rstrip("/")
+        return None
+
+    async def _proxy_stream(self, model_name: str, payload: Dict[str, Any], base_url: str) -> AsyncIterator[str]:
+        """Proxy a streaming request to a remote worker and yield SSE lines."""
+        url = f"{base_url}/v1/chat/completions"
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        admin_key = self.admin_key or ""
+        if admin_key:
+            headers["x-admin-key"] = admin_key
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, headers=headers, timeout=120) as resp:
+                if resp.status != 200:
+                    detail = await resp.text()
+                    raise HTTPException(status_code=503, detail=f"Remote inference failed ({resp.status}): {detail}")
+
+                async for raw in resp.content:
+                    text = raw.decode("utf-8")
+                    yield text
+
+    async def _proxy_complete(self, model_name: str, req: ChatCompletionRequest, base_url: str) -> Response:
+        """Proxy a non-streaming request to a remote worker and return JSON."""
+        url = f"{base_url}/v1/chat/completions"
+        payload = {
+            "model": model_name,
+            "messages": [m.model_dump() for m in req.messages],
+            "stream": False,
+        }
+        for k, v in {"temperature": req.temperature, "max_tokens": req.max_tokens,
+                      "top_p": req.top_p, "frequency_penalty": req.frequency_penalty,
+                      "presence_penalty": req.frequency_penalty,
+                      "stop": req.stop}.items():
+            if v is not None:
+                payload[k] = v
+
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        admin_key = self.admin_key or ""
+        if admin_key:
+            headers["x-admin-key"] = admin_key
+
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.post(url, json=payload, headers=headers, timeout=120) as resp:
+                    if resp.status != 200:
+                        detail = await resp.text()
+                        raise HTTPException(status_code=503, detail=f"Remote inference failed ({resp.status}): {detail}")
+                    data = await resp.json()
+            except Exception as e:
+                raise HTTPException(status_code=503, detail=f"Remote server error: {e}")
+
     # ── FastAPI app factory ───────────────────────────────────────
 
     def get_app(self) -> FastAPI:
@@ -251,6 +314,28 @@ class ArkestraServer:
                     await self._arkestra.start(model_name)
                 except Exception as e:
                     raise HTTPException(status_code=503, detail=f"Model error: {e}")
+
+            # Detect remote models — proxy directly to the worker
+            base_url = self._get_remote_base_url(model_name)
+            if base_url:
+                payload = {
+                    "model": model_name,
+                    "messages": [m.model_dump() for m in req.messages],
+                }
+                for k, v in {"temperature": req.temperature, "max_tokens": req.max_tokens,
+                              "top_p": req.top_p, "frequency_penalty": req.frequency_penalty,
+                              "presence_penalty": req.presence_penalty,
+                              "stop": req.stop}.items():
+                    if v is not None:
+                        payload[k] = v
+                if req.stream:
+                    return StreamingResponse(
+                        self._proxy_stream(model_name, payload, base_url),
+                        media_type="text/event-stream",
+                        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+                    )
+                else:
+                    return await self._proxy_complete(model_name, req, base_url)
 
             if req.stream:
                 return StreamingResponse(
@@ -310,6 +395,23 @@ class ArkestraServer:
             Falls through to chat if no matching aux model found.
             """
             model_name = req_body.get("model", "")
+
+            # Check for remote model first — proxy directly
+            base_url = self._get_remote_base_url(model_name)
+            if base_url:
+                payload = {"model": model_name, "input": input_text}
+                headers: Dict[str, str] = {"Content-Type": "application/json"}
+                admin_key = self.admin_key or ""
+                if admin_key:
+                    headers["x-admin-key"] = admin_key
+
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(f"{base_url}/v1/embeddings", json=payload, headers=headers, timeout=30) as resp:
+                        if resp.status != 200:
+                            detail = await resp.text()
+                            raise HTTPException(status_code=503, detail=f"Remote embed failed ({resp.status})")
+                        return Response(content=await resp.text(), media_type="application/json")
+
             cfg = self._get_aux_model_cfg(model_name)
             if not cfg:
                 raise HTTPException(

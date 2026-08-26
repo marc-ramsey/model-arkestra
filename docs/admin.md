@@ -76,7 +76,7 @@ Returns a list of all configured models with their full runtime context. Models 
     }
   ],
   "backends": {"vulkan-radv": {...}, "rocm": {...}},
-  "runner_types": ["process", "podman", "docker"]
+  "runner_types": ["process", "podman", "docker", "remote"]
 }
 ```
 
@@ -191,7 +191,7 @@ Infra keys (resolved before inference filtering):
 - `args` — command-line arguments override
 - `checkpoint` — model checkpoint reference override
 - `backend` — backend ID override (runner resolves from config chain)
-- `runner` — explicit runner type (`process`, `podman`, `docker`)
+- `runner` — explicit runner type (`process`, `podman`, `docker`, or `remote`)
 - `max_log_lines` — per-invocation log buffer size
 
 Any other keys are treated as inference parameters for llama.cpp. Only those present in the engine's ``LLAMA_INFER_ARGS`` whitelist (e.g. `temp`, `top-p`, `reasoning-budget`) reach CLI construction; unknown keys are silently dropped to prevent subprocess crashes.

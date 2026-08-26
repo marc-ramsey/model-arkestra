@@ -16,7 +16,7 @@ This launches a FastAPI server backed by ModelArkestra on port 8080. Models load
 
 | Option | Short | Default | Description |
 |---|---|---|---|
-| `--config` / `-c` | *(required)* | — | Path to YAML config file |
+| `--config` / `-c` | *(optional)* | `~/.config/arkestra/config.yaml` | Path to YAML config file |
 | `--port` / `-p` | — | `8080` | HTTP port to listen on |
 | `--host` / `-H` | — | `0.0.0.0` | Bind address — use `127.0.0.1` for localhost-only |
 | `--ready-timeout` / `-t` | — | `120` | Seconds to wait for models during startup |
@@ -228,6 +228,23 @@ server = ArkestraServer(
 ```
 
 A request with `model: "gpt-4"` resolves to `"qwen3.5-4b"` automatically. If no alias matches, the model ID is passed through as-is (the runner uses it as the model name).
+
+### Remote Model Proxying
+
+When a configured model uses `runner: remote`, all inference requests are transparently proxied to the target worker:
+
+```yaml
+models:
+  gpu-worker/qwen3-4b:
+    checkpoint: unsloth/Qwen3-4B-GGUF:Q4_K_M
+    backend: gpu-worker
+backends:
+  gpu-worker:
+    runner: remote
+    base_url: "http://192.168.1.42:18000"
+```
+
+A request to `/v1/chat/completions` with `model: "gpu-worker/qwen3-4b"` is forwarded to `http://192.168.1.42:18000/v1/chat/completions`. Streaming responses are relayed as SSE chunks in real time. Non-streaming requests wait for the worker's response and return it as-is.
 
 ## Request & Response Models
 

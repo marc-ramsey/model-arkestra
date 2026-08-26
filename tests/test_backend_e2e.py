@@ -396,7 +396,7 @@ def _start_model(client: httpx.Client, base_url: str, model_name: str) -> bool:
     while time.time() < deadline:
         r = client.get(f"{base_url}/admin/models", timeout=10)
         for m in r.json()["models"]:
-            if m["id"] == model_name and m.get("status") == "running":
+            if m["id"] == model_name and m.get("status", {}).get("value") == "loaded":
                 return True
         time.sleep(0.5)
     return False
@@ -538,7 +538,7 @@ class TestFullLifecycle:
             r = client.get(f"{base_url}/admin/models", timeout=10)
             for m in r.json()["models"]:
                 if m["id"] == model_name:
-                    assert m["status"] == "stopped", f"Expected 'stopped', got '{m['status']}'"
+                    assert m.get("status", {}).get("value") == "sleeping", f"Expected 'stopped', got '{m['status']}'"
 
         finally:
             _stop_model(client, base_url, model_name)

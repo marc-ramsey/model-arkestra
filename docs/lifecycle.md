@@ -22,6 +22,7 @@ This document covers the full lifecycle of models from startup through crash det
 |---|---|
 | **Process** | Polls subprocess exit code via `process.wait()`. On unexpected exit (non-zero), automatically attempts up to `restart_limit` restarts spaced by `restart_delay`. The watcher task runs in the background. |
 | **Podman / Docker** | Polls container status every 2 seconds; on unexpected exit (`exited`, `dead`), automatically attempts up to `restart_limit` restarts spaced by `restart_delay`. The watcher task runs in the background. |
+| **Remote** | No local process, no port allocation, no crash detection. Lifecycle commands (start/stop) proxy via HTTP to the remote worker. Inference requests are forwarded directly. |
 
 ## Shutdown Sequencing (`stop` / `stop_all`)
 

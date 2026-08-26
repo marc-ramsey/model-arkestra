@@ -1,10 +1,10 @@
 # Model Arkestra
 
-> This is early alpha code, functional on AMD *Strix Halo* systems only for now.
+Model Arkestra is a lightweight Python orchestrator for running local LLM inference — [llama.cpp](https://github.com/ggerganov/llama.cpp) — across backends from bare-metal subprocesses to isolated containers (Podman / Docker), and across federated home-lab nodes via the `remote` runner.
 
-Model Arkestra is a lightweight Python orchestrator for running local LLM inference engines — primarily [llama.cpp](https://github.com/ggerganov/llama.cpp) — across your choice of backends, from bare-metal subprocesses to isolated containers (Podman / Docker). It exists so you can deploy and manage models on your own hardware with **safety and stability**, without the overhead of a full-blown proxy or cluster manager.
+It exists so you can deploy and manage models on your own hardware with **safety and stability**, without the overhead of a full proxy or cluster manager. No registries, no auto-scaling, no Kubernetes babysitting.
 
-This is **not** a replacement for [Lemonade](https://github.com/ollama/lemonade) or [llama-swap](https://github.com/sgl-project/llama-swap). No model registries, no auto-scaling, no Kubernetes babysitting. If you just want models up and running on your own GPU — with clean lifecycle management, graceful shutdowns, and restart resilience out of the box — Arkestra is a straight line between config file and inference.
+This is **not** a replacement for [Lemonade](https://github.com/ollama/lemonade) or [llama-swap](https://github.com/sgl-project/llama-swap). If you just want models up and running on your own GPU — with clean lifecycle management, graceful shutdowns, and restart resilience out of the box — Arkestra is a straight line between config file and inference.
 
 > *Author's note: Consider this an experiment. My first attempt at a project coded entirely by an agent coding assistant. Using [unsloth/unsloth/Qwen3.6-35B-A3B-MTP-GGUF:Q4_K_XL](https://huggingface.co/unsloth/unsloth/Qwen3.6-35B-A3B-MTP-GGUF) on a [Corsair AI Workstation 300](https://www.corsair.com/us/en/cp/category/builds/corsair-ai-workstation-300/) with 128GB integrated memory. This is **not** vibe coding — I watched the reasoning traces carefully and intervened numerous times when things started going off track. Development started with a lemonade-inspired config.yaml, with a prompt to write python code to read and set up an equivalent python object. With several more short prompts that became [llm_config_manager](https://github.com/marc-ramsey/llm-config-manager), from which BaseModelRunner and its subclasses were derived. The only manual editing was on config.yaml as more details were added, then some cleanup edits on README.md. Most needed interventions were along the lines of "stop looping," "overthinking the problem," or "focus on the problem, nothing else," with occasional "NO, do it this way…," which can be reduced through suitable agent loops (next project). Total time from start to completion: roughly 80 hours.*
 
@@ -18,6 +18,7 @@ This is **not** a replacement for [Lemonade](https://github.com/ollama/lemonade)
 | Manage models via web UI / Admin panel | [Admin API & Dashboard](./docs/admin.md) |
 | Use the `arkestra-admin` CLI | See below |
 | Offload embeddings/TTS/STT to ONNX | [ONNX Server](./docs/onnx-server.md) |
+| Federate inference across multiple machines | [Remote Federation](#quick-start---remote-federation) |
 | Understand how routing, ports, and runners work | [Architecture](./docs/architecture.md) |
 | Write or modify `config.yaml` | [Configuration Format](./docs/config.md) |
 
@@ -141,6 +142,33 @@ python -m model_arkestra.onnx_server \
 
 See [ONNX Server](./docs/onnx-server.md) for full documentation.
 
+### Quick Start — Remote Federation
+
+Run inference on a GPU worker from a CPU-only master host. No model downloads, no port allocations, no binary dependencies on the master:
+
+```yaml
+# config.yaml (on your laptop / CPU server)
+models:
+  gpu-lab-1/gemma-4b:       # worker-name / model-id convention
+    checkpoint: unsloth/gemma-4-E2B-it-GGUF:Q4_K_M
+    backend: gpu-lab-1
+backends:
+  default: gpu-lab-1
+  gpu-lab-1:
+    runner: remote           # proxy everything to this worker
+    base_url: "http://192.168.1.42:18000"   # worker's admin port
+    admin_key: "my-secret"                       # optional auth
+```
+
+Once configured, every request to `/v1/chat/completions` with `model: "gpu-lab-1/gemma-4b"` is forwarded transparently to the worker. Streaming responses flow back as SSE in real time.
+
+```bash
+# The master needs no GPU, no llama.cpp binary, nothing local
+arkestra-server --config config.yaml --port 8080
+```
+
+See [Configuration Format](./docs/config.md#remote-federation-runner-remote) for the full federation guide.
+
 ### Hugging Face Cache Location
 
 Models are downloaded via HuggingFace Hub. Control where they land by setting `HF_HUB_CACHE`:
@@ -154,9 +182,24 @@ Models are downloaded via HuggingFace Hub. Control where they land by setting `H
 
 The default is `~/.cache/huggingface/hub`. The [`config.md`](./docs/config.md#env-section) has full details on the `env:` section and resolution priority.
 
+## Capabilities
+
+| Feature | Details |
+|---|---|
+| **Process Runner** | Native llama.cpp subprocess — direct binary execution, no containers. Supports `Vulkan`, `ROCm`, `CUDA`, `CPU` backends with automatic port allocation from a configurable range. |
+| **Container Runners** | Podman or Docker isolation — pick the runtime globally (`container_type:`) and every backend inherits it. |
+| **Remote Federation** | The `runner: remote` type proxies inference and lifecycle commands to another arkestra worker on a different machine. Model names use the `<worker-name>/<model-id>` convention (e.g., `gpu-server/qwen3`). Master servers never download, spawn, or allocate ports for remote models — all HTTP calls are forwarded transparently. |
+| **ONNX Inference** | Native in-memory sessions for embeddings (`bge-*`), Whisper STT, and Kokoro TTS. No subprocesses, no ports — loads directly into Python via `onnxruntime`. Exposed on OpenAI-compatible `/v1/embeddings`, `/v1/audio/transcriptions`, `/v1/audio/speech`. |
+| **Open WebUI Ready** | Admin dashboard at `http://localhost:8080/` with live model management, SSE chat streaming, and structured status reporting (`{"value": "loaded"}`) for auto-load integration. |
+| **XDG Config Defaults** | Config files default to `~/.config/arkestra/config.yaml` — no CLI flag needed. Backends resolved from a companion `backends.yaml`. |
+| **Restart Resilience** | Crash detection with configurable restart limits and backoff delays. Stopped models reuse their original port on restart. |
+| **CLI Tooling** | `arkestra-admin` for remote model management: `start`, `stop`, `config`, `logs`, `images`, `shutdown`. API-key secured. |
+
 ## Architecture Overview
 
-Model Arkestra routes models through a config-driven runner registry — each model selects a backend, which maps to a runner type (process, podman, docker, or container). The `runner: container` value resolves against the top-level `container_type:` in `config.yaml`, enabling global engine swapping. A global port allocator distributes ports from a configured range. Port assignments are sticky: stopping and restarting a model reuses the same port.
+Model Arkestra routes models through a config-driven runner registry — each model selects a backend, which maps to a runner type (process, podman, docker, container, or remote). The `runner: container` value resolves against the top-level `container_type:` in `config.yaml`, enabling global engine swapping. A global port allocator distributes ports from a configured range. Port assignments are sticky: stopping and restarting a model reuses the same port.
+
+For **remote** (federated) models, no local port or process is allocated — all HTTP calls (start, stop, chat completions, embeddings) are forwarded to the target worker via its admin API. The master server acts purely as a proxy; individual workers are administered independently by visiting `http://<worker-ip>:18000/admin`.
 
 For details see [Architecture](./docs/architecture.md) and [Lifecycle](./docs/lifecycle.md).
 
@@ -175,6 +218,7 @@ from model_arkestra.langchain_adapter import LangChainModelAdapter  # LangChain 
 from model_arkestra.server import ArkestraServer             # OpenAI v1-compatible API server
 from model_arkestra.onnx_server import OnnxServer            # ONNX inference (auxiliary workloads)
 from model_arkestra.onnx_runner import OnnxRunner              # in-memory ONNX runner
+from model_arkestra.remote import RemoteModelRunner             # proxy to remote worker
 
 # Convenience re-exports from __init__.py:
 from model_arkestra import RunnerState, RunnerError, ServerReadyTimeout
