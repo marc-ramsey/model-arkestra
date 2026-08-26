@@ -692,7 +692,7 @@ class ArkestraServer:
 
 # ── CLI entry point ────────────────────────────────────────────────
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     """Entry point for: python -m model_arkestra.server
 
     Runs a FastAPI server backed by ModelArkestra, exposing an OpenAI-compatible
@@ -774,7 +774,7 @@ def main() -> None:
         ),
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # Load config early so we can resolve defaults from it.
     import yaml
