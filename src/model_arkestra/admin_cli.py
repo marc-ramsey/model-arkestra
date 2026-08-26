@@ -106,7 +106,10 @@ async def cmd_models(args: argparse.Namespace) -> None:
         runner = m.get("runner_type") or ""
         if isinstance(runner, str):
             runner = runner.replace("runnerstate.", "").lower()
-        print(f"{m['id']:<30} {m['status']:<12} {str(m['port']) or '-':<8} {str(m.get('backend_id') or '-'):<20} {runner}")
+        status_val = m.get("status", {})
+        if isinstance(status_val, dict):
+            status_val = status_val.get("value", "stopped")
+        print(f"{m['id']:<30} {str(status_val):<12} {str(m['port']) or '-':<8} {str(m.get('backend_id') or '-'):<20} {runner}")
 
 
 async def cmd_start(args: argparse.Namespace) -> None:

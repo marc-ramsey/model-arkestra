@@ -19,6 +19,7 @@ except ImportError:
     raise RuntimeError("model_arkestra.admin requires fastapi")
 
 from model_arkestra.common import (
+    _resolve_backend,
     _runtime_binary,
     build_image,
     containerfile_for_backend,
@@ -119,6 +120,13 @@ class ArkestraAdmin:
                 return bid
         return None
 
+    def _resolve_model_backend(self, model_name: str, model_cfg: dict) -> Optional[str]:
+        """Resolve backend for a model using the normal chain: per-model > backends.default."""
+        try:
+            return _resolve_backend(self.server._arkestra.cm, model_cfg, model_name)
+        except RuntimeError:
+            return model_cfg.get("backend")
+
     def _add_root_route(self) -> None:
         html = Path(__file__).parent.parent.parent / "static" / "index.html"
         content = html.read_text().replace("{{ADMIN_KEY}}", self.admin_key or "")
@@ -170,7 +178,7 @@ class ArkestraAdmin:
                             "status": webui_status,
                             "port": ctx.port,
                             "runner_type": ctx.runner_type,
-                            "backend_id": ctx.backend_id or model_cfg.get("backend"),
+                            "backend_id": ctx.backend_id or self._resolve_model_backend(ctx.name, model_cfg),
                             "args": model_cfg.get("args", ""),
                             "checkpoint": model_cfg.get("checkpoint", ""),
                             "capabilities": model_cfg.get("capabilities", []),
@@ -185,7 +193,7 @@ class ArkestraAdmin:
                             "status": {"value": "unloaded"} if not is_cached else {"value": "sleeping"},
                             "port": None,
                             "runner_type": None,
-                            "backend_id": model_cfg.get("backend"),
+                            "backend_id": self._resolve_model_backend(model_name, model_cfg),
                             "args": model_cfg.get("args", ""),
                             "checkpoint": checkpoint,
                             "capabilities": model_cfg.get("capabilities", []),
