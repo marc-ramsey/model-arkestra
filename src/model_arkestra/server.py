@@ -711,17 +711,17 @@ def main() -> None:
     )
     parser.add_argument(
         "--port", "-p",
-        type=int, default=8080,
+        type=int, default=None,
         help="HTTP port to listen on (default: 8080)",
     )
     parser.add_argument(
         "--host", "-H",
-        default="0.0.0.0",
+        default=None,
         help='Bind address — use "127.0.0.1" for localhost-only (default: 0.0.0.0)',
     )
     parser.add_argument(
         "--ready-timeout", "-t",
-        type=float, default=120.0,
+        type=float, default=None,
         help='Seconds to wait for models during startup (default: 120)',
     )
     parser.add_argument(
@@ -774,6 +774,43 @@ def main() -> None:
     )
 
     args = parser.parse_args()
+
+    # Load config early so we can resolve defaults from it.
+    import yaml
+
+    resolved_path = str(resolve_config_path(args.config))
+    try:
+        with open(resolved_path) as f:
+            cfg_data: dict = yaml.safe_load(f) or {}
+    except (FileNotFoundError, OSError):
+        cfg_data = {}
+
+    # ── Resolve args in order: CLI > env > config > hardwired default ───
+    if args.port is None:
+        env_port = os.environ.get("PORT")
+        if env_port:
+            try:
+                args.port = int(env_port)
+            except ValueError:
+                pass
+        if args.port is None:
+            args.port = cfg_data.get("admin-port") or 8080
+    if args.host is None:
+        env_host = os.environ.get("HOST")
+        if env_host:
+            args.host = env_host
+        else:
+            # No dedicated config key for server host — fall back to default
+            args.host = "0.0.0.0"
+    if args.ready_timeout is None:
+        cfg_to = cfg_data.get("warmup-time")
+        if cfg_to is not None:
+            try:
+                args.ready_timeout = float(cfg_to)
+            except (ValueError, TypeError):
+                pass
+        else:
+            args.ready_timeout = 120.0
 
     # Parse aliases: --alias gpt-4=qwen3.5-4b → {"gpt-4": "qwen3.5-4b"}
     aliases: dict[str, str] = {}
