@@ -21,6 +21,7 @@ from model_arkestra.process import ProcessModelRunner
 from model_arkestra.remote import RemoteModelRunner
 from model_arkestra.types import RunnerState, _ModelContext
 from model_arkestra.unicode_ringbuffer import UnicodeRingBuffer
+from model_arkestra.http_proxy import model_status_for_ctx
 
 
 class ModelArkestra:
@@ -216,21 +217,6 @@ class ModelArkestra:
                 return ctx
         return None
 
-    @staticmethod
-    def _state_to_webui_status(ctx: _ModelContext) -> Dict[str, Any]:
-        """Map our RunnerState to Open WebUI status + optional metadata."""
-        state_map = {
-            RunnerState.LOADING:  {"value": "loading"},
-            RunnerState.RUNNING:  {"value": "loaded"},
-            RunnerState.STOPPED:  {"value": "sleeping"},
-            RunnerState.STOPPING: {"value": "sleeping"},
-            RunnerState.UNCACHED: {"value": "unloaded"},
-        }
-        entry = state_map.get(ctx.state, {})
-        if ctx.state == RunnerState.ERROR:
-            return {"value": "error", "error_message": ctx.last_error or "unknown error"}
-        return entry
-
     def get_v1_models(self) -> Dict[str, Any]:
         """OpenAI-compatible ``/v1/models`` response with WebUI status fields."""
         from time import time
@@ -247,7 +233,7 @@ class ModelArkestra:
                 "object": "model",
                 "created": int(time()),
                 "owned_by": owned_by,
-                "status": {"value": "stopped"} if not ctx else _state_to_webui_status(ctx),
+                "status": model_status_for_ctx(ctx),
             }
 
             data.append(entry)

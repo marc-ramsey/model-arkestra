@@ -4,6 +4,7 @@ import json
 import logging
 import time
 import aiohttp
+from model_arkestra.http_proxy import sse_events, parse_completion
 from typing import Any, AsyncIterator, Dict, Optional
 from model_arkestra.base import BaseModelRunner
 from model_arkestra.types import RunnerState, _ModelContext
@@ -151,33 +152,12 @@ class RemoteModelRunner(BaseModelRunner):
                     detail = await resp.text()
                     raise RuntimeError(f"Remote inference failed ({resp.status}): {detail}")
 
-                while True:
-                    try:
-                        raw_line = await resp.content.readline()
-                        if not raw_line:
-                            break
-                        text = raw_line.decode("utf-8").strip()
-                        if not text.startswith("data:"):
-                            continue
-                        data_str = text[5:].strip()
-                        if data_str == "[DONE]":
-                            return
-                        try:
-                            chunk = json.loads(data_str)
-                        except json.JSONDecodeError:
-                            continue
-
-                        choices = chunk.get("choices", [])
-                        delta = choices[0].get("delta", {}) if choices else {}
-                        content = delta.get("content") or ""
-                        if content:
-                            yield {"token": content}
-
-                        usage = chunk.get("usage")
-                        if usage:
-                            yield {"usage": usage}
-                    except Exception:
-                        break
+                async for event in sse_events(resp.content):
+                    if "token" in event:
+                        yield {"token": event["token"]}
+                    elif "usage" in event:
+                        yield {"usage": event["usage"]}
+                    # done marker is implicit — no final chunk needed
 
     async def _remote_complete_chat(
         self, ctx: _ModelContext, payload: Dict[str, Any]
@@ -188,35 +168,24 @@ class RemoteModelRunner(BaseModelRunner):
         if self._admin_key:
             headers["x-admin-key"] = self._admin_key
 
-        async with aiohttp.ClientSession() as session:
-            for attempt in range(6):
-                try:
+        last_err: Exception | None = None
+        for attempt in range(6):
+            try:
+                async with aiohttp.ClientSession() as session:
                     async with session.post(url, json=payload, headers=headers, timeout=120) as resp:
                         if resp.status == 503:
                             await asyncio.sleep(2.5)
                             continue
                         if resp.status != 200:
                             raise RuntimeError(f"Remote inference failed ({resp.status})")
-
                         data = await resp.json()
-                        choices = data.get("choices", [])
-                        message = choices[0].get("message", {}) if choices else {}
-                        content = message.get("content") or "" or message.get("reasoning_content", "")
-                        return {
-                            "content": content,
-                            "usage": data.get("usage", {
-                                "model": payload.get("model", ""),
-                                "prompt_tokens": 0,
-                                "completion_tokens": 0,
-                                "total_tokens": 0,
-                                "time_seconds": 0,
-                            }),
-                        }
-                except (aiohttp.ClientConnectionError, asyncio.TimeoutError) as e:
-                    if attempt == 5:
-                        raise RuntimeError(f"Remote server not reachable: {e}")
-                    await asyncio.sleep(2.5)
-            raise RuntimeError("Maximum retries exceeded for remote chat completion")
+                return parse_completion(data)
+            except (aiohttp.ClientConnectionError, asyncio.TimeoutError) as exc:
+                last_err = exc
+                if attempt == 5:
+                    break
+                await asyncio.sleep(2.5)
+        raise RuntimeError(f"Remote server not reachable after {attempt + 1} attempts") from last_err
 
     async def _stream_sse(self, model_name: str, payload: Dict[str, Any]) -> AsyncIterator[Dict[str, Any]]:
         """Override to proxy SSE from the remote worker."""

@@ -38,6 +38,7 @@ except ImportError:
     )
 
 from model_arkestra.common import resolve_config_path
+from model_arkestra.http_proxy import sse_events
 
 
 try:
@@ -238,9 +239,25 @@ class ArkestraServer:
                     detail = await resp.text()
                     raise HTTPException(status_code=503, detail=f"Remote inference failed ({resp.status}): {detail}")
 
-                async for raw in resp.content:
-                    text = raw.decode("utf-8")
-                    yield text
+                async for event in sse_events(resp.content):
+                    if "token" in event:
+                        chunk = {
+                            "id": "cmpl-stream-default",
+                            "object": "chat.completion.chunk",
+                            "model": model_name,
+                            "choices": [{"index": 0, "delta": {"content": event["token"]}}],
+                        }
+                        yield f"data: {json.dumps(chunk)}\n\n"
+                    elif "usage" in event:
+                        chunk = {
+                            "id": "cmpl-stream-default",
+                            "object": "chat.completion.chunk",
+                            "model": model_name,
+                            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                        }
+                        yield f"data: {json.dumps(chunk)}\n\n"
+                        yield "data: [DONE]\n\n"
+                        return
 
     async def _proxy_complete(self, model_name: str, req: ChatCompletionRequest, base_url: str) -> Response:
         """Proxy a non-streaming request to a remote worker and return JSON."""
@@ -252,7 +269,7 @@ class ArkestraServer:
         }
         for k, v in {"temperature": req.temperature, "max_tokens": req.max_tokens,
                       "top_p": req.top_p, "frequency_penalty": req.frequency_penalty,
-                      "presence_penalty": req.frequency_penalty,
+                      "presence_penalty": req.presence_penalty,
                       "stop": req.stop}.items():
             if v is not None:
                 payload[k] = v

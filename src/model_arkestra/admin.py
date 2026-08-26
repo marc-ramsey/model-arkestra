@@ -28,6 +28,7 @@ from model_arkestra.common import (
     remove_image,
 )
 from model_arkestra.types import RunnerState
+from model_arkestra.http_proxy import model_status_for_ctx
 
 # ── Model config field definitions (single source of truth) ─────────────
 MODEL_CONFIG_FIELDS = frozenset({"args", "checkpoint", "backend", "capabilities", "runner", "tags", "max_log_lines"})
@@ -163,7 +164,7 @@ class ArkestraAdmin:
                     model_cfg = self.server._arkestra.get_model(model_name) or {}
 
                     if ctx:
-                        webui_status = self.server._arkestra._state_to_webui_status(ctx)
+                        webui_status = model_status_for_ctx(ctx)
                         entry = {
                             "id": ctx.name,
                             "status": webui_status,
@@ -341,7 +342,7 @@ class ArkestraAdmin:
             # Also resolve current runtime status if the model is loaded
             contexts = {ctx.name: ctx for ctx in self.server._arkestra._get_model_contexts()}
             ctx = contexts.get(model)
-            status = self.server._arkestra._state_to_webui_status(ctx) if ctx else {"value": "stopped"}
+            status = model_status_for_ctx(ctx)
 
             # Resolve available capabilities for this model
             global_cfg = self.server._arkestra.cm.data or {}

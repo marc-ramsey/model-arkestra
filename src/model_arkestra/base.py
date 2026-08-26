@@ -8,6 +8,7 @@ import socket
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator, Dict, Optional, Set
 import aiohttp
+from model_arkestra.http_proxy import sse_events, parse_completion
 from model_arkestra.common import default_cache_root
 from model_arkestra.unicode_ringbuffer import UnicodeRingBuffer
 from model_arkestra.types import (
@@ -219,10 +220,9 @@ class BaseModelRunner(ABC):
     async def _stream_sse(self, model_name: str, payload: Dict[str, Any]) -> AsyncIterator[Dict[str, Any]]:
         await self._dispatch(model_name)
         ctx = next((v for k, v in self._models.items() if k == model_name), None)
-        port = ctx.port
-        url = f"http://127.0.0.1:{port}/v1/chat/completions"
+        url = f"http://127.0.0.1:{ctx.port}/v1/chat/completions"
         start_time = time.monotonic()
-        tokens_so_far = []
+        tokens_so_far: list[str] = []
         usage_info: Dict[str, Any] = {}
 
         async with aiohttp.ClientSession() as session:
@@ -231,43 +231,26 @@ class BaseModelRunner(ABC):
                     if resp.status != 200:
                         raise RunnerError(f"Server error: {resp.status}")
 
-                    while True:
-                        raw = await resp.content.readline()
-                        if not raw:
-                            break
-                        text = raw.decode("utf-8").strip()
-                        if not text:
-                            continue
-
-                        event_data = text[5:].strip() if text.startswith("data:") else text
-
-                        if event_data == "[DONE]":
+                    async for event in sse_events(resp.content):
+                        if "token" in event:
+                            tokens_so_far.append(event["token"])
+                            yield {"token": event["token"]}
+                        elif "usage" in event:
+                            usage_info.update(event["usage"])
+                        else:
+                            # done marker — compute final usage
                             elapsed = round(time.monotonic() - start_time, 2)
                             prompt_tok = usage_info.get("prompt_tokens", len(tokens_so_far))
-                            completion_tok = usage_info.get("completion_tokens", 0)
-                            if not completion_tok and tokens_so_far:
-                                completion_tok = len(tokens_so_far)
+                            completion_tok = usage_info.get("completion_tokens") or len(tokens_so_far)
                             usage_info.update({
                                 "model": model_name,
                                 "prompt_tokens": prompt_tok,
                                 "completion_tokens": completion_tok,
                                 "total_tokens": prompt_tok + completion_tok,
                                 "time_seconds": elapsed,
-                                "tokens_per_second": round(completion_tok / elapsed, 2) if elapsed > 0 else 0
+                                "tokens_per_second": round(completion_tok / elapsed, 2) if elapsed > 0 else 0,
                             })
                             yield {"usage": usage_info}
-                            break
-
-                        try:
-                            chunk = json.loads(event_data)
-                            choices = chunk.get("choices", [])
-                            if choices and (delta := choices[0].get("delta")) and delta.get("content"):
-                                tokens_so_far.append(delta["content"])
-                                yield {"token": delta["content"]}
-                            if "usage" in chunk:
-                                usage_info.update(chunk["usage"])
-                        except json.JSONDecodeError:
-                            pass
 
             except Exception as e:
                 raise RunnerError(f"Stream error: {e}")
@@ -297,8 +280,7 @@ class BaseModelRunner(ABC):
     async def _complete_async(self, model_name: str, prompt: str, **kwargs) -> Dict[str, Any]:
         await self._dispatch(model_name)
         ctx = next((v for k, v in self._models.items() if k == model_name), None)
-        port = ctx.port
-        url = f"http://127.0.0.1:{port}/v1/chat/completions"
+        url = f"http://127.0.0.1:{ctx.port}/v1/chat/completions"
         payload: Dict[str, Any] = {"model": model_name}
 
         # Support full messages list (for LangChain) or single prompt (legacy)
@@ -309,9 +291,10 @@ class BaseModelRunner(ABC):
 
         payload.update({k: v for k, v in kwargs.items() if k in self._LLAMA_FIELDS and v is not None})
 
-        async with aiohttp.ClientSession() as session:
-            for attempt in range(12):
-                try:
+        last_err: Exception | None = None
+        for attempt in range(12):
+            try:
+                async with aiohttp.ClientSession() as session:
                     async with session.post(url, json=payload, timeout=60) as resp:
                         if resp.status == 503:
                             await asyncio.sleep(2.5)
@@ -321,25 +304,15 @@ class BaseModelRunner(ABC):
                         if resp.status != 200:
                             raise RunnerError(f"Server error: {resp.status}")
                         data = await resp.json()
-                        msg = data.get("choices", [{}])[0].get("message", {})
-                        content = msg.get("content", "") or msg.get("reasoning_content", "")
-                        return {
-                            "content": content,
-                            "usage": data.get("usage", {
-                                "model": model_name,
-                                "prompt_tokens": 0,
-                                "completion_tokens": 0,
-                                "total_tokens": 0,
-                                "time_seconds": 0
-                            })
-                        }
-                except (aiohttp.ClientConnectionError, asyncio.TimeoutError) as exc:
-                    if attempt == 11:
-                        raise RunnerError(f"Server not reachable: {exc}")
-                    await asyncio.sleep(2.5)
-                except Exception as e:
-                    raise RunnerError(f"Request failed: {e}")
-            raise RunnerError("Maximum retries exceeded for completion request")
+                return parse_completion(data)
+            except (aiohttp.ClientConnectionError, asyncio.TimeoutError) as exc:
+                last_err = exc
+                if attempt == 11:
+                    break
+                await asyncio.sleep(2.5)
+            except Exception as e:
+                raise RunnerError(f"Request failed: {e}") from None
+        raise RunnerError(f"Server not reachable after {attempt + 1} attempts") from last_err
 
     async def ainvoke(self, model_name: str, prompt: str = "", **kwargs) -> str:
         res = await self._complete_async(model_name, prompt, **kwargs)
