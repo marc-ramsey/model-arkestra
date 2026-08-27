@@ -75,31 +75,31 @@ models:
 
 class TestPortAllocation:
     def test_first_port_is_start_port(self):
-        """_alloc() starts at models-start-port."""
+        """worker_port() starts at models-start-port."""
         arkestra = _make_cm(runner_cfg={"default": "ProcessModelRunner"})
         assert arkestra._next_port == 18000
-        port = arkestra._alloc()
+        port = arkestra.worker_port("m1")
         assert port == 18000
 
     def test_incrementing_allocation(self):
-        """_alloc() increments sequentially."""
+        """worker_port() increments sequentially."""
         arkestra = _make_cm(runner_cfg={"default": "ProcessModelRunner"})
-        ports = [arkestra._alloc() for _ in range(4)]
+        ports = [arkestra.worker_port(f"m{i}") for i in range(4)]
         assert ports == [18000, 18001, 18002, 18003]
 
     def test_exhaustion_raises(self):
-        """_alloc() raises RuntimeError when pool is exhausted."""
+        """worker_port() raises RuntimeError when pool is exhausted."""
         arkestra = _make_cm(runner_cfg={"default": "ProcessModelRunner"})
         # pool = 4 ports (18000–18003)
-        ports = [arkestra._alloc() for _ in range(4)]
+        ports = [arkestra.worker_port(f"m{i}") for i in range(4)]
         assert ports == [18000, 18001, 18002, 18003]
         with pytest.raises(RuntimeError, match="Port range exceeded"):
-            arkestra._alloc()
+            arkestra.worker_port("exhausted")
 
     def test_shutdown_resets_port_counter(self):
         """shutdown() resets _next_port to models-start-port."""
         arkestra = _make_cm(runner_cfg={"default": "ProcessModelRunner"})
-        arkestra._alloc()  # consume one port → next is 18001
+        arkestra.worker_port("m1")  # consume one port → next is 18001
 
         class FakeRunner:
             async def shutdown(self):

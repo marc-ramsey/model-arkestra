@@ -87,14 +87,26 @@ class ModelArkestra:
                 self._global_log_buf.read_entries(max_lines=1)
 
     # ── port allocation (global) ───────────────────────────────────────
-    def _alloc(self) -> int:
+    def worker_port(self, model_name: str) -> int:
+        """Allocate a port for *model_name*.
+
+        Reuses the port from an existing STOPPED context (stop→restart),
+        otherwise allocates a fresh port from the pool.
+        """
+        # Check for existing stopped context — reuse its port to avoid
+        # exhausting the port pool on repeated stop/start cycles (the same model).
+        for runner in self._runners.values():
+            ctx = runner._models.get(model_name)
+            if ctx is not None and ctx.port is not None:
+                return ctx.port
+
         start_port = self._cm.data.get('models-start-port', 18000)
         max_ports = self._cm.data.get('model-ports', 32)
         end_port = start_port + max_ports - 1
 
         if self._next_port > end_port:
             raise RuntimeError(
-                f"Port range exceeded: {start_port}–{end_port}"  
+                f"Port range exceeded: {start_port}–{end_port}"
             )
 
         port = self._next_port
@@ -168,20 +180,6 @@ class ModelArkestra:
         except (FileNotFoundError, OSError):
             return False
     
-    def _get_existing_port(self, model_name: str) -> Optional[int]:
-        """Find the port from a stopped context for *model_name*, if one exists.
-
-        Returns the port number if the model has an existing STOPPED context,
-        or None if the model is new (never started) or only has RUNNING contexts.
-        This enables stop→restart to reuse the same port instead of allocating
-        a new one from the pool — prevents port exhaustion on repeated cycles.
-        """
-        for runner in self._runners.values():
-            ctx = runner._models.get(model_name)
-            if ctx is not None and ctx.port is not None:
-                return ctx.port
-        return None
-
     # ── ConfigManager delegation ───────────────────────────────────────
     @property
     def cm(self) -> ConfigManager:
@@ -438,12 +436,8 @@ class ModelArkestra:
             return await self._start_remote_model(model_name, inference_kwargs, be_cfg)
 
         # Allocate port if not explicitly provided.
-        # Check for existing stopped context first — reuse its port to avoid
-        # exhausting the port pool on repeated stop/start cycles (the same model).
         if port is None:
-            port = self._get_existing_port(model_name)
-            if port is None:
-                port = self._alloc()
+            port = self.worker_port(model_name)
 
         # runner= selects the transport layer
         if runner_type_override is not None:
