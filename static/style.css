@@ -295,16 +295,19 @@ body {
     margin-left: 4px;
 }
 .model-row {
-    display: flex;
-    align-items: center;
+    display: block;
     padding: 4px 6px;
     border-radius: var(--radius-sm);
     cursor: pointer;
     font-size: 12px;
     margin-bottom: 1px;
 }
+.model-name-bar {
+    display: flex;
+    align-items: center;
+}
 .model-row:hover { background: var(--surface-alt); }
-.model-row .model-config-panel { display: none; border-top: 1px solid var(--border); padding: 8px; }
+.model-row .model-config-panel { display: none; border-top: 1px solid var(--border); padding: 8px; margin-top: 4px; }
 .model-row.expanded .model-config-panel { display: block; }
 
 /* ── Edit Form ─────────────────────────────────────────────── */

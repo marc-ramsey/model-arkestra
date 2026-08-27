@@ -132,12 +132,14 @@ function buildAccordionItems() {
             const name = m.id;
             const statusClass = m.status ? normalizeStatus(m.status) : 'uncached';
             const sid = sanitizeId(name);
-            html += '<div class="model-row" id="sec-model-' + sid + '" data-model="' + name + '">'
-                + '  <span class="status-dot ' + statusClass + '" id="dot-' + sid + '"></span>'
-                + '  <span class="model-name">' + m.localId + '</span>'
-                + '  <div class="model-config-panel" id="body-' + sid + '">'
-                + '    <p class="placeholder-text">Click to load configuration…</p>'
+            html += '<div class="model-row" id="sec-model-' + sid + '" data-model="' + name + '">' 
+                + '  <div class="model-name-bar">'
+                + '    <span class="status-dot ' + statusClass + '" id="dot-' + sid + '"></span>'
+                + '    <span class="model-name">' + m.localId + '</span>'
                 + '  </div>'
+                + '  <div class="model-config-panel" id="body-' + sid + '">' 
+                + '    <p class="placeholder-text">Click to load configuration…</p>' 
+                + '  </div>' 
                 + '</div>';
         }
 
