@@ -213,18 +213,12 @@ class ArkestraServer:
         return None
 
     def _get_remote_base_url(self, model_name: str) -> Optional[str]:
-        """Return the base_url for a remote model, or None."""
-        model = self._arkestra.get_model(model_name)
-        if not model:
+        """Return the base-url for a remote cluster proxy, or None."""
+        try:
+            cluster_name, base_url, _local_id = self._arkestra.resolve_model_cluster_addr(model_name)
+        except ValueError:
             return None
-        backend_id = model.get("backend")
-        if not backend_id:
-            return None
-        backends_cfg = self._arkestra.cm.data.get("backends", {})
-        be = backends_cfg.get(str(backend_id), {})
-        if be.get("runner") == "remote" and "base_url" in be:
-            return str(be["base_url"]).rstrip("/")
-        return None
+        return str(base_url).rstrip("/") if base_url else None
 
     async def _proxy_stream(self, model_name: str, payload: Dict[str, Any], base_url: str) -> AsyncIterator[str]:
         """Proxy a streaming request to a remote worker and yield SSE lines."""
