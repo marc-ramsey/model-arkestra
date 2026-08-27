@@ -62,6 +62,8 @@ class ModelArkestra:
         self._runners: Dict[str, BaseModelRunner] = {}
         self._runner_kwargs = runner_kwargs
         self._build_runner_class_map()
+        # ── Cluster topology ───────────────────────────────────────
+        self._load_clusters()
         # Extract sources section for binary_downloader compatibility
         self._sources: Dict[str, Any] = self._backends_cfg.get("sources", {})
         # ── Global log buffer (single ring for all server-level events) ─
@@ -151,6 +153,48 @@ class ModelArkestra:
                     f"Backend '{backend_id}' configured but runtime not detected. {suggestion}"
                 )
         # CPU backends and unknown IDs pass by default
+
+    # ── cluster topology ───────────────────────────────────────────
+    def _load_clusters(self) -> None:
+        """Load managed arkestra clusters from config.
+
+        Config structure::
+
+            clusters:
+              local:                        # auto-created, no entry needed
+                base-url: http://localhost:9090
+                admin-key: secret          # optional
+              worker0:
+                base-url: http://worker0:8080
+                admin-key: secret
+        """
+        self._clusters: Dict[str, Dict[str, Any]] = {}
+
+        # Auto-create the local cluster
+        host = self.cm.data.get("host") or "0.0.0.0"
+        port = self.cm.data.get("admin-port", 9090)
+        local_key: str = self.cm.data.get("local-cluster-key", "local")
+        self._clusters[local_key] = {
+            "base-url": f"http://{host}:{port}",
+            "admin-key": (self._cm.data.get("env") or {}).get("ADMIN_KEY"),
+        }
+
+        # Parse remote clusters from YAML
+        raw_clusters = self._cm.data.get("clusters") or {}
+        if not isinstance(raw_clusters, dict):
+            return
+        for name, cfg in raw_clusters.items():
+            if not isinstance(cfg, dict):
+                continue
+            base_url = cfg.get("base-url", "")
+            if not base_url:
+                self.log(f"[config] skipping cluster '{name}': missing base-url", level="WARNING")
+                continue
+            # Strip trailing slash for consistency
+            cfg = dict(cfg)
+            if isinstance(base_url, str):
+                cfg["base-url"] = base_url.rstrip("/")
+            self._clusters[name] = cfg
 
     @staticmethod
     def _check_vulkan() -> bool:
