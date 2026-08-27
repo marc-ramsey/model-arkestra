@@ -636,9 +636,15 @@ def _resolve_backend(
     if model_backend:
         return str(model_backend)
 
-    global_default = cm.data.get("backends", {})
-    if isinstance(global_default, dict):
-        default_id = global_default.get("default")
+    # Check top-level flat config key: backend-default
+    flat_default = cm.data.get("backend-default")
+    if flat_default:
+        return str(flat_default)
+
+    # Nested backends.default key
+    backends_section = cm.data.get("backends", {})
+    if isinstance(backends_section, dict):
+        default_id = backends_section.get("default")
         if default_id:
             return str(default_id)
 
