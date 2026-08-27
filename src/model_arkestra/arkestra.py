@@ -209,11 +209,21 @@ class ModelArkestra:
         Returns ``(cluster_name, base_url|None, local_model_id)``.  For the
         local cluster ``base_url`` is None (use port pool / direct runner).
         For remote clusters it returns the target URL to proxy through.
+
+        Falls back to the legacy ``runner: remote`` backend config when a
+        ``/<model-id>`` prefix does not match any declared cluster.
         """
         cluster_name, local_id = self._parse_cluster_prefix(model_name)
         cfg = self._clusters.get(cluster_name)
         if cfg is None:
-            raise ValueError(f"Unknown cluster '{cluster_name}' for model '{model_name}'")
+            # Legacy fallback: check backends for runner=remote + base_url
+            backends_cfg = self._cm.data.get("backends", {})
+            be = backends_cfg.get(cluster_name, {})
+            if isinstance(be, dict) and be.get("runner") == "remote" and be.get("base_url"):
+                return cluster_name, str(be["base_url"]).rstrip("/"), local_id
+            raise ValueError(f"Unknown cluster '{cluster_name}' for model '{model_name}'. "
+                             f"Declare it in the 'clusters:' top-level key or add a backend "
+                             f"entry with runner='remote' and base_url.")
         base_url = cfg.get("base-url") if cluster_name != self._local_cluster_key else None
         return cluster_name, base_url, local_id
 

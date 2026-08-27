@@ -231,20 +231,25 @@ A request with `model: "gpt-4"` resolves to `"qwen3.5-4b"` automatically. If no 
 
 ### Remote Model Proxying
 
-When a configured model uses `runner: remote`, all inference requests are transparently proxied to the target worker:
+Federated clusters route models prefixed `<cluster>/<model-id>` transparently:
 
 ```yaml
+clusters:
+  gpu-server:
+    base-url: "http://192.168.1.42:18000"
+
 models:
-  gpu-worker/qwen3-4b:
+  gpu-server/qwen3-4b:
     checkpoint: unsloth/Qwen3-4B-GGUF:Q4_K_M
-    backend: gpu-worker
-backends:
-  gpu-worker:
-    runner: remote
-    base_url: "http://192.168.1.42:18000"
+    backend: rocm
 ```
 
-A request to `/v1/chat/completions` with `model: "gpu-worker/qwen3-4b"` is forwarded to `http://192.168.1.42:18000/v1/chat/completions`. Streaming responses are relayed as SSE chunks in real time. Non-streaming requests wait for the worker's response and return it as-is.
+A request to `/v1/chat/completions` with `model: "gpu-server/qwen3-4b"` is forwarded
+to the cluster's base-url. Streaming responses are relayed as SSE chunks in real time.
+Non-streaming requests wait for the worker's response and return it as-is.
+
+> **Legacy compatibility**: Models prefixed `<worker>/<model-id>` with a backend entry
+> having `runner: remote` + `base_url:` continue to work without a `clusters:` block.
 
 ## Request & Response Models
 

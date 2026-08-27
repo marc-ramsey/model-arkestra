@@ -242,8 +242,8 @@ defaults:
 | Key | Type | Description |
 |---|---|---|
 | `description` | str | Human-readable description shown in `list-backends`. |
-| `runner` | str | Runner type: `"process"`, `"podman"`, `"docker"`, `"container"`, or `"remote"`. Use `"container"` to defer to the top-level `container_type:` config value. |
-| `base_url` | str | (Remote only) URL of the target arkestra worker — e.g. `"http://192.168.1.42:18000"`. All inference and lifecycle calls proxy to this host. |
+| `runner` | str | Runner type: `"process"`, `"podman"`, `"docker"`, `"container"`, or `"remote"` (**legacy** — use `clusters:` top-level key for federation). Use `"container"` to defer to the top-level `container_type:` config value. |
+| `base_url` | str | (Legacy `runner: remote` only) URL of the target arkestra worker. Prefer the `clusters:` top-level key instead. |
 | `admin_key` | str | (Remote optional) API key forwarded as `x-admin-key` header to workers requiring authentication. If the target worker also proxies, forward its `admin_key` value here.
 | `source_ref` | str | Name of a source entry from the `sources:` section below. |
 | `args` | dict | Default CLI arguments merged into model args during startup. |
@@ -293,34 +293,36 @@ backends:
   default: my-avx512
 ```
 
-### Remote Federation (`runner: remote`)
+### Federated Clusters
 
-The `remote` runner type enables **distributed inference** — the master server proxies all inference and lifecycle commands to another arkestra worker. This is useful when you have a GPU-rich worker machine but want to manage everything from a central CPU-only host.
+The `clusters:` top-level key defines managed arkestra instances. Model names prefixed `<cluster>/<model-id>` route to the matching cluster:
 
 ```yaml
-# config.yaml (master host, no GPU needed)
+clusters:
+  local:                          # auto-created from server host/port
+    base-url: "http://127.0.0.1:18000"
+  gpu-server:
+    base-url: "http://192.168.1.42:18000"
+  cpu-worker:
+    base-url: "http://192.168.1.43:8080"
+
 models:
   gpu-server/gemma-4b:
     checkpoint: unsloth/gemma-4-E2B-it-GGUF:Q4_K_M
-    backend: remote-gpu-worker
-
-backends_section:  # or backends.yaml
-  remote-gpu-worker:
-    runner: remote
-    base_url: "http://192.168.1.42:18000"   # worker's admin port
-    admin_key: "my-secret"                    # if worker requires auth
+    backend: rocm
+  cpu-worker/whisper-large:
+    checkpoint: distil-whisper/distil-small.en
+    backend: cpu
 ```
 
 **How it works:**
-- The master server **never downloads, spawns, or allocates ports** for remote models.
-- `POST /admin/start/<model>` → proxies to `http://worker/v1/admin/models/{name}/start`
-- `POST /v1/chat/completions` with `model: "gpu-server/gemma"` → streams SSE from worker
-- Model names use the `<worker-name>/<model-id>` convention (e.g., `gpu-server/qwen3`) to identify which worker hosts each model.
+- The master **never downloads, spawns, or allocates ports** for remote-cluster models.
+- All requests proxy through the cluster's `base-url`.
+- Model names use `<cluster>/<model-id>` convention (e.g., `gpu-server/qwen3`) to identify routing.
+- Local cluster uses port pool for subprocesses; remote clusters proxy all traffic.
 
-**Important:**
-- The master does **not** auto-discover workers — each remote backend must be explicitly configured.
-- If the worker runs raw `llama-server` (no admin routes), start/stop become no-ops on the master side, but inference still proxies correctly via direct HTTP calls to the worker's `/v1/*` endpoints.
-- Administration of individual workers is done by pointing a browser directly to `http://<worker-ip>:18000/admin`.
+> **Legacy compatibility**: Models prefixed `<worker>/<model-id>` with a backend entry
+> having `runner: remote` + `base_url:` continue to work without a `clusters:` block.
 
 ---
 
