@@ -14,15 +14,10 @@ let runnerTypes      = [];          // runner types from /admin/models response
 
 // Log polling state
 let logPollTimer    = null;         // interval id for log polling
-let logLastSeq    = 0;            // server-provided sequence cursor for log polling
-let isChatStreaming  = false;       // true while a chat response is streaming
-
-// Streaming markdown accumulator — tokens buffered and re-parsed incrementally
-let _streamAcc    = '';               // accumulated raw text of current stream
-let _streamBubble = null;             // DOM element receiving the stream
+let logLastSeq     = 0;            // server-provided sequence cursor for log polling
 
 // ── 1.3 Fetch Helpers ─────────────────────────────────────
-function adminFetch(path, options = {}) {
+async function adminFetch(path, options = {}) {
     const headers = { ...options.headers };
     if (ADMIN_KEY) {
         headers['X-Admin-Key'] = ADMIN_KEY;
@@ -32,16 +27,15 @@ function adminFetch(path, options = {}) {
     // Remove Content-Type for GET (browser handles it)
     if (opts.method === 'GET') delete opts.headers['Content-Type'];
 
-    return fetch(`${BASE_URL}${path}`, opts).then(async r => {
-        const body = await r.text();
-        if (!r.ok) {
-            let detail;
-            try { detail = JSON.parse(body).detail || body; }
-            catch { detail = body; }
-            throw new Error(`[admin ${r.status}] ${detail}`);
-        }
-        return body ? JSON.parse(body) : null;
-    });
+    const r = await fetch(`${BASE_URL}${path}`, opts);
+    const body = await r.text();
+    if (!r.ok) {
+        let detail;
+        try { detail = JSON.parse(body).detail || body; }
+        catch { detail = body; }
+        throw new Error(`[admin ${r.status}] ${detail}`);
+    }
+    return body ? JSON.parse(body) : null;
 }
 
 function adminGet(path, params) {
@@ -553,6 +547,9 @@ function startLogPoll(modelName) {
 let chatHistory      = [];   // full conversation history for selected model
 let chatAbortCtrl    = null; // AbortController for active chat stream
 const CHAT_PARAMS_KEY = 'arkestra-chat-params';
+let isChatStreaming  = false;       // true while a chat response is streaming
+let _streamAcc      = '';           // accumulated raw text of current stream
+let _streamBubble   = null;         // DOM element receiving the stream
 
 // 6.1 Parameters Panel Toggle
 function toggleChatParams() {
