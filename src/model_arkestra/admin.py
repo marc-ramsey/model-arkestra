@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import copy
 import os
-import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -284,9 +283,6 @@ class ArkestraAdmin:
                 if self.server._server:
                     await self.server._server.shutdown()
                     print("[SHUTDOWN] uvicorn stopped.", flush=True)
-                else:
-                    # CLI mode — no Server object to tell, just exit
-                    sys.exit(0)
 
             task = asyncio.create_task(do_shutdown())
             if hasattr(self._app, "_shutdown_task"):
