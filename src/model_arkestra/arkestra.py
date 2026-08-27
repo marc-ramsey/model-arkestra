@@ -6,7 +6,6 @@ import shutil
 import subprocess
 import sys
 import yaml
-from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional, Set
 
@@ -74,14 +73,13 @@ class ModelArkestra:
 
     # ── port allocation (global) ───────────────────────────────────────
     def log(self, text: str, level: str = "INFO") -> None:
-        """Log a line — prints to terminal with ANSI colors, writes plain text to ring buffer."""
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        padded_level = f"{level:7s}"
-
-        # ANSI color codes for terminal output
+        """Log a line — prints to terminal with ANSI colors (uvicorn style), writes plain text to ring buffer."""
         _COLORS = {"INFO": "36", "WARNING": "33", "ERROR": "31", "DEBUG": "90"}
         color = _COLORS.get(level, "37")
-        colored_text = f"\033[{color}m{ts} {padded_level} \033[0m{text}"  # noqa: PLR2004
+
+        # Pad level + colon to 8 chars (matches uvicorn: "INFO:   ", "WARNING: ", etc.)
+        prefix = f"{level}:".ljust(8)
+        colored_text = f"\033[{color}m{prefix}\033[0m{text}"  # noqa: PLR2004
 
         print(colored_text, flush=True)
 
