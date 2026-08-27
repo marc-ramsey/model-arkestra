@@ -73,7 +73,8 @@ function parseClusterPrefix(id) {
 
 // Strip 'runnerstate.' prefix and lowercase for CSS class.
 function normalizeStatus(status) {
-    return status.replace('runnerstate.', '').toLowerCase();
+    if (typeof status === 'object' && status !== null) status = status.value || '';
+    return (status || '').replace('runnerstate.', '').toLowerCase();
 }
 
 // HTML-escape string — handles &, ", <, >.
@@ -96,6 +97,10 @@ function buildAccordionItems() {
     const wasExpanded = new Set(
         Array.from(container.querySelectorAll('.cluster-item:not(.collapsed), .accordion-item:not(.collapsed)'))
             .map(el => el.id)
+    );
+    const wasRowExpanded = new Set(
+        Array.from(container.querySelectorAll('.model-row.expanded'))
+            .map(el => el.dataset.model)
     );
 
     // Group models by cluster (strip prefix from model name)
@@ -130,20 +135,27 @@ function buildAccordionItems() {
             html += '<div class="model-row" id="sec-model-' + sid + '" data-model="' + name + '">'
                 + '  <span class="status-dot ' + statusClass + '" id="dot-' + sid + '"></span>'
                 + '  <span class="model-name">' + m.localId + '</span>'
-                + '</div>';
-            html += '  <div class="model-config-panel" id="body-' + sid + '">'
+                + '  <div class="model-config-panel" id="body-' + sid + '">'
                 + '    <p class="placeholder-text">Click to load configuration…</p>'
-                + '  </div>';
+                + '  </div>'
+                + '</div>';
         }
 
         html += '  </div></div>';
     }
     container.innerHTML = html;
 
-    // Restore previously-expanded items
+    // Restore expanded clusters and rows
     for (const id of wasExpanded) {
         const el = document.getElementById(id);
         if (el) el.classList.remove('collapsed');
+    }
+    for (const modelName of wasRowExpanded) {
+        const row = container.querySelector('[data-model="' + escapeHTML(modelName) + '"]');
+        if (row) {
+            row.classList.add('expanded');
+            populateModelPanel(modelName);
+        }
     }
 }
 
@@ -235,8 +247,10 @@ function populateRightDropdowns() {
 
 // ── 3. Per-model config panel on expand ────────────────────
 async function populateModelPanel(modelName) {
-    const bodyId = 'body-' + sanitizeId(modelName);
-    const panel = document.getElementById(bodyId);
+    // Find the model row by data-model attribute, then get its nested config panel
+    const row = document.querySelector('.model-row[data-model="' + escapeHTML(modelName) + '"]');
+    if (!row) return;
+    const panel = row.querySelector('.model-config-panel');
     if (!panel) return;
 
     try {
@@ -283,7 +297,7 @@ async function populateModelPanel(modelName) {
 
         // Args textarea
         html += '<div class="edit-field"><label for="mc-args-' + sanitizeId(modelName) + '">Args</label>';
-        html += '  <textarea id="mc-args-' + sanitizeId(modelName) + '" rows="2">' + escapeHTML(cfg.args || '') + '</textarea></div>';
+        html += '  <textarea id="mc-args-' + sanitizeId(modelName) + '" rows="2">' + escapeHTML(typeof cfg.args === 'object' ? JSON.stringify(cfg.args, null, 2) : (cfg.args || '')) + '</textarea></div>';
 
         // Capabilities chips
         const capsId = 'mc-caps-' + sanitizeId(modelName);
@@ -856,8 +870,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Model row expanded → show config panel + load config
         if (el.classList.contains('model-row')) {
+            const wasExpanded = el.classList.contains('expanded');
             el.classList.toggle('expanded', !wasCollapsed);
-            if (wasCollapsed) {
+            if (!wasExpanded) {
                 const modelName = el.dataset.model;
                 if (modelName) populateModelPanel(modelName);
             }

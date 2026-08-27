@@ -304,13 +304,8 @@ body {
     margin-bottom: 1px;
 }
 .model-row:hover { background: var(--surface-alt); }
-.model-row.expanded ~ .model-config-panel {
-    border-top: 1px solid var(--border);
-    display: block;
-}
-.cluster-models .model-config-panel {
-    display: none;
-}
+.model-row .model-config-panel { display: none; border-top: 1px solid var(--border); padding: 8px; }
+.model-row.expanded .model-config-panel { display: block; }
 
 /* ── Edit Form ─────────────────────────────────────────────── */
 .edit-form-grid {
