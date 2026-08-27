@@ -574,7 +574,7 @@ class ArkestraServer:
 
         latency_ms = round((time.monotonic() - t0) * 1000)
         tokens = len(content.split())
-        await self._arkestra._log(f"[action=req model={model_name} method=POST path=/v1/chat/completions status=200 latency_ms={latency_ms} tokens={tokens}]")
+        self._arkestra.log(f"[action=req model={model_name} method=POST path=/v1/chat/completions status=200 latency_ms={latency_ms} tokens={tokens}]")
 
         return Response(
             content=ChatCompletionResponse(
@@ -618,7 +618,7 @@ class ArkestraServer:
                 if "token" in event:
                     if not first_chunk_sent:
                         first_token_time = time.monotonic()
-                        await self._arkestra._log(f"[action=stream_start model={model_name} messages={msg_count}]")
+                        self._arkestra.log(f"[action=stream_start model={model_name} messages={msg_count}]")
                         first_chunk_sent = True
                     tokens_seen += 1
                     chunk = ChatCompletionStreamResponse(
@@ -643,18 +643,18 @@ class ArkestraServer:
                     yield _sse_format(chunk.model_dump())
                     # Send [DONE] marker
                     latency_ms = round((time.monotonic() - t0) * 1000)
-                    await self._arkestra._log(f"[action=stream_end model={model_name} duration_ms={latency_ms} tokens={tokens_seen}] status=ok")
+                    self._arkestra.log(f"[action=stream_end model={model_name} duration_ms={latency_ms} tokens={tokens_seen}] status=ok")
                     yield "data: [DONE]\n\n"
                     return
 
         except Exception as e:
             latency_ms = round((time.monotonic() - t0) * 1000)
-            await self._arkestra._log(f"[action=stream_end model={model_name} duration_ms={latency_ms} tokens={tokens_seen}] status=error")
+            self._arkestra.log(f"[action=stream_end model={model_name} duration_ms={latency_ms} tokens={tokens_seen}] status=error")
             raise HTTPException(status_code=503, detail=f"Stream error: {e}")
 
         if not first_chunk_sent:
             latency_ms = round((time.monotonic() - t0) * 1000)
-            await self._arkestra._log(f"[action=stream_end model={model_name} duration_ms={latency_ms} tokens={tokens_seen}] status=no_tokens")
+            self._arkestra.log(f"[action=stream_end model={model_name} duration_ms={latency_ms} tokens={tokens_seen}] status=no_tokens")
             # No tokens produced — send an empty final chunk
             chunk = ChatCompletionStreamResponse(
                 model=model_name,
@@ -674,7 +674,7 @@ class ArkestraServer:
 
         Sets ``self._server`` so the admin shutdown route can stop uvicorn cleanly.
         """
-        await self._arkestra._log(f"[action=start server port={self.port}]")
+        self._arkestra.log(f"[action=start server port={self.port}]")
 
         app = self.get_app()
         config = uvicorn.Config(app, host="0.0.0.0", port=self.port, log_level="info")
@@ -684,7 +684,7 @@ class ArkestraServer:
 
     async def shutdown(self) -> None:
         """Stop the proxy server and shut down all models."""
-        await self._arkestra._log(f"[action=shutdown server]")
+        self._arkestra.log(f"[action=shutdown server]")
         if self._server:
             await self._server.shutdown()
         await self._arkestra.shutdown()

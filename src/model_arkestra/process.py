@@ -79,10 +79,8 @@ class ProcessModelRunner(BaseModelRunner):
             preexec_fn=os.setsid
         )
 
-        print(f"[PROCESS] Model {ctx.name} launched: pid={ctx.process.pid} binary={binary_path} port={ctx.port}", flush=True)
         if self.arkestra:
-            asyncio.create_task(self.arkestra._log(
-                f"[launch] model={ctx.name} pid={ctx.process.pid}"))
+            self.arkestra.log(f"[launch] model={ctx.name} pid={ctx.process.pid} binary={binary_path} port={ctx.port}")
 
         # Start log capture: feed stdout/stderr lines into ctx ring buffer
         async def _read_stream(stream: asyncio.Stream, model_name: str) -> None:
@@ -116,17 +114,16 @@ class ProcessModelRunner(BaseModelRunner):
         """Kill model process group using mandated strategy: SIGHUP → wait 20s → SIGKILL."""
         if ctx.process and ctx.process.returncode is None:
             pid = ctx.process.pid
-            print(f"[PROCESS] Stopping model {ctx.name} (pid={pid}): sending SIGHUP", flush=True)
+            if self.arkestra:
+                self.arkestra.log(f"[stop] model={ctx.name} pid={pid} SIGHUP")
             try:
                 os.killpg(ctx.process.pid, signal.SIGHUP)
                 await asyncio.wait_for(ctx.process.wait(), timeout=20.0)
                 return
             except (asyncio.TimeoutError, ProcessLookupError):
                 pass
-            print(f"[PROCESS] Model {ctx.name} did not exit after SIGHUP — sending SIGKILL", flush=True)
             if self.arkestra:
-                asyncio.create_task(self.arkestra._log(
-                    f"[kill] model={ctx.name} pid={pid} SIGKILL"))
+                self.arkestra.log(f"[kill] model={ctx.name} pid={pid} SIGKILL", level="WARNING")
             try:
                 os.killpg(ctx.process.pid, signal.SIGKILL)
                 await ctx.process.wait()

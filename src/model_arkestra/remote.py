@@ -91,10 +91,8 @@ class RemoteModelRunner(BaseModelRunner):
                 async with session.post(url, json=body, headers=headers, timeout=30) as resp:
                     if resp.status == 404:
                         # Worker doesn't have admin routes — likely raw llama-server.
-                        print(f"[REMOTE] Model {ctx.name} on {ctx._remote_base_url} (no admin route, passing through)", flush=True)
                         if self.arkestra:
-                            asyncio.create_task(self.arkestra._log(
-                                f"[start] model={ctx.name} remote={ctx._remote_base_url} passthrough"))
+                            self.arkestra.log(f"[start] model={ctx.name} remote={ctx._remote_base_url} passthrough")
                         ctx._remote_start_ack = True  # assume model will be loaded externally
                         return
                     if resp.status != 200:
@@ -111,10 +109,8 @@ class RemoteModelRunner(BaseModelRunner):
                                 data = await resp.json()
                                 status = data.get("status")
                                 if status in ("ok", "loaded"):
-                                    print(f"[REMOTE] Model {ctx.name} started on {ctx._remote_base_url}", flush=True)
                                     if self.arkestra:
-                                        asyncio.create_task(self.arkestra._log(
-                                            f"[start] model={ctx.name} remote={ctx._remote_base_url}"))
+                                        self.arkestra.log(f"[start] model={ctx.name} remote={ctx._remote_base_url}")
                                     ctx._remote_start_ack = True
                                     return
                     except (aiohttp.ClientError, asyncio.TimeoutError):

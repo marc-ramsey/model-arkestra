@@ -407,10 +407,8 @@ class BaseModelRunner(ABC):
                 os.makedirs(ctx._cache_dir, exist_ok=True)
             self._models[model_name] = ctx
             ctx.state = RunnerState.LOADING
-            print(f"[RUNNER:{type(self).__name__}] Starting model {model_name} on port {eff_port} (backend={effective_backend})", flush=True)
             if self.arkestra:
-                asyncio.create_task(self.arkestra._log(
-                    f"[start] model={model_name} port={eff_port} backend={effective_backend}"))
+                self.arkestra.log(f"[start] model={model_name} port={eff_port} backend={effective_backend}")
 
         await self._ensure_port_available(eff_port)
 
@@ -469,9 +467,8 @@ class BaseModelRunner(ABC):
                 f"within {self.ready_timeout}s"
             )
 
-        print(f"[RUNNER:{type(self).__name__}] Model {model_name} ready on port {eff_port}", flush=True)
         if self.arkestra:
-            asyncio.create_task(self.arkestra._log(f"[start] model={model_name} READY"))
+            self.arkestra.log(f"[ready] model={model_name} port={eff_port}")
         await asyncio.sleep(self.warmup_delay)
 
         ctx.state = RunnerState.RUNNING
@@ -490,17 +487,15 @@ class BaseModelRunner(ABC):
             if hasattr(self, '_cancel_log_task'):
                 self._cancel_log_task(ctx)
         ctx.state = RunnerState.STOPPING
-        print(f"[RUNNER:{type(self).__name__}] Stopping model {ctx.name} (port={ctx.port})", flush=True)
         if self.arkestra:
-            asyncio.create_task(self.arkestra._log(f"[stop] model={ctx.name} port={ctx.port}"))
+            self.arkestra.log(f"[stop] model={ctx.name} port={ctx.port}")
         await self._stop_model_process(ctx)
         # Release port but keep entry for restart-on-start semantics
         if hasattr(ctx, 'port'):
             await self._release_port(ctx.port)
         ctx.state = RunnerState.STOPPED
-        print(f"[RUNNER:{type(self).__name__}] Model {ctx.name} stopped", flush=True)
         if self.arkestra:
-            asyncio.create_task(self.arkestra._log(f"[stop] model={ctx.name} DONE"))
+            self.arkestra.log(f"[stop] model={ctx.name} DONE")
 
     async def stop_all(self) -> None:
         """Stop all model processes, leaving entries in STOPPED state for restart-on-start."""

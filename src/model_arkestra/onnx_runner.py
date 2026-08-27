@@ -103,10 +103,8 @@ class OnnxRunner(BaseModelRunner):  # type: ignore[name-defined]
         ctx.inference_type = inference_type
         ctx.model_path = str(resolved_path)
 
-        print(f"[ONNX] Model {ctx.name} loaded: provider={provider_list}", flush=True)
         if self.arkestra:
-            asyncio.create_task(self.arkestra._log(
-                f"[start] model={ctx.name} onnx providers={provider_list}"))
+            self.arkestra.log(f"[start] model={ctx.name} onnx providers={provider_list}")
 
         # Load tokenizer for whisper/embedding models if configured
         tokenizer_path = model_data.get("tokenizer") or str(model_data.get("path", ""))
@@ -121,9 +119,8 @@ class OnnxRunner(BaseModelRunner):  # type: ignore[name-defined]
 
     async def _stop_model_process(self, ctx: "model_arkestra.types._ModelContext") -> None:
         """Unload ONNX session from memory."""
-        print(f"[ONNX] Unloading model {ctx.name}", flush=True)
         if self.arkestra:
-            asyncio.create_task(self.arkestra._log(f"[stop] model={ctx.name} unloaded"))
+            self.arkestra.log(f"[stop] model={ctx.name} unloaded")
         if hasattr(ctx, 'onnx_session'):
             delattr(ctx, 'onnx_session')
         if hasattr(ctx, 'onnx_tokenizer'):

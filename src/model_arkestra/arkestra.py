@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import yaml
+from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional, Set
 
@@ -72,8 +73,19 @@ class ModelArkestra:
         self._validate_backend_runtime()
 
     # ── port allocation (global) ───────────────────────────────────────
-    async def _log(self, text: str) -> None:
-        """Append a line to the global log buffer."""
+    def log(self, text: str, level: str = "INFO") -> None:
+        """Log a line — prints to terminal with ANSI colors, writes plain text to ring buffer."""
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        padded_level = f"{level:7s}"
+
+        # ANSI color codes for terminal output
+        _COLORS = {"INFO": "36", "WARNING": "33", "ERROR": "31", "DEBUG": "90"}
+        color = _COLORS.get(level, "37")
+        colored_text = f"\033[{color}m{ts} {padded_level} \033[0m{text}"  # noqa: PLR2004
+
+        print(colored_text, flush=True)
+
+        # Store plain text in ring buffer (no ANSI codes)
         self._global_log_seq += 1
         if not text.endswith("\n"):
             text = text + "\n"
@@ -273,7 +285,7 @@ class ModelArkestra:
                     f"Unknown runner type '{runner_type}'. "
                     f"Available: {list(self._runner_classes.keys())}"
                 )
-            self._runners[key] = cls(self._cm, **self._runner_kwargs)
+            self._runners[key] = cls(self._cm, arkestra=self, **self._runner_kwargs)
         return self._runners[key]
 
     # ── backward-compat shims (delegate to unified lazy factory) ─────────
@@ -445,7 +457,7 @@ class ModelArkestra:
             ctx = inst._models[model_name]
             ctx.runner_type = runner_type_override
             ctx._runner = inst
-            await self._log(f"[action=start model={model_name} port={port}]")
+            self.log(f"[action=start model={model_name} port={port}]")
             return
 
         # Resolve backend + runner type from config
@@ -466,7 +478,7 @@ class ModelArkestra:
         ctx = runner._models[model_name]
         ctx.runner_type = resolved_runner
         ctx._runner = runner
-        await self._log(f"[action=start model={model_name} port={port}]")
+        self.log(f"[action=start model={model_name} port={port}]")
 
     async def _start_onnx_model(
         self, model_name: str, inference_kwargs: Dict[str, Any],
@@ -536,7 +548,7 @@ class ModelArkestra:
         await runner.start(model_name, port=ctx.port, backend="remote", **inference_kwargs)
         ctx.runner_type = "remote"
         ctx._runner = runner  # noqa: SLF001
-        await self._log(f"[action=start model={model_name} remote={base_url}]")
+        self.log(f"[action=start model={model_name} remote={base_url}]")
 
     async def embed(self, model_name: str, text: str) -> Dict[str, Any]:
         """Encode text → embedding vector via ONNX model.
@@ -567,7 +579,7 @@ class ModelArkestra:
         """Stop the named model."""
         for r in self._runners.values():
             if model_name in r._models:  # noqa: SLF001
-                await self._log(f"[action=stop model={model_name}]")
+                self.log(f"[action=stop model={model_name}]")
                 try:
                     await r.stop()
                 except Exception:
@@ -658,7 +670,7 @@ class ModelArkestra:
 
     async def shutdown(self) -> None:
         """Full teardown — stop models, clear runners, reset port allocator."""
-        await self._log(f"[action=shutdown]")
+        self.log(f"[action=shutdown]")
         for r in self._runners.values():
             await r.shutdown()
         self._runners.clear()

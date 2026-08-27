@@ -88,7 +88,7 @@ def test_model_arkestra_respects_config_lines():
 
 
 def test_model_arkestra_log_increments_seq():
-    """Each call to _log increments the sequence number."""
+    """Each call to log increments the sequence number."""
     from llm_config_manager.config_manager import ConfigManager
 
     arkestra = ModelArkestra.__new__(ModelArkestra)
@@ -96,29 +96,21 @@ def test_model_arkestra_log_increments_seq():
     arkestra._global_log_buf = UnicodeRingBuffer(100_000)
     arkestra._global_log_seq = 0
 
-    import asyncio
-    loop = asyncio.new_event_loop()
-    try:
-        async def _test():
-            await arkestra._log("first line")
-            assert arkestra._global_log_seq == 1
+    arkestra.log("first line")
+    assert arkestra._global_log_seq == 1
 
-            await arkestra._log("second line")
-            assert arkestra._global_log_seq == 2
+    arkestra.log("second line")
+    assert arkestra._global_log_seq == 2
 
-            # Read all — read_entries consumes as it goes
-            entries = arkestra._global_log_buf.read_entries(max_lines=10)
-            assert len(entries) == 2
-            assert entries[0] == (1, "first line")
-            assert entries[1] == (2, "second line")
-
-        loop.run_until_complete(_test())
-    finally:
-        loop.close()
+    # Read all — read_entries consumes as it goes
+    entries = arkestra._global_log_buf.read_entries(max_lines=10)
+    assert len(entries) == 2
+    assert entries[0] == (1, "first line")
+    assert entries[1] == (2, "second line")
 
 
 def test_model_arkestra_log_needs_newline():
-    """_log appends a newline if the text doesn't end with one."""
+    """log appends a newline if the text doesn't end with one."""
     from llm_config_manager.config_manager import ConfigManager
 
     arkestra = ModelArkestra.__new__(ModelArkestra)
@@ -126,19 +118,11 @@ def test_model_arkestra_log_needs_newline():
     arkestra._global_log_buf = UnicodeRingBuffer(100_000)
     arkestra._global_log_seq = 0
 
-    import asyncio
-    loop = asyncio.new_event_loop()
-    try:
-        async def _test():
-            await arkestra._log("no newline at end")
-            entries = arkestra._global_log_buf.read_entries(max_lines=10)
-            assert len(entries) == 1
-            # text should have trailing newline stripped by read_entries
-            assert entries[0][1] == "no newline at end"
-
-        loop.run_until_complete(_test())
-    finally:
-        loop.close()
+    arkestra.log("no newline at end")
+    entries = arkestra._global_log_buf.read_entries(max_lines=10)
+    assert len(entries) == 1
+    # text should have trailing newline stripped by read_entries
+    assert entries[0][1] == "no newline at end"
 
 
 # ── Admin endpoint tests ──────────────────────────────────────────────────
