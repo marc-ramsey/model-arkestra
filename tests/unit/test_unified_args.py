@@ -121,7 +121,7 @@ class TestInferenceKwargsMerge:
         assert "--flash-attn" in result[0]
         idx = result[0].index("--flash-attn")
         if idx + 1 < len(result[0]):
-            assert result[idx + 1] != "True"
+            assert result[0][idx + 1] != "True"
 
     def test_bool_kwarg_false_is_omitted(self, cm):
         result = build_model_args(

@@ -607,6 +607,10 @@ def build_model_args(
     # Return merged list: defaults → backend → model
     combined = default_arg_list + backend_arg_list + model_arg_list
 
+    # Always inject port — overrides any configured value, ensures subprocess uses allocated port
+    if env_vars and "PORT" in env_vars:
+        combined.extend(["--port", str(env_vars["PORT"])])
+
     # Apply per-backend hf_flag override (e.g. "--hf" for some container images)
     hf_flag = (backend or {}).get("hf_flag")
     if hf_flag:
