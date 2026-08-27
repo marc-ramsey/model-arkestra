@@ -1,10 +1,10 @@
 # Model Arkestra
 
-Model Arkestra manages your home-lab GPUs and cloud model access by running LLM inference engines on demand. Define models in a YAML config file — each one maps to a backend (ROCm, Vulkan RADV, CUDA, CPU) and a runner type (process or container). When you start a model, Arkestra allocates an available port and launches the engine via the configured runner — usually [llama.cpp](https://github.com/ggerganov/llama.cpp), optionally within a container. Remote clusters let you administer multiple servers from one console.
+Model Arkestra manages your home-lab GPUs and cloud model access by running LLM inference engines on demand. Define models in a YAML config file — each one maps to a backend (ROCm, Vulkan RADV, CUDA, CPU) and a runner type (process or container). When you start a model, Arkestra allocates an available port and launches the engine via the configured runner — usually [llama.cpp](https://github.com/ggml-org/llama.cpp), optionally within a container. Remote clusters let you administer multiple servers from one console.
 
 A companion ONNX runner handles embeddings, Whisper transcription, and TTS in memory — no ports, no subprocesses. The admin dashboard at `http://localhost:<port>/` shows model status, lets you edit configs, chat via SSE streaming, and manage the lifecycle of everything from a single page. OpenAI-compatible endpoints (`/v1/chat/completions`, `/v1/embeddings`, `/v1/audio/*`) make it drop-in compatible with any client.
 
-For more developed applications with similar function, see [llama-swap](https://github.com/sgl-project/llama-swap) and [Lemonade](https://github.com/ollama/lemonade), as well as [llama-server router mode](https://github.com/ggerganov/llama.cpp/blob/master/examples/server/README.md).
+For more developed applications with similar function, see [llama-swap](https://github.com/mostlygeek/llama-swap) and [Lemonade](https://lemonade-server.ai/), as well as [llama-server router mode](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md#using-multiple-models).
 
 ## Get Started
 
