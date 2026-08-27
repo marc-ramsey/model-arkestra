@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import aiohttp
 import copy
+import mimetypes
 import os
 import sys
 from pathlib import Path
@@ -15,7 +16,7 @@ from typing import Any, Dict, Optional
 
 try:
     from fastapi import FastAPI, HTTPException, Request
-    from fastapi.responses import JSONResponse, HTMLResponse
+    from fastapi.responses import JSONResponse, HTMLResponse, Response
 except ImportError:
     raise RuntimeError("model_arkestra.admin requires fastapi")
 
@@ -85,6 +86,7 @@ class ArkestraAdmin:
         if self._installed:
             return self
         self._add_root_route()
+        self._add_static_route()
         self._add_auth_middleware()
         self._add_clusters_route()
         self._add_models_route()
@@ -158,6 +160,17 @@ class ArkestraAdmin:
         async def root():
             return HTMLResponse(content, media_type="text/html",
                                 headers={"Cache-Control": "no-store"})
+
+    def _add_static_route(self) -> None:
+        static_dir = Path(__file__).parent.parent.parent / "static"
+
+        @self._app.get("/static/{path:path}")
+        async def serve_static(path: str):
+            file_path = static_dir / path
+            if not file_path.is_file():
+                raise HTTPException(404, "Not found")
+            mime = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
+            return Response(content=file_path.read_bytes(), media_type=mime)
 
     def _add_auth_middleware(self) -> None:
         # Always install the middleware (plumbing stays in place even when no key is set).
