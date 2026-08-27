@@ -76,7 +76,7 @@ def _build_container_cmd(
         binary_dir = os.path.dirname(binary_path) or binary_dir
 
     # Resolve host HF cache directory for volume mount.
-    cache_path = runner._arkestra.resolve_config("HF_HUB_CACHE")
+    cache_path = runner.arkestra.resolve_config("HF_HUB_CACHE")
     if not cache_path:
         cache_path = str(default_cache_root())
     cache_path = Path(cache_path).expanduser()
