@@ -306,6 +306,7 @@ body {
 .model-row:hover { background: var(--surface-alt); }
 .model-row.expanded ~ .model-config-panel {
     border-top: 1px solid var(--border);
+    display: block;
 }
 .cluster-models .model-config-panel {
     display: none;
