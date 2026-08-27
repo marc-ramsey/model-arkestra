@@ -3,7 +3,7 @@ const ADMIN_KEY    = document.querySelector('meta[name="arkestra-admin-key"]')?.
 const BASE_URL     = window.location.origin;
 const POLL_INTERVAL = 2000;            // ms — settable constant for model status polling
 
-// ── 1.2 Global State ──────────────────────────────────────
+// ── 1.1 Global State ──────────────────────────────────────
 let modelsCache      = [];          // from GET /admin/models
 let clusterMap       = {};          // { name: { base_url, healthy } }
 let modelStates      = {};          // { modelName: { config, snapshot, dirty, expanded } }
@@ -69,7 +69,12 @@ function adminPut(path, body) {
     });
 }
 
-// ── 4. Model List — fetch + render accordion items ───────────────
+// ── 1.4 ID Sanitization ─────────────────────────────────────
+function sanitizeId(name) {
+    return name.replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+// ── 2. Model List — fetch + render accordion items ───────────
 function updateModelCount() {
     const badge = document.getElementById('model-count');
     if (badge) badge.textContent = '(' + modelsCache.length + ' models)';
@@ -108,7 +113,7 @@ function buildAccordionItems() {
     for (const [clusterName, clusterModels] of Object.entries(modelsByCluster)) {
         const clustCfg = clusterMap[clusterName] || { healthy: true };
         const healthClass = clustCfg.healthy ? '' : ' unhealthy';
-        const stateKey = 'sec-cluster-' + clusterName.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const stateKey = 'sec-cluster-' + sanitizeId(clusterName);
         const isExpanded = wasExpanded.has(stateKey);
 
         html += '<div class="cluster-item collapsed" id="' + stateKey + '">';
@@ -122,12 +127,12 @@ function buildAccordionItems() {
         for (const m of clusterModels) {
             const name = m.id;
             const statusClass = m.status ? m.status.replace('runnerstate.', '').toLowerCase() : 'uncached';
-            const stateKeyM = 'sec-model-' + name.replace(/[^a-zA-Z0-9_-]/g, '_');
+            const stateKeyM = 'sec-model-' + sanitizeId(name);
             html += '<div class="model-row" id="' + stateKeyM + '" data-model="' + name + '">'
-                + '  <span class="status-dot ' + statusClass + '" id="dot-' + name.replace(/[^a-zA-Z0-9_-]/g, '_') + '"></span>'
+                + '  <span class="status-dot ' + statusClass + '" id="dot-' + sanitizeId(name) + '"></span>'
                 + '  <span class="model-name">' + (name.includes('/') ? m.localId : name) + '</span>'
                 + '</div>';
-            html += '  <div class="model-config-panel" id="body-' + name.replace(/[^a-zA-Z0-9_-]/g, '_') + '">'
+            html += '  <div class="model-config-panel" id="body-' + sanitizeId(name) + '">'
                 + '    <p class="placeholder-text">Click to load configuration…</p>'
                 + '  </div>';
         }
@@ -195,7 +200,7 @@ async function refreshModels() {
             // Just update status dots in place
             for (const m of modelsCache) {
                 const name = m.id;
-                const dotId = 'dot-' + name.replace(/[^a-zA-Z0-9_-]/g, '_');
+                const dotId = 'dot-' + sanitizeId(name);
                 const dot = document.getElementById(dotId);
                 if (dot && m.status) {
                     const statusClass = m.status.replace('runnerstate.', '').toLowerCase();
@@ -229,9 +234,9 @@ function populateRightDropdowns() {
     }
 }
 
-// ── 5. Per-model config panel on expand ─────────────────────
+// ── 3. Per-model config panel on expand ────────────────────
 async function populateModelPanel(modelName) {
-    const bodyId = 'body-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const bodyId = 'body-' + sanitizeId(modelName);
     const panel = document.getElementById(bodyId);
     if (!panel) return;
 
@@ -249,11 +254,11 @@ async function populateModelPanel(modelName) {
         let html = '';
 
         // Checkpoint field
-        html += '<div class="edit-field"><label for="mc-checkpoint-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_') + '">Checkpoint</label>';
-        html += '  <input type="text" id="mc-checkpoint-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_') + '" value="' + escapeAttr(cfg.checkpoint || '') + '"></div>';
+        html += '<div class="edit-field"><label for="mc-checkpoint-' + sanitizeId(modelName) + '">Checkpoint</label>';
+        html += '  <input type="text" id="mc-checkpoint-' + sanitizeId(modelName) + '" value="' + escapeAttr(cfg.checkpoint || '') + '"></div>';
 
         // Backend select
-        const backendSelId = 'mc-backend-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const backendSelId = 'mc-backend-' + sanitizeId(modelName);
         html += '<div class="edit-field"><label for="' + backendSelId + '">Backend</label>';
         html += '  <select id="' + backendSelId + '">';
         html += '    <option value="">(default)</option>';
@@ -266,7 +271,7 @@ async function populateModelPanel(modelName) {
         html += '  </select></div>';
 
         // Runner select
-        const runnerSelId = 'mc-runner-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const runnerSelId = 'mc-runner-' + sanitizeId(modelName);
         html += '<div class="edit-field"><label for="' + runnerSelId + '">Runner</label>';
         html += '  <select id="' + runnerSelId + '">';
         html += '    <option value="">(auto)</option>';
@@ -278,11 +283,11 @@ async function populateModelPanel(modelName) {
         html += '  </select></div>';
 
         // Args textarea
-        html += '<div class="edit-field"><label for="mc-args-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_') + '">Args</label>';
-        html += '  <textarea id="mc-args-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_') + '" rows="2">' + escapeHtml(cfg.args || '') + '</textarea></div>';
+        html += '<div class="edit-field"><label for="mc-args-' + sanitizeId(modelName) + '">Args</label>';
+        html += '  <textarea id="mc-args-' + sanitizeId(modelName) + '" rows="2">' + escapeHtml(cfg.args || '') + '</textarea></div>';
 
         // Capabilities chips
-        const capsId = 'mc-caps-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const capsId = 'mc-caps-' + sanitizeId(modelName);
         html += '<div class="edit-field"><label>Capabilities</label><div class="capabilities-list" id="' + capsId + '">';
         const selectedCaps = new Set(cfg.capabilities || allCaps);
         for (const c of allCaps) {
@@ -291,12 +296,12 @@ async function populateModelPanel(modelName) {
         html += '</div></div>';
 
         // Log buffer size
-        html += '<div class="edit-field"><label for="mc-log-buffer-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_') + '">Log Buffer Size</label>';
-        html += '  <input type="number" id="mc-log-buffer-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_') + '" min="50" max="10000" step="50" value="' + (cfg.max_log_lines || 500) + '"></div>';
+        html += '<div class="edit-field"><label for="mc-log-buffer-' + sanitizeId(modelName) + '">Log Buffer Size</label>';
+        html += '  <input type="number" id="mc-log-buffer-' + sanitizeId(modelName) + '" min="50" max="10000" step="50" value="' + (cfg.max_log_lines || 500) + '"></div>';
 
         // Action buttons
         html += '<div class="model-actions">';
-        const btnId = (id) => 'mc-' + id + '-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const btnId = (id) => 'mc-' + id + '-' + sanitizeId(modelName);
         html += '  <button type="button" title="Reset config to server value" data-model="' + escapeAttr(modelName) + '" data-action="reset" id="' + btnId('reset') + '">↺</button>';
         html += '  <button type="button" title="Stop model runner" data-model="' + escapeAttr(modelName) + '" data-action="stop" id="' + btnId('stop') + '" class="btn-danger">⏹</button>';
         html += '  <button type="button" title="Start/Restart with current config" data-model="' + escapeAttr(modelName) + '" data-action="start" id="' + btnId('start') + '" class="btn-success">▶</button>';
@@ -342,7 +347,7 @@ async function populateModelPanel(modelName) {
 
 // Helper: get values from a model config panel
 function getModelFormValues(modelName) {
-    const prefix = modelName.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const prefix = sanitizeId(modelName);
     return {
         checkpoint: document.getElementById('mc-checkpoint-' + prefix)?.value || '',
         backend: (document.getElementById('mc-backend-' + prefix)?.value) || undefined,
@@ -353,7 +358,7 @@ function getModelFormValues(modelName) {
 }
 
 function getModelCapabilities(modelName) {
-    const prefix = modelName.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const prefix = sanitizeId(modelName);
     const chips = document.querySelectorAll('#mc-caps-' + prefix + ' .capability-chip.active');
     return Array.from(chips).map(c => c.dataset.cap);
 }
@@ -373,7 +378,7 @@ function maybeUpdateDirty(modelName) {
         JSON.stringify(caps.sort()) !== JSON.stringify((snap.capabilities || snap.allCaps || ['chat']).sort())
     );
     modelStates[modelName].dirty = isDirty;
-    const btn = document.getElementById('mc-save-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_'));
+    const btn = document.getElementById('mc-save-' + sanitizeId(modelName));
     if (btn) btn.disabled = !isDirty;
 }
 
@@ -385,7 +390,7 @@ async function saveModelConfig(modelName) {
         await adminPut('/admin/config/' + encodeURIComponent(modelName), body);
         modelStates[modelName].snapshot = JSON.parse(JSON.stringify(body));
         modelStates[modelName].dirty = false;
-        const btn = document.getElementById('mc-save-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_'));
+        const btn = document.getElementById('mc-save-' + sanitizeId(modelName));
         if (btn) btn.disabled = true;
         refreshModels();
     } catch (e) {
@@ -408,59 +413,31 @@ async function resetModelConfig(modelName) {
     }
 }
 
-// Action: Start model
-async function startModel(modelName) {
-    const btn = document.getElementById('mc-start-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_'));
+// ── 4.5 Model Actions ────────────────────────────────────────
+async function modelAction(modelName, action) {
+    const btn = document.getElementById('mc-' + action + '-' + sanitizeId(modelName));
     if (!btn) return;
+
     const origDisabled = btn.disabled;
     btn.disabled = true;
 
-    const body = getModelFormValues(modelName);
-    body.capabilities = getModelCapabilities(modelName);
-
     try {
-        await adminPost('/admin/start/' + encodeURIComponent(modelName), body);
+        let body = {};
+        if (action === 'start') {
+            body = { ...getModelFormValues(modelName), capabilities: getModelCapabilities(modelName) };
+        }
+        await adminPost('/admin/' + action + '/' + encodeURIComponent(modelName), body);
         refreshModels();
     } catch (e) {
-        console.error('[admin] start failed for ' + modelName + ':', e.message);
+        console.error('[admin] ' + action + ' failed for ' + modelName + ':', e.message);
     } finally {
         btn.disabled = origDisabled;
     }
 }
 
-// Action: Stop model
-async function stopModel(modelName) {
-    const btn = document.getElementById('mc-stop-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_'));
-    if (!btn) return;
-    const origDisabled = btn.disabled;
-    btn.disabled = true;
-
-    try {
-        await adminPost('/admin/stop/' + encodeURIComponent(modelName));
-        refreshModels();
-    } catch (e) {
-        console.error('[admin] stop failed for ' + modelName + ':', e.message);
-    } finally {
-        btn.disabled = origDisabled;
-    }
-}
-
-// Action: Eject model
-async function ejectModel(modelName) {
-    const btn = document.getElementById('mc-eject-' + modelName.replace(/[^a-zA-Z0-9_-]/g, '_'));
-    if (!btn) return;
-    const origDisabled = btn.disabled;
-    btn.disabled = true;
-
-    try {
-        await adminPost('/admin/eject/' + encodeURIComponent(modelName));
-        refreshModels();
-    } catch (e) {
-        console.error('[admin] eject failed for ' + modelName + ':', e.message);
-    } finally {
-        btn.disabled = origDisabled;
-    }
-}
+async function startModel(modelName) { await modelAction(modelName, 'start'); }
+async function stopModel(modelName)  { await modelAction(modelName, 'stop'); }
+async function ejectModel(modelName) { await modelAction(modelName, 'eject'); }
 
 // HTML escaping helpers
 function escapeHtml(str) {
@@ -472,7 +449,7 @@ function escapeAttr(str) {
     return (str || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// ── 2.3 Model Selection ───────────────────────────────────
+// ── 4. Model Selection ────────────────────────────────────
 async function selectModel(name) {
     stopChatStream();
     clearChatHistory();
@@ -491,7 +468,11 @@ async function selectModel(name) {
     }
 }
 
-// ── 5. Logs pane functions ────────────────────────────────
+// ── 5. Logs Pane ───────────────────────────────────────────
+function logUrl(modelName) {
+    return modelName === '*' ? '/admin/logs' : '/admin/log/' + encodeURIComponent(modelName);
+}
+
 function stopLogPoll() {
     if (logPollTimer) {
         clearInterval(logPollTimer);
@@ -516,8 +497,7 @@ async function loadLogSnapshot(modelName) {
     }
 
     try {
-        const url = modelName === '*' ? '/admin/logs' : '/admin/log/' + encodeURIComponent(modelName);
-        const data = await adminGet(url, { lines: 200 });
+        const data = await adminGet(logUrl(modelName), { lines: 200 });
         const lines = data?.lines ?? [];
         logLastSeq = data.since ?? data.seq ?? 0;
 
@@ -557,21 +537,14 @@ function startLogPoll(modelName) {
     stopLogPoll();
     const pollOne = async () => {
         try {
-            // On first call (logLastSeq == 0), do a snapshot fetch
-            if (logLastSeq === 0) {
-                const url = modelName === '*' ? '/admin/logs' : '/admin/log/' + encodeURIComponent(modelName);
-                const data = await adminGet(url, { lines: 200 });
-                logLastSeq = data.since ?? data.seq ?? 0;
-                const newEntries = data?.lines ?? [];
-                if (newEntries.length > 0) appendLogLines(newEntries.map(e => e.text));
-            } else {
-                const url = modelName === '*' ? '/admin/logs' : '/admin/log/' + encodeURIComponent(modelName);
-                const data = await adminGet(url, { lines: 200, since: logLastSeq });
-                if (!data || !data.lines) return;
-                logLastSeq = data.since ?? data.seq ?? logLastSeq;
-                const newEntries = data.lines;
-                if (newEntries.length > 0) appendLogLines(newEntries.map(e => e.text));
-            }
+            const data = await adminGet(logUrl(modelName), {
+                lines: 200,
+                ...(logLastSeq > 0 ? { since: logLastSeq } : {}),
+            });
+            if (!data || !data.lines) return;
+            const newEntries = (logLastSeq === 0) ? data.lines.map(e => e.text) : data.lines;
+            if (newEntries.length > 0) appendLogLines(newEntries);
+            logLastSeq = data.since ?? data.seq ?? logLastSeq;
         } catch (e) {
             // Silent fail — don't flood console on transient issues
         }
@@ -580,12 +553,12 @@ function startLogPoll(modelName) {
     logPollTimer = setInterval(pollOne, POLL_INTERVAL);
 }
 
-// ── 6. Chat pane functions ────────────────────────────────
+// ── 6. Chat Pane Functions ─────────────────────────────────
 let chatHistory      = [];   // full conversation history for selected model
 let chatAbortCtrl    = null; // AbortController for active chat stream
 const CHAT_PARAMS_KEY = 'arkestra-chat-params';
 
-// 6.1 Parameters panel toggle
+// 6.1 Parameters Panel Toggle
 function toggleChatParams() {
     const panel = document.getElementById('chat-params-panel');
     const toggle = document.getElementById('right-chat-params-toggle');
@@ -596,23 +569,25 @@ function toggleChatParams() {
     requestAnimationFrame(() => layoutRightPanels());
 }
 
-// 6.2 Param persistence
+// 6.2 Param Persistence
+const CHAT_PARAM_FIELDS = [
+    { id: 'rcp-temp',     store: 'temperature', default: 0.7,  parse: v => parseFloat(v) || 0.7 },
+    { id: 'rcp-top-p',    store: 'top_p',       default: 0.95, parse: v => parseFloat(v) || 0.95 },
+    { id: 'rcp-max-tokens', store: 'max_tokens', default: 512,  parse: v => parseInt(v) || 512 },
+];
+
 function getChatParams() {
     const stored = localStorage.getItem(CHAT_PARAMS_KEY);
-    if (stored) {
-        try { return JSON.parse(stored); } catch { return {}; }
-    }
+    if (stored) { try { return JSON.parse(stored); } catch { /* ignore */ } }
     return {};
 }
 
 function saveChatParams() {
     if (!chatModel) return;
     const params = getChatParams();
-    params[chatModel] = {
-        temperature: parseFloat(document.getElementById('rcp-temp')?.value) || 0.7,
-        top_p: parseFloat(document.getElementById('rcp-top-p')?.value) || 0.95,
-        max_tokens: parseInt(document.getElementById('rcp-max-tokens')?.value) || 512,
-    };
+    params[chatModel] = Object.fromEntries(
+        CHAT_PARAM_FIELDS.map(f => [f.store, f.parse(document.getElementById(f.id)?.value)])
+    );
     localStorage.setItem(CHAT_PARAMS_KEY, JSON.stringify(params));
 }
 
@@ -620,12 +595,12 @@ function restoreChatParams() {
     if (!chatModel) return;
     const params = getChatParams()[chatModel];
     if (!params) return;
-    document.getElementById('rcp-temp').value     = String(params.temperature ?? 0.7);
-    document.getElementById('rcp-top-p').value     = String(params.top_p ?? 0.95);
-    document.getElementById('rcp-max-tokens').value = String(params.max_tokens ?? 512);
+    for (const f of CHAT_PARAM_FIELDS) {
+        document.getElementById(f.id).value = String(params[f.store] ?? f.default);
+    }
 }
 
-// 6.3 Message bubble helpers
+// 6.3 Message Bubble Helpers
 function appendMessageBubble(role, content, isStreaming) {
     const container = document.getElementById('chat-display');
     if (!container) return;
@@ -652,7 +627,7 @@ function appendMessageBubble(role, content, isStreaming) {
     }
 }
 
-// 6.3 Send message (form submit handler)
+// 6.4 Send Message (form submit handler)
 async function sendMessage(e) {
     e.preventDefault();
     const input = document.getElementById('right-chat-input');
@@ -702,7 +677,7 @@ async function sendMessage(e) {
     document.getElementById('right-chat-send-btn').disabled = false;
 }
 
-// 6.4 Streaming response handler
+// 6.5 Streaming Response Handler
 async function streamChatResponse(messages, modelName, onToken) {
     stopLogPoll();    // pause log polling during chat streaming
 
@@ -770,7 +745,7 @@ async function streamChatResponse(messages, modelName, onToken) {
     }
 }
 
-// 6.5 Markdown rendering with marked.js fallback
+// 6.6 Markdown Rendering with marked.js Fallback
 function renderMarkdown(element, text) {
     return new Promise((resolve) => {
         if (typeof marked !== 'undefined') {
@@ -873,27 +848,13 @@ function stopChatStream() {
 // can clean up the ghost assistant bubble instead of vanishing silently.
 let _chatWasAborted = false;
 
-// ── Lifecycle ─────────────────────────────────────────────
+// ── Lifecycle — DOMContentLoaded ───────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
     refreshModels();
     // Poll for model status updates at configurable interval
     setInterval(refreshModels, POLL_INTERVAL);
 
-    // Search filter (2.2)
-    const search = document.getElementById('model-search');
-    if (search) search.addEventListener('input', e => {
-        renderModelList(e.target.value);
-    });
-
-    // Model click delegation on the list
-    const list = document.getElementById('model-list');
-    if (list) list.addEventListener('click', e => {
-        const item = e.target.closest('.model-item');
-        if (!item || !item.dataset.model) return;
-        selectModel(item.dataset.model);
-    });
-
-    // ── 4.1 Accordion toggle (shared) ─────────────────────────
+    // ── Accordion toggle — shared handler for cluster and model rows ───────────
     window.toggleAccordion = function(id) {
         const el = document.getElementById(id);
         if (!el) return;
@@ -912,41 +873,25 @@ document.addEventListener('DOMContentLoaded', () => {
         requestAnimationFrame(() => layoutRightPanels());
     };
 
-    // Delegate clicks on accordion items and model rows to toggleAccordion
-    const itemContainer = document.getElementById('model-accordion-items');
-    if (itemContainer) {
-        itemContainer.addEventListener('click', (e) => {
-            e.stopImmediatePropagation();
-
-            // Cluster header click → toggle cluster
-            const clusterHeader = e.target.closest('.cluster-header');
-            if (clusterHeader) {
-                const clusterItem = clusterHeader.closest('.cluster-item');
-                if (clusterItem) toggleAccordion(clusterItem.id);
-                return;
+    // Delegated click handler for accordion items
+    function handleAccordionClick(e) {
+        const clusterHeader = e.target.closest('.cluster-header');
+        if (clusterHeader) {
+            toggleAccordion(clusterHeader.closest('.cluster-item').id);
+            return;
+        }
+        const modelRow = e.target.closest('.model-row[data-model]');
+        if (modelRow) {
+            const parentCluster = modelRow.closest('.cluster-item');
+            if (parentCluster?.classList.contains('collapsed')) {
+                toggleAccordion(parentCluster.id);
             }
-
-            // Model row click → toggle model panel
-            const modelRow = e.target.closest('.model-row[data-model]');
-            if (modelRow) {
-                const id = modelRow.id;
-                // Also expand parent cluster if collapsed
-                const parentCluster = modelRow.closest('.cluster-item');
-                if (parentCluster && parentCluster.classList.contains('collapsed')) {
-                    toggleAccordion(parentCluster.id);
-                }
-                toggleAccordion(id);
-                return;
-            }
-
-            // Legacy h3 click for Settings and old accordions
-            const h3 = e.target.closest('h3[data-model]');
-            if (!h3) return;
-            const section = h3.closest('.accordion-item');
-            if (!section) return;
-            toggleAccordion(section.id);
-        });
+            toggleAccordion(modelRow.id);
+            return;
+        }
     }
+
+    document.getElementById('model-accordion-items')?.addEventListener('click', handleAccordionClick);
 
     // ── 4.2 Right-accordion height splitting ─────────────────
     function layoutRightPanels() {
@@ -974,7 +919,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-                // ── Tab visibility: reload on show ─
+                // ── Tab visibility — reload on focus ─
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden) {
             refreshModels();      // re-read model status on focus
@@ -1065,7 +1010,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-// ── 5. Logs pane — polling on model select ────────────────
+// ── 4.6 Logs pane — polling on model select ────────────────
     const logSelect = document.getElementById('log-model-select');
     if (logSelect) {
         logSelect.addEventListener('change', () => {
@@ -1115,8 +1060,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('right-chat-form')?.addEventListener('submit', sendMessage);
 
     // Auto-persist params on any change
-    ['rcp-temp', 'rcp-top-p', 'rcp-max-tokens'].forEach(id => {
-        const el = document.getElementById(id);
+    CHAT_PARAM_FIELDS.forEach(f => {
+        const el = document.getElementById(f.id);
         if (el) el.addEventListener('change', saveChatParams);
     });
 
