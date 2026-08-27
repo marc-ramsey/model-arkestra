@@ -254,6 +254,72 @@
         .model-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .model-meta { font-size: 10.5px; color: var(--text-dim); margin-left: 6px; flex-shrink: 0; }
 
+        /* ── Cluster Tree View ───────────────────────────────────── */
+        .cluster-item {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+        }
+        .cluster-header {
+            padding: 6px 8px;
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--text);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            user-select: none;
+            background: var(--surface-alt);
+            border-bottom: 1px solid var(--border);
+        }
+        .cluster-header:hover { background: var(--accent-light); color: var(--accent-hover); }
+        .cluster-header::after {
+            content: '';
+            display: inline-block;
+            width: 5px; height: 5px;
+            border-right: 1.5px solid currentColor;
+            border-bottom: 1.5px solid currentColor;
+            transform: rotate(-45deg);
+            transition: transform 0.2s;
+            flex-shrink: 0;
+        }
+        .cluster-header.collapsed::after { transform: rotate(45deg); }
+        .cluster-models {
+            padding: 2px 8px 6px 18px;
+            display: block;
+        }
+        .cluster-item.collapsed > .cluster-models { display: none; }
+        .cluster-health-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+            background: var(--green);
+        }
+        .cluster-health-dot.unhealthy { background: var(--red); opacity: 0.7; }
+        .cluster-name { flex: 1; }
+        .cluster-count {
+            font-size: 10px;
+            color: var(--text-dim);
+            font-weight: 400;
+            margin-left: 4px;
+        }
+        .model-row {
+            display: flex;
+            align-items: center;
+            padding: 4px 6px;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            font-size: 12px;
+            margin-bottom: 1px;
+        }
+        .model-row:hover { background: var(--surface-alt); }
+        .model-row.expanded ~ .model-config-panel {
+            border-top: 1px solid var(--border);
+        }
+        .cluster-models .model-config-panel {
+            display: none;
+        }
+
         /* ── Edit Form ─────────────────────────────────────────────── */
         .edit-form-grid {
             display: grid;
@@ -599,6 +665,7 @@
 
         // ── 1.2 Global State ──────────────────────────────────────
         let modelsCache      = [];          // from GET /admin/models
+        let clusterMap       = {};          // { name: { base_url, healthy } }
         let modelStates      = {};          // { modelName: { config, snapshot, dirty, expanded } }
         let logModel         = '';          // currently selected model for logs pane
         let chatModel        = '';          // currently selected model for chat pane
@@ -674,28 +741,58 @@
 
             // Preserve expansion state before rebuilding
             const wasExpanded = new Set(
-                Array.from(container.querySelectorAll('.accordion-item:not(.collapsed)'))
+                Array.from(container.querySelectorAll('.cluster-item:not(.collapsed), .accordion-item:not(.collapsed)'))
                     .map(el => el.id)
             );
 
-            // Build HTML for each model as an accordion item
-            let html = '';
+            // Group models by cluster (strip prefix from model name)
+            const modelsByCluster = {};
             for (const m of modelsCache) {
-                const name = m.id;
-                const statusClass = m.status ? m.status.replace('runnerstate.', '').toLowerCase() : 'uncached';
-                const stateKey = 'sec-model-' + name.replace(/[^a-zA-Z0-9_-]/g, '_');
-                html += '<section class="accordion-item collapsed" id="' + stateKey + '">'
-                    + '  <h3 data-model="' + name + '">'
-                    + '    <span class="status-dot ' + statusClass + '" id="dot-' + name.replace(/[^a-zA-Z0-9_-]/g, '_') + '"></span>'
-                    + '    <span class="model-name" title="' + name + '">' + name + '</span>'
-                    + '  </h3>'
-                    + '  <div class="acc-body">'
-                    + '    <div class="model-config-panel" id="body-' + name.replace(/[^a-zA-Z0-9_-]/g, '_') + '">'
-                    + '      <!-- Config fields populated on expand -->'
-                    + '      <p class="placeholder-text">Click to load configuration…</p>'
-                    + '    </div>'
-                    + '  </div>'
-                    + '</section>';
+                let localId = m.id;
+                if (m.id.includes('/')) {
+                    localId = m.id.split('/', 2)[1];
+                }
+                // Determine cluster from name prefix or default to 'local'
+                let cluster = 'local';
+                if (m.id.includes('/')) {
+                    cluster = m.id.split('/', 2)[0];
+                } else if (Object.keys(clusterMap).length > 1) {
+                    cluster = 'local';
+                }
+                if (!modelsByCluster[cluster]) modelsByCluster[cluster] = [];
+                modelsByCluster[cluster].push({ ...m, localId });
+            }
+
+            // Build HTML: clusters → model rows
+            let html = '';
+            for (const [clusterName, clusterModels] of Object.entries(modelsByCluster)) {
+                const clustCfg = clusterMap[clusterName] || { healthy: true };
+                const healthClass = clustCfg.healthy ? '' : ' unhealthy';
+                const stateKey = 'sec-cluster-' + clusterName.replace(/[^a-zA-Z0-9_-]/g, '_');
+                const isExpanded = wasExpanded.has(stateKey);
+
+                html += '<div class="cluster-item collapsed" id="' + stateKey + '">';
+                html += '  <div class="cluster-header">'
+                    + '    <span class="cluster-health-dot' + healthClass + '"></span>'
+                    + '    <span class="cluster-name">' + clusterName + '</span>'
+                    + '    <span class="cluster-count">' + clusterModels.length + ' model' + (clusterModels.length !== 1 ? 's' : '') + '</span>'
+                    + '  </div>';
+                html += '  <div class="cluster-models">';
+
+                for (const m of clusterModels) {
+                    const name = m.id;
+                    const statusClass = m.status ? m.status.replace('runnerstate.', '').toLowerCase() : 'uncached';
+                    const stateKeyM = 'sec-model-' + name.replace(/[^a-zA-Z0-9_-]/g, '_');
+                    html += '<div class="model-row" id="' + stateKeyM + '" data-model="' + name + '">'
+                        + '  <span class="status-dot ' + statusClass + '" id="dot-' + name.replace(/[^a-zA-Z0-9_-]/g, '_') + '"></span>'
+                        + '  <span class="model-name">' + (name.includes('/') ? m.localId : name) + '</span>'
+                        + '</div>';
+                    html += '  <div class="model-config-panel" id="body-' + name.replace(/[^a-zA-Z0-9_-]/g, '_') + '">'
+                        + '    <p class="placeholder-text">Click to load configuration…</p>'
+                        + '  </div>';
+                }
+
+                html += '  </div></div>';
             }
             container.innerHTML = html;
 
@@ -708,9 +805,10 @@
 
         async function refreshModels() {
             try {
-                // Fetch both models status and config list
-                const [statusData, configData] = await Promise.all([
+                // Fetch models, clusters, and config
+                const [statusData, clusterData, configData] = await Promise.all([
                     adminGet('/admin/models'),
+                    adminGet('/admin/clusters').catch(() => ({ clusters: [] })),
                     adminGet('/admin/config'),
                 ]);
 
@@ -729,6 +827,22 @@
                     buildAccordionItems();
                     populateRightDropdowns();
                     return;
+                }
+
+                // Parse cluster data
+                if (clusterData && Array.isArray(clusterData.clusters)) {
+                    const oldKeys = new Set(Object.keys(clusterMap));
+                    const newKeys = new Set(clusterData.clusters.map(c => c.name));
+                    if (oldKeys.size !== newKeys || ![...newKeys].every(n => oldKeys.has(n))) {
+                        listChanged = true;
+                    }
+                    clusterMap = {};
+                    for (const c of clusterData.clusters) {
+                        clusterMap[c.name] = { base_url: c['base-url'], healthy: c.healthy };
+                    }
+                } else if (!Object.keys(clusterMap).length) {
+                    // No clusters data — fall back to flat view with 'local' only
+                    clusterMap = { local: { base_url: null, healthy: true } };
                 }
 
                 updateModelCount();
@@ -1446,22 +1560,46 @@
                 const wasCollapsed = el.classList.contains('collapsed');
                 el.classList.toggle('collapsed');
 
-                // Load config when expanding
-                if (wasCollapsed) {
-                    const h3 = el.querySelector('h3');
-                    if (h3 && h3.dataset.model) {
-                        populateModelPanel(h3.dataset.model);
+                // Model row expanded → show config panel + load config
+                if (el.classList.contains('model-row')) {
+                    el.classList.toggle('expanded', !wasCollapsed);
+                    if (wasCollapsed) {
+                        const modelName = el.dataset.model;
+                        if (modelName) populateModelPanel(modelName);
                     }
                 }
 
                 requestAnimationFrame(() => layoutRightPanels());
             };
 
-            // Delegate clicks on accordion items to toggleAccordion
+            // Delegate clicks on accordion items and model rows to toggleAccordion
             const itemContainer = document.getElementById('model-accordion-items');
             if (itemContainer) {
                 itemContainer.addEventListener('click', (e) => {
                     e.stopImmediatePropagation();
+
+                    // Cluster header click → toggle cluster
+                    const clusterHeader = e.target.closest('.cluster-header');
+                    if (clusterHeader) {
+                        const clusterItem = clusterHeader.closest('.cluster-item');
+                        if (clusterItem) toggleAccordion(clusterItem.id);
+                        return;
+                    }
+
+                    // Model row click → toggle model panel
+                    const modelRow = e.target.closest('.model-row[data-model]');
+                    if (modelRow) {
+                        const id = modelRow.id;
+                        // Also expand parent cluster if collapsed
+                        const parentCluster = modelRow.closest('.cluster-item');
+                        if (parentCluster && parentCluster.classList.contains('collapsed')) {
+                            toggleAccordion(parentCluster.id);
+                        }
+                        toggleAccordion(id);
+                        return;
+                    }
+
+                    // Legacy h3 click for Settings and old accordions
                     const h3 = e.target.closest('h3[data-model]');
                     if (!h3) return;
                     const section = h3.closest('.accordion-item');
@@ -1644,8 +1782,12 @@
 
             // Collapse all accordion items
             document.getElementById('btn-collapse-all')?.addEventListener('click', () => {
-                document.querySelectorAll('#model-accordion-items .accordion-item:not(.collapsed)').forEach(item => {
-                    item.classList.add('collapsed');
+                document.querySelectorAll('#model-accordion-items .cluster-item:not(.collapsed), '
+                    + '#model-accordion-items .model-row.expanded').forEach(item => {
+                        item.classList.add('collapsed');
+                        if (item.classList.contains('model-row')) {
+                            item.classList.remove('expanded');
+                        }
                 });
             });
         });
