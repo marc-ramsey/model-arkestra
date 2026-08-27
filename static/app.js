@@ -12,10 +12,6 @@ let chatModel        = '';          // currently selected model for chat pane
 let backendOptions   = {};           // backends dict from /admin/models response
 let runnerTypes      = [];          // runner types from /admin/models response
 
-// Drag state for resize handles
-let isVDragging  = false;           // vertical (left/right) divider
-let isHDragging  = false;           // horizontal (logs/chat) divider
-
 // Log polling state
 let logPollTimer    = null;         // interval id for log polling
 let logLastSeq    = 0;            // server-provided sequence cursor for log polling
@@ -74,6 +70,13 @@ function sanitizeId(name) {
     return name.replace(/[^a-zA-Z0-9_-]/g, '_');
 }
 
+// Parse <cluster>/<model-id> into [cluster, localId]; returns ['local', id] if no slash.
+function parseClusterPrefix(id) {
+    const slash = id.indexOf('/');
+    if (slash === -1) return ['local', id];
+    return [id.slice(0, slash), id.slice(slash + 1)];
+}
+
 // ── 2. Model List — fetch + render accordion items ───────────
 function updateModelCount() {
     const badge = document.getElementById('model-count');
@@ -93,19 +96,10 @@ function buildAccordionItems() {
     // Group models by cluster (strip prefix from model name)
     const modelsByCluster = {};
     for (const m of modelsCache) {
-        let localId = m.id;
-        if (m.id.includes('/')) {
-            localId = m.id.split('/', 2)[1];
-        }
-        // Determine cluster from name prefix or default to 'local'
-        let cluster = 'local';
-        if (m.id.includes('/')) {
-            cluster = m.id.split('/', 2)[0];
-        } else if (Object.keys(clusterMap).length > 1) {
-            cluster = 'local';
-        }
+        const [cluster, localId] = parseClusterPrefix(m.id);
+        m.localId = localId;
         if (!modelsByCluster[cluster]) modelsByCluster[cluster] = [];
-        modelsByCluster[cluster].push({ ...m, localId });
+        modelsByCluster[cluster].push(m);
     }
 
     // Build HTML: clusters → model rows
@@ -127,12 +121,12 @@ function buildAccordionItems() {
         for (const m of clusterModels) {
             const name = m.id;
             const statusClass = m.status ? m.status.replace('runnerstate.', '').toLowerCase() : 'uncached';
-            const stateKeyM = 'sec-model-' + sanitizeId(name);
-            html += '<div class="model-row" id="' + stateKeyM + '" data-model="' + name + '">'
-                + '  <span class="status-dot ' + statusClass + '" id="dot-' + sanitizeId(name) + '"></span>'
-                + '  <span class="model-name">' + (name.includes('/') ? m.localId : name) + '</span>'
+            const sid = sanitizeId(name);
+            html += '<div class="model-row" id="sec-model-' + sid + '" data-model="' + name + '">'
+                + '  <span class="status-dot ' + statusClass + '" id="dot-' + sid + '"></span>'
+                + '  <span class="model-name">' + m.localId + '</span>'
                 + '</div>';
-            html += '  <div class="model-config-panel" id="body-' + sanitizeId(name) + '">'
+            html += '  <div class="model-config-panel" id="body-' + sid + '">'
                 + '    <p class="placeholder-text">Click to load configuration…</p>'
                 + '  </div>';
         }
@@ -473,6 +467,13 @@ function logUrl(modelName) {
     return modelName === '*' ? '/admin/logs' : '/admin/log/' + encodeURIComponent(modelName);
 }
 
+function createLogLine(text) {
+    const div = document.createElement('div');
+    div.className = 'log-line';
+    div.textContent = text;
+    return div;
+}
+
 function stopLogPoll() {
     if (logPollTimer) {
         clearInterval(logPollTimer);
@@ -502,10 +503,7 @@ async function loadLogSnapshot(modelName) {
         logLastSeq = data.since ?? data.seq ?? 0;
 
         for (const entry of lines) {
-            const div = document.createElement('div');
-            div.className = 'log-line';
-            div.textContent = entry.text;
-            display.appendChild(div);
+            display.appendChild(createLogLine(entry.text));
         }
     } catch (e) {
         console.error('[admin] log snapshot failed for ' + modelName + ':', e.message);
@@ -521,10 +519,7 @@ function appendLogLines(lines) {
     const nearBottom = display.scrollHeight - display.scrollTop <= display.clientHeight + 60;
 
     lines.forEach(line => {
-        const div = document.createElement('div');
-        div.className = 'log-line';
-        div.textContent = line;
-        display.appendChild(div);
+        display.appendChild(createLogLine(line));
     });
 
     logLastSeq += lines.length;
@@ -893,28 +888,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.getElementById('model-accordion-items')?.addEventListener('click', handleAccordionClick);
 
-    // ── 4.2 Right-accordion height splitting ─────────────────
+    // Right-panel height splitting — each open pane gets equal share.
     function layoutRightPanels() {
         const accordion = document.getElementById('right-accordion');
         if (!accordion) return;
         const items = Array.from(accordion.querySelectorAll('.accordion-item'));
-        // Count open items (not collapsed)
         const openItems = items.filter(i => !i.classList.contains('collapsed'));
-        const closedCount = items.length - openItems.length;
 
         if (openItems.length === 0) {
             accordion.style.height = '100%';
             return;
         }
 
-        // Each open pane gets equal share of the height minus collapsed panes
-        // Collapse a single item takes ~32px (h3 area), so subtract that for each closed item
-        const availableHeight = 100 - (closedCount * 0);
+        const share = Math.round(100 / openItems.length);
         items.forEach(item => {
             if (item.classList.contains('collapsed')) {
                 item.style.flex = '0 0 auto';
             } else {
-                item.style.flex = `1 1 ${Math.round(availableHeight / openItems.length)}%`;
+                item.style.flex = `1 1 ${share}%`;
             }
         });
     }
@@ -930,8 +921,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // ── 3. Resize handles (vertical + horizontal) ───────────────
-    const rootStyle = document.documentElement.style;
+    // ── Resize handles (vertical + horizontal) — single drag manager ──
     const VKEY = 'arkestra-col-width';
     const HKEY = 'arkestra-log-ratio';
 
@@ -948,40 +938,31 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // Vertical divider: left ↔ right
-    const vDivider = document.getElementById('col-divider');
-    vDivider?.addEventListener('mousedown', e => {
-        isVDragging = true;
-        vDivider.classList.add('active');
-        document.body.style.cursor = 'col-resize';
-        document.body.style.userSelect = 'none';
+    // Drag state: null | { axis: 'v'|'h', divider, pct: number }
+    let drag = null;
+
+    function handleDragStart(e) {
+        const vDiv = document.getElementById('col-divider');
+        const hDiv = document.getElementById('row-divider');
+        if (e.target === vDiv || vDiv?.contains(e.target)) {
+            drag = { axis: 'v', divider: vDiv };
+        } else if (e.target === hDiv || hDiv?.contains(e.target)) {
+            drag = { axis: 'h', divider: hDiv };
+        }
+        if (!drag) return;
         e.preventDefault();
-    });
-
-    // Horizontal divider: logs ↔ chat
-    const hDivider = document.getElementById('row-divider');
-    hDivider?.addEventListener('mousedown', e => {
-        isHDragging = true;
-        hDivider.classList.add('active');
-        document.body.style.cursor = 'row-resize';
         document.body.style.userSelect = 'none';
-        e.preventDefault();
-    });
+    }
 
-    window.addEventListener('mousemove', e => {
-        const layout = document.querySelector('.layout');
-        if (!layout) return;
-        const rect = layout.getBoundingClientRect();
-
-        if (isVDragging) {
+    function handleDragMove(e) {
+        if (!drag) return;
+        if (drag.axis === 'v') {
+            const layout = document.querySelector('.layout');
+            const rect = layout.getBoundingClientRect();
             const pct = Math.round(((e.clientX - rect.left) / rect.width) * 100);
-            if (pct >= 20 && pct <= 80) {
-                rootStyle.setProperty('--col-width', pct + '%');
-                localStorage.setItem(VKEY, String(pct));
-            }
-        } else if (isHDragging) {
+            if (pct >= 20 && pct <= 80) rootStyle.setProperty('--col-width', pct + '%');
+        } else {
             const rightCol = document.getElementById('right-panel');
-            if (!rightCol) return;
             const rRect = rightCol.getBoundingClientRect();
             const ratio = Math.round(((e.clientY - rRect.top) / rRect.height) * 100);
             if (ratio >= 15 && ratio <= 85) {
@@ -991,24 +972,21 @@ document.addEventListener('DOMContentLoaded', () => {
                     logsP.style.flex = '0 0 ' + ratio + '%';
                     chatP.style.flex = '0 0 ' + (100 - ratio) + '%';
                 }
-                localStorage.setItem(HKEY, String(ratio));
             }
         }
-    });
+    }
 
-    window.addEventListener('mouseup', () => {
-        if (isVDragging) {
-            isVDragging = false;
-            vDivider?.classList.remove('active');
-            document.body.style.cursor = '';
-            document.body.style.userSelect = '';
-        } else if (isHDragging) {
-            isHDragging = false;
-            hDivider?.classList.remove('active');
-            document.body.style.cursor = '';
-            document.body.style.userSelect = '';
-        }
-    });
+    function handleDragEnd() {
+        if (!drag) return;
+        drag.divider.classList.remove('active');
+        document.body.style.userSelect = '';
+        drag = null;
+    }
+
+    document.getElementById('col-divider')?.addEventListener('mousedown', handleDragStart);
+    document.getElementById('row-divider')?.addEventListener('mousedown', handleDragStart);
+    window.addEventListener('mousemove', handleDragMove);
+    window.addEventListener('mouseup', handleDragEnd);
 
 // ── 4.6 Logs pane — polling on model select ────────────────
     const logSelect = document.getElementById('log-model-select');
