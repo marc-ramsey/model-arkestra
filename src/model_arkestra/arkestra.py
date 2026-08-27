@@ -78,7 +78,7 @@ class ModelArkestra:
         color = _COLORS.get(level, "37")
 
         # Pad level + colon to 8 chars (matches uvicorn: "INFO:   ", "WARNING: ", etc.)
-        prefix = f"{level}:".ljust(8)
+        prefix = f"{level}:".ljust(10)
         colored_text = f"\033[{color}m{prefix}\033[0m{text}"  # noqa: PLR2004
 
         print(colored_text, flush=True)
