@@ -64,7 +64,9 @@ def worker_server():
           default: test-backend
         runners:
           default: ProcessModelRunner
-        models: {}
+        models:
+          gemma:
+            checkpoint: unsloth/gemma-4-E2B-it-GGUF:Q4_K_M
     """)
     proxy, client = _start_server(WORKER_PORT, cfg)
     yield {"server": proxy, "client": client}
@@ -77,17 +79,12 @@ def master_server(worker_server):
         models-start-port: 18030
         model-ports: 4
         warmup-time: 5
-        backends:
-          default: remote-worker
-          remote-worker:
-            runner: remote
-            base_url: "http://127.0.0.1:{WORKER_PORT}"
-        runners:
-          default: ProcessModelRunner
+        clusters:
+          gpu-server:
+            base-url: "http://127.0.0.1:{WORKER_PORT}"
         models:
           gpu-server/gemma:
             checkpoint: unsloth/gemma-4-E2B-it-GGUF:Q4_K_M
-            backend: remote-worker
     """)
     proxy, client = _start_server(MASTER_PORT, cfg)
     yield {"server": proxy, "client": client}
@@ -107,7 +104,7 @@ class TestRemoteIntegration:
         """Master should list gpu-server/gemma in admin/models."""
         r = master_server["client"].get("/admin/models")
         assert r.status_code == 200
-        ids = [m["id"] for m in r.json()["models"]]
+        ids = [m.get("id", "") for m in r.json()["models"]]
         assert "gpu-server/gemma" in ids
 
     def test_start_proxies_to_worker(self, worker_server, master_server):

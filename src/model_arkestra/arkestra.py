@@ -161,20 +161,17 @@ class ModelArkestra:
         Config structure::
 
             clusters:
-              local:                        # auto-created, no entry needed
-                base-url: http://localhost:9090
-                admin-key: secret          # optional
-              worker0:
+              worker0:                    # remote managed
                 base-url: http://worker0:8080
-                admin-key: secret
+                admin-key: secret         # optional
         """
         self._clusters: Dict[str, Dict[str, Any]] = {}
 
         # Auto-create the local cluster
         host = self.cm.data.get("host") or "0.0.0.0"
         port = self.cm.data.get("admin-port", 9090)
-        local_key: str = self.cm.data.get("local-cluster-key", "local")
-        self._clusters[local_key] = {
+        self._local_cluster_key: str = self.cm.data.get("local-cluster-key", "local")
+        self._clusters[self._local_cluster_key] = {
             "base-url": f"http://{host}:{port}",
             "admin-key": (self._cm.data.get("env") or {}).get("ADMIN_KEY"),
         }
@@ -195,6 +192,30 @@ class ModelArkestra:
             if isinstance(base_url, str):
                 cfg["base-url"] = base_url.rstrip("/")
             self._clusters[name] = cfg
+
+    def _parse_cluster_prefix(self, model_name: str) -> Tuple[str, str]:
+        """Split ``<cluster>/<model-id>`` into its components.
+
+        Returns ``(cluster_name, model_id)``.  If no prefix is present,
+        the model belongs to the local cluster.
+        """
+        if "/" in model_name:
+            return model_name.split("/", 1)
+        return self._local_cluster_key, model_name
+
+    def resolve_model_cluster_addr(self, model_name: str) -> Tuple[str, Optional[str], str]:
+        """Resolve cluster routing for a model name.
+
+        Returns ``(cluster_name, base_url|None, local_model_id)``.  For the
+        local cluster ``base_url`` is None (use port pool / direct runner).
+        For remote clusters it returns the target URL to proxy through.
+        """
+        cluster_name, local_id = self._parse_cluster_prefix(model_name)
+        cfg = self._clusters.get(cluster_name)
+        if cfg is None:
+            raise ValueError(f"Unknown cluster '{cluster_name}' for model '{model_name}'")
+        base_url = cfg.get("base-url") if cluster_name != self._local_cluster_key else None
+        return cluster_name, base_url, local_id
 
     @staticmethod
     def _check_vulkan() -> bool:
@@ -264,8 +285,9 @@ class ModelArkestra:
 
     def find_context(self, model_name: str) -> Optional[_ModelContext]:
         """Return the _ModelContext for *model_name*, or None."""
+        _, _, local_name = self.resolve_model_cluster_addr(model_name)
         for ctx in self._get_model_contexts():
-            if ctx.name == model_name:
+            if ctx.name == local_name:
                 return ctx
         return None
 
@@ -276,12 +298,16 @@ class ModelArkestra:
         contexts_by_name = {ctx.name: ctx for ctx in self._get_model_contexts()}
         data = []
         for model_name in self.get_models():
+            # Skip remote-cluster models (not tracked locally)
+            cluster_name, local_name = self._parse_cluster_prefix(model_name)
+            if cluster_name != self._local_cluster_key:
+                continue
             ctx = contexts_by_name.get(model_name)
             model_cfg = self.get_model(model_name) or {}
             owned_by = str(model_cfg.get("owned_by", "local")) if isinstance(model_cfg, dict) else "local"
 
             entry: Dict[str, Any] = {
-                "id": model_name,
+                "id": f"{cluster_name}/{model_name}",
                 "object": "model",
                 "created": int(time()),
                 "owned_by": owned_by,
@@ -437,6 +463,12 @@ class ModelArkestra:
     ) -> None:
         """Start a model.
 
+        Model names are resolved as ``<cluster>/<model-id>``.  If no cluster
+        prefix is given the model belongs to the local cluster.
+
+        Remote-cluster models proxy all requests to the target arkestra worker;
+        no local port or subprocess is allocated.
+
         ``**overrides`` is a flat mix of infrastructure and inference kwargs:
 
         * Infra keys (handled by ModelArkestra): ``port``, ``backend``, ``runner``
@@ -450,12 +482,18 @@ class ModelArkestra:
         Example::
 
             await arkestra.start("qwen3-4b", temp=1.0, top_k=20)
-            await arkestra.start("qwen3-4b", port=18000, backend="rocm-container", temp=0.9)
+            await arkestra.start("local/qwen3-4b", port=18000, backend="rocm-container", temp=0.9)
         """
-        # Validate inputs before allocating anything
-        model = self.get_model(model_name)
+        cluster_name, base_url, local_name = self.resolve_model_cluster_addr(model_name)
+
+        # ── remote-cluster model: proxy everything through the worker ──
+        if base_url is not None:
+            return await self._start_remote_model(local_name, overrides, cluster_name, base_url)
+
+        # ── local-cluster model ──────────────────────────────────────
+        model = self.get_model(local_name)
         if not model:
-            raise ValueError(f"Unknown model '{model_name}'.")
+            raise ValueError(f"Unknown model '{local_name}' in cluster '{cluster_name}'.")
 
         backends_cfg = self._cm.data.get("backends", {})
         runners_cfg = self._cm.data.get("runners", {})
@@ -474,36 +512,28 @@ class ModelArkestra:
             )
 
         # Detect ONNX models — they don't need ports or HTTP health checks
-        resolved_backend = backend or self._resolve_backend_id(model_name, {})
+        resolved_backend = backend or self._resolve_backend_id(local_name, {})
         is_onnx = str(resolved_backend) == "onnx"
 
         if is_onnx:
-            return await self._start_onnx_model(model_name, inference_kwargs)
-
-        # Detect remote models — proxy all calls to target worker
-        resolved_be_id = backend or self._resolve_backend_id(model_name, {})
-        be_cfg = backends_cfg.get(str(resolved_be_id), {})
-        is_remote = str(be_cfg.get("runner", "")) == "remote"
-
-        if is_remote:
-            return await self._start_remote_model(model_name, inference_kwargs, be_cfg)
+            return await self._start_onnx_model(local_name, inference_kwargs)
 
         # Allocate port if not explicitly provided.
         if port is None:
-            port = self.worker_port(model_name)
+            port = self.worker_port(local_name)
 
         # runner= selects the transport layer
         if runner_type_override is not None:
-            inst = self._get_runner_instance(runner_type_override, model_name)
-            await inst.start(model_name, port=port, backend=backend, **inference_kwargs)
-            ctx = inst._models[model_name]
+            inst = self._get_runner_instance(runner_type_override, local_name)
+            await inst.start(local_name, port=port, backend=backend, **inference_kwargs)
+            ctx = inst._models[local_name]
             ctx.runner_type = runner_type_override
             ctx._runner = inst
             self.log(f"[action=start model={model_name} port={port}]")
             return
 
         # Resolve backend + runner type from config
-        be_id = self._resolve_backend_id(model_name, {}, backend)
+        be_id = self._resolve_backend_id(local_name, {}, backend)
         be_cfg = backends_cfg.get(be_id, {})
         resolved_runner = str(be_cfg.get("runner", "process"))
         if resolved_runner == "container":
@@ -515,9 +545,9 @@ class ModelArkestra:
                 f"Available runners: {list(runners_cfg.keys())}"
             )
 
-        runner = self._get_runner_instance(resolved_runner, model_name)
-        await runner.start(model_name, port=port, backend=backend, **inference_kwargs)
-        ctx = runner._models[model_name]
+        runner = self._get_runner_instance(resolved_runner, local_name)
+        await runner.start(local_name, port=port, backend=backend, **inference_kwargs)
+        ctx = runner._models[local_name]
         ctx.runner_type = resolved_runner
         ctx._runner = runner
         self.log(f"[action=start model={model_name} port={port}]")
@@ -561,36 +591,34 @@ class ModelArkestra:
         logger.info("ONNX model '%s' loaded into memory", model_name)
 
     async def _start_remote_model(
-        self, model_name: str, inference_kwargs: Dict[str, Any], backend_cfg: Dict[str, Any],
+        self, local_name: str, overrides: Dict[str, Any], cluster_name: str, base_url: str,
     ) -> None:
-        """Start a remote model — proxy lifecycle to the target arkestra worker.
+        """Start a remote-cluster model — proxy all traffic to the target arkestra worker.
 
-        No local port is allocated. All HTTP calls (start, stop, chat, embed)
-        are forwarded to ``base_url`` from the backend configuration.
+        No local port is allocated.  All HTTP calls (start, stop, chat, embed)
+        are forwarded to ``base_url`` from the cluster configuration.
         """
-        base_url = str(backend_cfg.get("base_url", "")).rstrip("/")
-        if not base_url:
-            raise ValueError(f"Backend '{model_name}' uses runner: remote but has no base_url.")
+        inference_kwargs = {k: v for k, v in overrides.items() if k not in {"port", "backend", "runner"}}
 
-        # Find or create the remote runner instance (by backend_id)
-        backends_section = self._cm.data.get("backends", {})
-        runner = self._get_runner_instance("remote")  # single shared runner per base_url
-        runner._backend_id = str(backend_cfg)  # tag for routing
-        ctx = self.find_context(model_name)
+        # Find or create the remote runner (shared per model instance)
+        ctx = self.find_context(local_name)
         if ctx is None:
             log_size = inference_kwargs.get("max_log_lines", self.cm.data.get('log-buffer-size') or 2000)
             from model_arkestra.types import _ModelContext as MC
-            ctx = MC(model_name, 0, max_log_lines=log_size)  # port=0 for remote models
-            ctx.backend_id = backend_cfg.get("runner")
+            ctx = MC(local_name, 0, max_log_lines=log_size)  # port=0 for remote models
+            ctx.backend_id = "remote"
+            ctx.cluster = cluster_name
             ctx._remote_base_url = base_url
-            runner._models[model_name] = ctx  # noqa: SLF001
+            runner = self._get_runner_instance("remote")
+            runner._models[local_name] = ctx  # noqa: SLF001
+            ctx._runner = runner
 
         # Pass inference kwargs and start (proxies to worker)
-        runner._inference_kwargs[model_name] = inference_kwargs
-        await runner.start(model_name, port=ctx.port, backend="remote", **inference_kwargs)
+        runner = ctx._runner
+        runner._inference_kwargs[local_name] = inference_kwargs
+        await runner.start(local_name, port=ctx.port, backend="remote", **inference_kwargs)
         ctx.runner_type = "remote"
-        ctx._runner = runner  # noqa: SLF001
-        self.log(f"[action=start model={model_name} remote={base_url}]")
+        self.log(f"[action=start model={cluster_name}/{local_name} remote={base_url}]")
 
     async def embed(self, model_name: str, text: str) -> Dict[str, Any]:
         """Encode text → embedding vector via ONNX model.
@@ -619,8 +647,9 @@ class ModelArkestra:
 
     async def stop(self, model_name: str) -> None:
         """Stop the named model."""
+        _, _, local_name = self.resolve_model_cluster_addr(model_name)
         for r in self._runners.values():
-            if model_name in r._models:  # noqa: SLF001
+            if local_name in r._models:  # noqa: SLF001
                 self.log(f"[action=stop model={model_name}]")
                 try:
                     await r.stop()

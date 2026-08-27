@@ -6,6 +6,7 @@ installs admin endpoints (GET /, GET/POST /admin/*) onto the same FastAPI app.
 from __future__ import annotations
 
 import asyncio
+import aiohttp
 import copy
 import os
 import sys
@@ -85,6 +86,7 @@ class ArkestraAdmin:
             return self
         self._add_root_route()
         self._add_auth_middleware()
+        self._add_clusters_route()
         self._add_models_route()
         self._add_config_routes()
         self._add_stop_route()
@@ -123,6 +125,29 @@ class ArkestraAdmin:
     def _resolve_model_backend(self, model_name: str, model_cfg: dict) -> str:
         """Resolve backend for a model using the normal chain."""
         return _resolve_backend(self.server._arkestra.cm, model_cfg, model_name)
+
+    def _add_clusters_route(self) -> None:
+        @self._app.get("/admin/clusters")
+        async def admin_clusters():
+            """Return managed cluster list with connectivity status."""
+            clusters = self.server._arkestra._clusters
+            result = []
+            for name, cfg in clusters.items():
+                base_url = str(cfg.get("base-url", ""))
+                # Ping the health endpoint to check reachability
+                healthy = False
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(f"{base_url}/health", timeout=3) as resp:
+                            healthy = (resp.status == 200)
+                except Exception:
+                    pass
+                result.append({
+                    "name": name,
+                    "base-url": base_url,
+                    "healthy": healthy,
+                })
+            return JSONResponse(status_code=200, content={"clusters": result})
 
     def _add_root_route(self) -> None:
         html = Path(__file__).parent.parent.parent / "static" / "index.html"
@@ -223,6 +248,8 @@ class ArkestraAdmin:
     def _add_stop_route(self) -> None:
         @self._app.post("/admin/stop/{model:path}")
         async def admin_stop(model: str):
+            if model not in self._models_cfg:
+                raise HTTPException(status_code=404, detail=f"Model '{model}' not configured")
             ctx = self.server._arkestra.find_context(model)
             if not ctx:
                 raise HTTPException(
