@@ -53,12 +53,14 @@ class OnnxRunner(BaseModelRunner):  # type: ignore[name-defined]
                  ready_timeout: float = 120.0, ready_poll_ms: float = 100.0,
                  warmup_delay: Optional[float] = None, port_drain_timeout: float = 20.0,
                  broadcast_addr: str = "0.0.0.0",
-                 log_buffer_size: Optional[int] = None):
+                 log_buffer_size: Optional[int] = None,
+                 arkestra: Any = None):
         super().__init__(config_manager, restart_delay=restart_delay,
                          restart_limit=restart_limit, shutdown_timeout=shutdown_timeout,
                          ready_timeout=ready_timeout, ready_poll_ms=ready_poll_ms,
                          warmup_delay=warmup_delay, port_drain_timeout=port_drain_timeout,
-                         broadcast_addr=broadcast_addr, log_buffer_size=log_buffer_size)
+                         broadcast_addr=broadcast_addr, log_buffer_size=log_buffer_size,
+                         arkestra=arkestra)
 
     # ── Abstract lifecycle hooks (override base class defaults) ─────
 
@@ -101,6 +103,11 @@ class OnnxRunner(BaseModelRunner):  # type: ignore[name-defined]
         ctx.inference_type = inference_type
         ctx.model_path = str(resolved_path)
 
+        print(f"[ONNX] Model {ctx.name} loaded: provider={provider_list}", flush=True)
+        if self.arkestra:
+            asyncio.create_task(self.arkestra._log(
+                f"[start] model={ctx.name} onnx providers={provider_list}"))
+
         # Load tokenizer for whisper/embedding models if configured
         tokenizer_path = model_data.get("tokenizer") or str(model_data.get("path", ""))
         if tokenizer_path:
@@ -114,6 +121,9 @@ class OnnxRunner(BaseModelRunner):  # type: ignore[name-defined]
 
     async def _stop_model_process(self, ctx: "model_arkestra.types._ModelContext") -> None:
         """Unload ONNX session from memory."""
+        print(f"[ONNX] Unloading model {ctx.name}", flush=True)
+        if self.arkestra:
+            asyncio.create_task(self.arkestra._log(f"[stop] model={ctx.name} unloaded"))
         if hasattr(ctx, 'onnx_session'):
             delattr(ctx, 'onnx_session')
         if hasattr(ctx, 'onnx_tokenizer'):

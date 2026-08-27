@@ -80,6 +80,9 @@ class ProcessModelRunner(BaseModelRunner):
         )
 
         print(f"[PROCESS] Model {ctx.name} launched: pid={ctx.process.pid} binary={binary_path} port={ctx.port}", flush=True)
+        if self.arkestra:
+            asyncio.create_task(self.arkestra._log(
+                f"[launch] model={ctx.name} pid={ctx.process.pid}"))
 
         # Start log capture: feed stdout/stderr lines into ctx ring buffer
         async def _read_stream(stream: asyncio.Stream, model_name: str) -> None:
@@ -121,6 +124,9 @@ class ProcessModelRunner(BaseModelRunner):
             except (asyncio.TimeoutError, ProcessLookupError):
                 pass
             print(f"[PROCESS] Model {ctx.name} did not exit after SIGHUP — sending SIGKILL", flush=True)
+            if self.arkestra:
+                asyncio.create_task(self.arkestra._log(
+                    f"[kill] model={ctx.name} pid={pid} SIGKILL"))
             try:
                 os.killpg(ctx.process.pid, signal.SIGKILL)
                 await ctx.process.wait()

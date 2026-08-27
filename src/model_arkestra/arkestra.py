@@ -274,7 +274,6 @@ class ModelArkestra:
                     f"Available: {list(self._runner_classes.keys())}"
                 )
             self._runners[key] = cls(self._cm, **self._runner_kwargs)
-            self._runners[key]._arkestra = self  # reference for resolve_config
         return self._runners[key]
 
     # ── backward-compat shims (delegate to unified lazy factory) ─────────
