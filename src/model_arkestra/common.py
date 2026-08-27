@@ -642,10 +642,8 @@ def _resolve_backend(
         if default_id:
             return str(default_id)
 
-    raise RuntimeError(
-        f"No backend specified for model '{model_name}' "
-        "(no override, no per-model 'backend' key, no 'backends.default')"
-    )
+    # Ultimate fallback — matches BaseModelRunner._DEFAULT_BACKEND
+    return "vulkan-radv"
 
 # ── Engine resolution helpers ───────────────────────────────────
 def _resolve_engine(cm: Any, engine_name: Optional[str] = None) -> Dict[str, Any]:

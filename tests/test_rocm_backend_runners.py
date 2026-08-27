@@ -167,11 +167,11 @@ class TestUnknownRunnerRejected:
 
 class TestBackendResolution:
     """Edge cases in backend resolution that need a full ModelArkestra instance."""
-    def test_no_backend_raises(self):
+    def test_no_backend_falls_back(self):
         cfg = _write_config("models:\n  m1:\n    checkpoint: x\n")
         mr = ModelArkestra(cfg)
-        with pytest.raises(RuntimeError, match="No backend specified"):
-            mr._resolve_backend_id("m1", {}, None)
+        # Falls back to BaseModelRunner._DEFAULT_BACKEND when no backend set
+        assert mr._resolve_backend_id("m1", {}, None) == "vulkan-radv"
 
 
 # ── 5. Backend args are resolved correctly ────────────────────────────────

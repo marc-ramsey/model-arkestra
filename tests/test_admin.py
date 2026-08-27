@@ -295,3 +295,42 @@ class TestShutdown:
         body = r.json()
         assert body["ok"] is True
         assert "shutting down" in body["message"].lower()
+
+
+# ── Backend resolution fallback integration ───────────────────────
+
+class TestBackendResolutionFallback:
+    """Model with no backend field falls back to BaseModelRunner default."""
+
+    def test_no_backend_resolves_to_vulkan_radv(self, live_server):
+        """Verify that _resolve_backend chain resolves a model without 'backend:' via the /admin/models route.
+
+        The model 'no-default-test' has no 'backend' key and no global 'backends.default'
+        in its config. Resolution should fall back to BaseModelRunner._DEFAULT_BACKEND
+        (vulkan-radv) end-to-end through the admin API.
+        """
+        import tempfile, os
+        cfg = (
+            "env:\n  ADMIN_KEY: test-key\n"
+            "models:\n"
+            "  no-default-test:\n"
+            "    checkpoint: foo.gguf\n"
+        )
+        fd, path = tempfile.mkstemp(suffix=".yaml")
+        os.write(fd, cfg.encode()); os.close(fd)
+
+        server = ArkestraServer(path, port=18006)
+        try:
+            client = TestClient(server.get_app())
+            client.headers["X-Admin-Key"] = "test-key"
+            r = client.get("/admin/models")
+            assert r.status_code == 200
+            models = r.json()["models"]
+            entry = next((m for m in models if m["id"] == "no-default-test"), None)
+            assert entry is not None, "Model should appear in response"
+            # Resolution chain: per-model (missing) → backends.default (missing) → vulkan-radv
+            assert entry.get("backend_id") == "vulkan-radv", (
+                f"Expected fallback to 'vulkan-radv', got {entry.get('backend_id')!r}"
+            )
+        finally:
+            graceful_server_teardown({"server": server, "client": client})

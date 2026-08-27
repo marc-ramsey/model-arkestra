@@ -120,12 +120,9 @@ class ArkestraAdmin:
                 return bid
         return None
 
-    def _resolve_model_backend(self, model_name: str, model_cfg: dict) -> Optional[str]:
-        """Resolve backend for a model using the normal chain: per-model > backends.default."""
-        try:
-            return _resolve_backend(self.server._arkestra.cm, model_cfg, model_name)
-        except RuntimeError:
-            return model_cfg.get("backend")
+    def _resolve_model_backend(self, model_name: str, model_cfg: dict) -> str:
+        """Resolve backend for a model using the normal chain."""
+        return _resolve_backend(self.server._arkestra.cm, model_cfg, model_name)
 
     def _add_root_route(self) -> None:
         html = Path(__file__).parent.parent.parent / "static" / "index.html"
