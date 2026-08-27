@@ -674,7 +674,11 @@ class ArkestraServer:
         config = uvicorn.Config(app, host="0.0.0.0", port=self.port, log_level="info")
         server = uvicorn.Server(config)
         self._server = server
-        await server.serve()
+        try:
+            await server.serve()
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            # Uvicorn already handled shutdown (SIGINT/SIGTERM).
+            pass
 
     async def shutdown(self) -> None:
         """Stop the proxy server and shut down all models."""
