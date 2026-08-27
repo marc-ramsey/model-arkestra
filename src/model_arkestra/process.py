@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+import logging
 import os
 import signal
 from typing import Any, Dict, List
@@ -7,6 +8,8 @@ from model_arkestra.base import BaseModelRunner
 from model_arkestra.common import _merge_engine_defaults, _resolve_backend, _resolve_engine, build_model_args
 from model_arkestra.llama_cpp import LlamaCppEngine
 from model_arkestra.types import _ModelContext
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -79,6 +82,9 @@ class ProcessModelRunner(BaseModelRunner):
             preexec_fn=os.setsid
         )
 
+        logger.info("Model %s launched: pid=%d binary=%s port=%d",
+                    ctx.name, ctx.process.pid, binary_path, ctx.port)
+
         # Start log capture: feed stdout/stderr lines into ctx ring buffer
         async def _read_stream(stream: asyncio.Stream, model_name: str) -> None:
             """Read one stream and append each line to the model's log buffer."""
@@ -111,16 +117,19 @@ class ProcessModelRunner(BaseModelRunner):
         """Kill model process group using mandated strategy: SIGHUP → wait 20s → SIGKILL."""
         if ctx.process and ctx.process.returncode is None:
             pid = ctx.process.pid
-            if pid:
-                try:
-                    os.killpg(ctx.process.pid, signal.SIGHUP)
-                    await asyncio.wait_for(ctx.process.wait(), timeout=20.0)
-                except (asyncio.TimeoutError, ProcessLookupError):
-                    try:
-                        os.killpg(ctx.process.pid, signal.SIGKILL)
-                        await ctx.process.wait()
-                    except Exception:
-                        pass
+            logger.info("Stopping model %s (pid=%d): sending SIGHUP", ctx.name, pid)
+            try:
+                os.killpg(ctx.process.pid, signal.SIGHUP)
+                await asyncio.wait_for(ctx.process.wait(), timeout=20.0)
+                return
+            except (asyncio.TimeoutError, ProcessLookupError):
+                pass
+            logger.warning("Model %s did not exit after SIGHUP — sending SIGKILL", ctx.name)
+            try:
+                os.killpg(ctx.process.pid, signal.SIGKILL)
+                await ctx.process.wait()
+            except Exception:
+                pass
 
     async def _before_restart(self, ctx: _ModelContext, new_size=None) -> bool:
         """Reset process reference so the next ``_start_model_process`` call creates a fresh one."""
