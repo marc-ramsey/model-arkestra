@@ -77,6 +77,17 @@ function parseClusterPrefix(id) {
     return [id.slice(0, slash), id.slice(slash + 1)];
 }
 
+// Strip 'runnerstate.' prefix and lowercase for CSS class.
+function normalizeStatus(status) {
+    return status.replace('runnerstate.', '').toLowerCase();
+}
+
+// HTML-escape string — handles &, ", <, >.
+function escapeHTML(str) {
+    const s = str || '';
+    return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 // ── 2. Model List — fetch + render accordion items ───────────
 function updateModelCount() {
     const badge = document.getElementById('model-count');
@@ -120,7 +131,7 @@ function buildAccordionItems() {
 
         for (const m of clusterModels) {
             const name = m.id;
-            const statusClass = m.status ? m.status.replace('runnerstate.', '').toLowerCase() : 'uncached';
+            const statusClass = m.status ? normalizeStatus(m.status) : 'uncached';
             const sid = sanitizeId(name);
             html += '<div class="model-row" id="sec-model-' + sid + '" data-model="' + name + '">'
                 + '  <span class="status-dot ' + statusClass + '" id="dot-' + sid + '"></span>'
@@ -197,7 +208,7 @@ async function refreshModels() {
                 const dotId = 'dot-' + sanitizeId(name);
                 const dot = document.getElementById(dotId);
                 if (dot && m.status) {
-                    const statusClass = m.status.replace('runnerstate.', '').toLowerCase();
+                    const statusClass = normalizeStatus(m.status);
                     dot.className = 'status-dot ' + statusClass;
                 }
             }
@@ -249,7 +260,7 @@ async function populateModelPanel(modelName) {
 
         // Checkpoint field
         html += '<div class="edit-field"><label for="mc-checkpoint-' + sanitizeId(modelName) + '">Checkpoint</label>';
-        html += '  <input type="text" id="mc-checkpoint-' + sanitizeId(modelName) + '" value="' + escapeAttr(cfg.checkpoint || '') + '"></div>';
+        html += '  <input type="text" id="mc-checkpoint-' + sanitizeId(modelName) + '" value="' + escapeHTML(cfg.checkpoint || '') + '"></div>';
 
         // Backend select
         const backendSelId = 'mc-backend-' + sanitizeId(modelName);
@@ -259,7 +270,7 @@ async function populateModelPanel(modelName) {
         if (backendOptions) {
             for (const [key, val] of Object.entries(backendOptions)) {
                 const label = (typeof val === 'object') ? (val.host || key) : key;
-                html += '    <option value="' + escapeAttr(key) + '"' + ((cfg.backend === key) ? ' selected' : '') + '>' + escapeHtml(label) + '</option>';
+                html += '    <option value="' + escapeHTML(key) + '"' + ((cfg.backend === key) ? ' selected' : '') + '>' + escapeHTML(label) + '</option>';
             }
         }
         html += '  </select></div>';
@@ -271,14 +282,14 @@ async function populateModelPanel(modelName) {
         html += '    <option value="">(auto)</option>';
         if (runnerTypes) {
             for (const t of runnerTypes) {
-                html += '    <option value="' + escapeAttr(t) + '"' + ((cfg.runner === t) ? ' selected' : '') + '>' + escapeHtml(t) + '</option>';
+                html += '    <option value="' + escapeHTML(t) + '"' + ((cfg.runner === t) ? ' selected' : '') + '>' + escapeHTML(t) + '</option>';
             }
         }
         html += '  </select></div>';
 
         // Args textarea
         html += '<div class="edit-field"><label for="mc-args-' + sanitizeId(modelName) + '">Args</label>';
-        html += '  <textarea id="mc-args-' + sanitizeId(modelName) + '" rows="2">' + escapeHtml(cfg.args || '') + '</textarea></div>';
+        html += '  <textarea id="mc-args-' + sanitizeId(modelName) + '" rows="2">' + escapeHTML(cfg.args || '') + '</textarea></div>';
 
         // Capabilities chips
         const capsId = 'mc-caps-' + sanitizeId(modelName);
@@ -296,11 +307,11 @@ async function populateModelPanel(modelName) {
         // Action buttons
         html += '<div class="model-actions">';
         const btnId = (id) => 'mc-' + id + '-' + sanitizeId(modelName);
-        html += '  <button type="button" title="Reset config to server value" data-model="' + escapeAttr(modelName) + '" data-action="reset" id="' + btnId('reset') + '">↺</button>';
-        html += '  <button type="button" title="Stop model runner" data-model="' + escapeAttr(modelName) + '" data-action="stop" id="' + btnId('stop') + '" class="btn-danger">⏹</button>';
-        html += '  <button type="button" title="Start/Restart with current config" data-model="' + escapeAttr(modelName) + '" data-action="start" id="' + btnId('start') + '" class="btn-success">▶</button>';
-        html += '  <button type="button" title="Save config changes" data-model="' + escapeAttr(modelName) + '" data-action="save" id="' + btnId('save') + '">✓</button>';
-        html += '  <button type="button" title="Eject model (stop + delete cache)" data-model="' + escapeAttr(modelName) + '" data-action="eject" id="' + btnId('eject') + '" class="btn-danger">⏏</button>';
+        html += '  <button type="button" title="Reset config to server value" data-model="' + escapeHTML(modelName) + '" data-action="reset" id="' + btnId('reset') + '">↺</button>';
+        html += '  <button type="button" title="Stop model runner" data-model="' + escapeHTML(modelName) + '" data-action="stop" id="' + btnId('stop') + '" class="btn-danger">⏹</button>';
+        html += '  <button type="button" title="Start/Restart with current config" data-model="' + escapeHTML(modelName) + '" data-action="start" id="' + btnId('start') + '" class="btn-success">▶</button>';
+        html += '  <button type="button" title="Save config changes" data-model="' + escapeHTML(modelName) + '" data-action="save" id="' + btnId('save') + '">✓</button>';
+        html += '  <button type="button" title="Eject model (stop + delete cache)" data-model="' + escapeHTML(modelName) + '" data-action="eject" id="' + btnId('eject') + '" class="btn-danger">⏏</button>';
         html += '</div>';
 
         panel.innerHTML = html;
@@ -432,16 +443,6 @@ async function modelAction(modelName, action) {
 async function startModel(modelName) { await modelAction(modelName, 'start'); }
 async function stopModel(modelName)  { await modelAction(modelName, 'stop'); }
 async function ejectModel(modelName) { await modelAction(modelName, 'eject'); }
-
-// HTML escaping helpers
-function escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str || '';
-    return div.innerHTML;
-}
-function escapeAttr(str) {
-    return (str || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
 
 // ── 4. Model Selection ────────────────────────────────────
 async function selectModel(name) {
