@@ -187,7 +187,7 @@ class ArkestraAdmin:
                         is_cached = cache_path.exists() if cache_path else False
                         entry = {
                             "id": model_name,
-                            "status": {"value": "unloaded"} if not is_cached else {"value": "sleeping"},
+                            "status": {"value": "cached"} if is_cached else {"value": "uncached"},
                             "port": None,
                             "runner_type": None,
                             "backend_id": self._resolve_model_backend(model_name, model_cfg),
