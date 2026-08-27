@@ -185,12 +185,14 @@ class ArkestraAdmin:
                         base_checkpoint = checkpoint.split(":")[0] if ":" in checkpoint else checkpoint
                         cache_path = Path(hf_cache).expanduser() / f"models--{base_checkpoint.replace('/', '--')}" if base_checkpoint else None
                         is_cached = cache_path.exists() if cache_path else False
+                        resolved_backend = self._resolve_model_backend(model_name, model_cfg)
+                        _, runner_type = image_and_runner_for_backend(self.server._arkestra.cm.data, resolved_backend)
                         entry = {
                             "id": model_name,
                             "status": {"value": "cached"} if is_cached else {"value": "uncached"},
                             "port": None,
-                            "runner_type": None,
-                            "backend_id": self._resolve_model_backend(model_name, model_cfg),
+                            "runner_type": runner_type,
+                            "backend_id": resolved_backend,
                             "args": model_cfg.get("args", ""),
                             "checkpoint": checkpoint,
                             "capabilities": model_cfg.get("capabilities", []),
