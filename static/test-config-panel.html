@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Config Panel Test</title>
+    <meta name="arkestra-admin-key" content="whatever">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: ui-sans-serif, system-ui, sans-serif; background: #1a1b26; color: #c0caf5; padding: 16px; }
+        h2 { margin: 16px 0 8px; font-size: 14px; color: #7aa2f7; }
+
+        .model-row { display: block; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 13px; margin-bottom: 2px; }
+        .model-row:hover { background: #24283b; }
+        .model-name-bar { display: flex; align-items: center; gap: 8px; }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+        .status-dot.cached { background: #41a2f5; }
+        .model-name { font-size: 12px; }
+
+        .model-config-panel { display: none; border-top: 1px solid #414868; padding: 8px; margin-top: 4px; background: #16161e; }
+        .model-row.expanded .model-config-panel { display: block; }
+
+        .edit-form-grid { display: grid; gap: 6px; }
+        .edit-field label { display: block; font-size: 10px; font-weight: 600; color: #565f8e; text-transform: uppercase; margin-bottom: 2px; }
+        .edit-field input, .edit-field select, .edit-field textarea {
+            width: 100%; padding: 4px 6px; border: 1px solid #414868; border-radius: 4px;
+            font-size: 12px; background: #1a1b26; color: #c0caf5; outline: none;
+        }
+        .edit-field textarea { min-height: 40px; max-height: 80px; resize: vertical; }
+
+        .model-actions { display: flex; gap: 4px; margin-top: 8px; padding-top: 6px; border-top: 1px solid #414868; }
+        .model-actions button { width: 32px; height: 24px; border: 1px solid #414868; border-radius: 4px;
+            background: #24283b; color: #c0caf5; font-size: 13px; cursor: pointer; }
+        .model-actions button.btn-success { color: #9ece6a; }
+        .model-actions button.btn-danger { color: #f7768e; }
+
+        #debug-log { margin-top: 20px; font-family: monospace; font-size: 11px; background: #0d0d14; padding: 8px; border-radius: 4px; max-height: 300px; overflow-y: auto; }
+        #debug-log div { margin: 2px 0; }
+        .log-ok { color: #9ece6a; }
+        .log-err { color: #f7768e; }
+        .log-info { color: #7aa2f7; }
+    </style>
+</head>
+<body>
+
+<h2>Model Rows (left panel simulation)</h2>
+<div id="model-accordion-items">
+    <!-- Row 1 -->
+    <div class="cluster-item" id="sec-cluster-local">
+        <div class="cluster-header"><span class="cluster-name">local</span></div>
+        <div class="cluster-models">
+            <div class="model-row" id="sec-model-gemma" data-model="gemma-4-e2b">
+                <div class="model-name-bar">
+                    <span class="status-dot cached"></span>
+                    <span class="model-name">Gemma 4 E2B</span>
+                </div>
+                <div class="model-config-panel" id="body-gemma">
+                    <p class="placeholder-text">Click to load configuration…</p>
+                </div>
+            </div>
+            <div class="model-row" id="sec-model-qwen" data-model="qwen3.6-35B-think">
+                <div class="model-name-bar">
+                    <span class="status-dot uncached"></span>
+                    <span class="model-name">Qwen 3.6 35B</span>
+                </div>
+                <div class="model-config-panel" id="body-qwen">
+                    <p class="placeholder-text">Click to load configuration…</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<h2>Debug Output</h2>
+<div id="debug-log"></div>
+
+<script>
+// ── Minimal logging ────────────────────────────────────────
+function log(msg, cls = 'log-info') {
+    const d = document.createElement('div');
+    d.className = cls;
+    d.textContent = `[${new Date().toISOString().substr(11,8)}] ${msg}`;
+    document.getElementById('debug-log').appendChild(d);
+}
+
+// ── Minimal escapeHTML ────────────────────────────────────
+function escapeHTML(s) { return String(s || '').replace(/[&"<>]/g, c => ({'&':'&amp;','"':'&quot;','<':'&lt;','>':'&gt;'}[c])); }
+
+// ── Minimal sanitizeId ───────────────────────────────────
+function sanitizeId(s) { return String(s || '').replace(/[^a-zA-Z0-9_-]/g, '_'); }
+
+// ── State (same as app.js) ───────────────────────────────
+let modelStates = {};
+let backendOptions = {'vulkan-radv': 'vulkan-radv', 'rocm': 'rocm'};
+let runnerTypes = ['process', 'podman'];
+
+// ── simulate adminGet (real server call) ─────────────────
+async function adminGet(path) {
+    const key = document.querySelector('meta[name="arkestra-admin-key"]')?.content || '';
+    const resp = await fetch(path, { headers: {'X-Admin-Key': key} });
+    if (!resp.ok) throw new Error(`[${resp.status}] ${resp.statusText}`);
+    return resp.json();
+}
+
+// ── populateModelPanel (exact copy from app.js) ───────────
+async function populateModelPanel(modelName) {
+    log('populateModelPanel called with: ' + modelName, 'log-info');
+    console.log('[populateModelPanel] modelName=', modelName, 'typeof modelStates=', typeof modelStates);
+
+    // Find the model row by data-model attribute, then get its nested config panel
+    const row = document.querySelector('.model-row[data-model="' + escapeHTML(modelName) + '"]');
+    if (!row) { log('no row found', 'log-err'); return; }
+    log('row found: ' + row.id, 'log-ok');
+
+    const panel = row.querySelector('.model-config-panel');
+    if (!panel) { log('no panel found', 'log-err'); return; }
+    log('panel found', 'log-ok');
+
+    try {
+        log('fetching /admin/config/' + modelName, 'log-info');
+        const data = await adminGet('/admin/config/' + encodeURIComponent(modelName));
+        log('api returned: ok=' + !!data?.ok + ', configType=' + typeof (data?.config), 'log-ok');
+
+        if (!data || !data.config) { log('early return: no data/config', 'log-err'); return; }
+        log('data.config exists, proceeding...', 'log-info');
+
+        const cfg = data.config;
+        const allCaps = data.available_capabilities || ['chat'];
+
+        log('about to assign modelStates[' + JSON.stringify(modelName) + '] = ...', 'log-info');
+        log('typeof modelStates before assignment: ' + typeof modelStates, 'log-info');
+        log('modelStates keys: ' + Object.keys(modelStates).join(', '), 'log-info');
+
+        // This line is the one that fails:
+        try {
+            modelStates[modelName] = { config: cfg, snapshot: JSON.parse(JSON.stringify(cfg)), dirty: false, allCaps };
+            log('SUCCESS: stored in modelStates, keys=' + Object.keys(modelStates).join(', '), 'log-ok');
+        } catch(assignErr) {
+            log('ASSIGNMENT ERROR: ' + assignErr.message, 'log-err');
+            return;
+        }
+
+        let html = '';
+        html += '<div class="edit-form-grid">';
+        html += '<div class="edit-field"><label for="mc-checkpoint-' + sanitizeId(modelName) + '">Checkpoint</label>';
+        html += '  <input type="text" id="mc-checkpoint-' + sanitizeId(modelName) + '" value="' + escapeHTML(cfg.checkpoint || '') + '"></div>';
+        html += '<div class="edit-field"><label for="mc-backend-' + sanitizeId(modelName) + '">Backend</label>';
+        html += '  <select id="mc-backend-' + sanitizeId(modelName) + '">';
+        html += '    <option value="">(default)</option>';
+        if (backendOptions) {
+            for (const [key, val] of Object.entries(backendOptions)) {
+                const label = (typeof val === 'object') ? (val.host || key) : key;
+                html += '    <option value="' + escapeHTML(key) + '"' + ((cfg.backend === key) ? ' selected' : '') + '>' + escapeHTML(label) + '</option>';
+            }
+        }
+        html += '  </select></div>';
+        html += '<div class="edit-field"><label for="mc-args-' + sanitizeId(modelName) + '">Args</label>';
+        html += '  <textarea id="mc-args-' + sanitizeId(modelName) + '" rows="2">' + escapeHTML(typeof cfg.args === 'object' ? JSON.stringify(cfg.args, null, 2) : (cfg.args || '')) + '</textarea></div>';
+        html += '</div>';
+
+        html += '<div class="model-actions">';
+        html += '  <button type="button" data-action="reset" id="mc-reset-' + sanitizeId(modelName) + '">↺</button>';
+        html += '  <button type="button" data-action="stop" id="mc-stop-' + sanitizeId(modelName) + '" class="btn-danger">⏹</button>';
+        html += '  <button type="button" data-action="start" id="mc-start-' + sanitizeId(modelName) + '" class="btn-success">▶</button>';
+        html += '  <button type="button" data-action="save" id="mc-save-' + sanitizeId(modelName) + '">✓</button>';
+        html += '  <button type="button" data-action="eject" id="mc-eject-' + sanitizeId(modelName) + '" class="btn-danger">⏏</button>';
+        html += '</div>';
+
+        panel.innerHTML = html;
+        log('panel innerHTML set, length=' + (html.length || ''), 'log-ok');
+
+        // Wire up action buttons via delegation on the panel
+        panel.querySelector('[data-action="save"]')?.addEventListener('click', e => { e.stopPropagation();
+            log('SAVE button clicked!', 'log-ok');
+            const body = {};
+            body.checkpoint = document.getElementById('mc-checkpoint-' + sanitizeId(modelName))?.value || '';
+            body.backend = (document.getElementById('mc-backend-' + sanitizeId(modelName))?.value) || undefined;
+            body.runner = (document.getElementById('mc-runner-' + sanitizeId(modelName))?.value) || undefined;
+            body.args = (document.getElementById('mc-args-' + sanitizeId(modelName))?.value) || undefined;
+            log('save values: checkpoint=' + body.checkpoint.substring(0,30), 'log-info');
+        });
+        panel.querySelector('[data-action="start"]')?.addEventListener('click', e => { e.stopPropagation();
+            log('START button clicked!', 'log-ok');
+        });
+        panel.querySelector('[data-action="stop"]')?.addEventListener('click', e => { e.stopPropagation();
+            log('STOP button clicked!', 'log-ok');
+        });
+        panel.querySelector('[data-action="reset"]')?.addEventListener('click', e => { e.stopPropagation();
+            log('RESET button clicked!', 'log-ok');
+        });
+        panel.querySelector('[data-action="eject"]')?.addEventListener('click', e => { e.stopPropagation();
+            log('EJECT button clicked!', 'log-ok');
+        });
+
+        // Wire up inputs for dirty detection
+        panel.querySelectorAll('input, select, textarea').forEach(el => {
+            el.addEventListener('input', () => { log('input changed: ' + el.id, 'log-info'); });
+        });
+
+    } catch (e) {
+        log('FAILED to load config: ' + e.message, 'log-err');
+        panel.innerHTML = '<p style="color:#f7768e">Failed: ' + escapeHTML(e.message) + '</p>';
+    }
+}
+
+// ── toggleAccordion (exact copy from app.js) ──────────────
+function toggleAccordion(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const wasCollapsed = el.classList.contains('collapsed');
+    el.classList.toggle('collapsed');
+    if (el.classList.contains('model-row')) {
+        const wasExpanded = el.classList.contains('expanded');
+        el.classList.toggle('expanded', !wasCollapsed);
+        log('model row click: expanded=' + !wasExpanded + ' (wasExpanded=' + wasExpanded + ', wasCollapsed=' + wasCollapsed + ')', 'log-info');
+        if (!wasExpanded) {
+            const modelName = el.dataset.model;
+            if (modelName) populateModelPanel(modelName);
+        }
+    }
+}
+
+// ── Event handlers ────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+    // Handle click on model rows via event delegation
+    document.getElementById('model-accordion-items').addEventListener('click', (e) => {
+        const row = e.target.closest('.model-row');
+        if (row) {
+            log('event delegation: clicked .model-row id=' + row.id, 'log-info');
+            toggleAccordion(row.id);
+        }
+    });
+
+    // Click cluster header to expand
+    document.querySelector('.cluster-header')?.addEventListener('click', () => {
+        log('cluster header clicked', 'log-info');
+        toggleAccordion('sec-cluster-local');
+    });
+
+    log('DOMContentLoaded — modelStates type: ' + typeof modelStates, 'log-info');
+    log('modelStates === window.modelStates: ' + (modelStates === window.modelStates), 'log-info');
+});
+</script>
+</body>
+</html>

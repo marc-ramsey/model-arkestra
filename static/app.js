@@ -347,12 +347,13 @@ async function populateModelPanel(modelName) {
             el.addEventListener('input', () => maybeUpdateDirty(modelName));
         });
 
-        // Wire up action buttons via delegation on the panel
-        panel.querySelector('[data-action="save"]')?.addEventListener('click', () => saveModelConfig(modelName));
-        panel.querySelector('[data-action="reset"]')?.addEventListener('click', () => resetModelConfig(modelName));
-        panel.querySelector('[data-action="start"]')?.addEventListener('click', () => startModel(modelName));
-        panel.querySelector('[data-action="stop"]')?.addEventListener('click', () => stopModel(modelName));
-        panel.querySelector('[data-action="eject"]')?.addEventListener('click', () => ejectModel(modelName));
+        // Wire up action buttons — stopPropagation to prevent bubbling
+        // to .model-row click handler which would toggle accordion state
+        panel.querySelector('[data-action="save"]')?.addEventListener('click', e => { e.stopPropagation(); saveModelConfig(modelName); });
+        panel.querySelector('[data-action="reset"]')?.addEventListener('click', e => { e.stopPropagation(); resetModelConfig(modelName); });
+        panel.querySelector('[data-action="start"]')?.addEventListener('click', e => { e.stopPropagation(); startModel(modelName); });
+        panel.querySelector('[data-action="stop"]')?.addEventListener('click', e => { e.stopPropagation(); stopModel(modelName); });
+        panel.querySelector('[data-action="eject"]')?.addEventListener('click', e => { e.stopPropagation(); ejectModel(modelName); });
 
     } catch (e) {
         console.error('[admin] failed to load config for ' + modelName + ':', e.message);
