@@ -302,12 +302,12 @@ class TestShutdown:
 class TestBackendResolutionFallback:
     """Model with no backend field falls back to BaseModelRunner default."""
 
-    def test_no_backend_resolves_to_vulkan_radv(self, live_server):
+    def test_no_backend_resolves_to_cpu(self, live_server):
         """Verify that _resolve_backend chain resolves a model without 'backend:' via the /admin/models route.
 
         The model 'no-default-test' has no 'backend' key and no global 'backends.default'
         in its config. Resolution should fall back to BaseModelRunner._DEFAULT_BACKEND
-        (vulkan-radv) end-to-end through the admin API.
+        (cpu) end-to-end through the admin API.
         """
         import tempfile, os
         cfg = (
@@ -328,9 +328,9 @@ class TestBackendResolutionFallback:
             models = r.json()["models"]
             entry = next((m for m in models if m["id"] == "no-default-test"), None)
             assert entry is not None, "Model should appear in response"
-            # Resolution chain: per-model (missing) → backends.default (missing) → vulkan-radv
-            assert entry.get("backend_id") == "vulkan-radv", (
-                f"Expected fallback to 'vulkan-radv', got {entry.get('backend_id')!r}"
+            # Resolution chain: per-model (missing) → backends.default (missing) → cpu
+            assert entry.get("backend_id") == "cpu", (
+                f"Expected fallback to 'cpu', got {entry.get('backend_id')!r}"
             )
         finally:
             graceful_server_teardown({"server": server, "client": client})

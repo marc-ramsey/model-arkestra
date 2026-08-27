@@ -649,7 +649,7 @@ def _resolve_backend(
             return str(default_id)
 
     # Ultimate fallback — matches BaseModelRunner._DEFAULT_BACKEND
-    return "vulkan-radv"
+    return "cpu"
 
 # ── Engine resolution helpers ───────────────────────────────────
 def _resolve_engine(cm: Any, engine_name: Optional[str] = None) -> Dict[str, Any]:

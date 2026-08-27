@@ -171,7 +171,7 @@ class TestBackendResolution:
         cfg = _write_config("models:\n  m1:\n    checkpoint: x\n")
         mr = ModelArkestra(cfg)
         # Falls back to BaseModelRunner._DEFAULT_BACKEND when no backend set
-        assert mr._resolve_backend_id("m1", {}, None) == "vulkan-radv"
+        assert mr._resolve_backend_id("m1", {}, None) == "cpu"
 
     def test_flat_backend_default_key(self):
         """backend-default at top level is respected."""

@@ -8,6 +8,7 @@ import socket
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator, Dict, Optional, Set
 import aiohttp
+from model_arkestra.common import _resolve_backend
 from model_arkestra.http_proxy import sse_events, parse_completion
 from model_arkestra.common import default_cache_root
 from model_arkestra.unicode_ringbuffer import UnicodeRingBuffer
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 class BaseModelRunner(ABC):
     LOG_BUFFER_DEFAULT = 2000  # max lines in model log ring buffer
-    _DEFAULT_BACKEND = "vulkan-radv"
+    _DEFAULT_BACKEND = "cpu"
     _DEFAULT_RUNNER = "process"
     _LLAMA_FIELDS = frozenset({
         "temperature", "top_p", "top_k", "repetition_penalty",
@@ -388,6 +389,9 @@ class BaseModelRunner(ABC):
                 raise ModelNotStarted(model_name)
 
             effective_backend = backend or model_data.get("backend")
+            effective_backend = _resolve_backend(self.cm, model_data, model_name, effective_backend)
+            if not effective_backend:
+                raise RuntimeError(f"No backend resolved for model '{model_name}'")
             log_size = inference_kwargs.get("max_log_lines", self.log_buffer_size)
 
             ctx = _ModelContext(model_name, eff_port, max_log_lines=log_size)

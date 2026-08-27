@@ -3,7 +3,7 @@
 Tests that effective (backend_id, runner_type) resolution follows the correct
 priority chain with hardwired fallbacks:
 
-  Backend: model["backend"] → backends.default → _DEFAULT_BACKEND ("vulkan-radv")
+  Backend: model["backend"] → backends.default → _DEFAULT_BACKEND ("cpu")
   Runner:  backend.runner → runners.default → _DEFAULT_RUNNER ("process")
 """
 from __future__ import annotations
@@ -49,9 +49,9 @@ class TestBackendPriority:
         assert backend_id == "vulkan-radv"
 
     def test_hardwired_default_when_no_backends_section(self, runners_cfg):
-        """No backends at all → _DEFAULT_BACKEND ("vulkan-radv")."""
+        """No backends at all → _DEFAULT_BACKEND ("cpu")."""
         backend_id, _ = BaseModelRunner.resolve_defaults(None, runners_cfg)
-        assert backend_id == "vulkan-radv"
+        assert backend_id == "cpu"
 
     def test_hardwired_default_when_no_backends_default_key(self, runners_cfg):
         """backends dict exists but no "default" key → _DEFAULT_BACKEND."""
@@ -61,12 +61,12 @@ class TestBackendPriority:
         backend_id, _ = BaseModelRunner.resolve_defaults(
             backends_no_default, runners_cfg
         )
-        assert backend_id == "vulkan-radv"
+        assert backend_id == "cpu"
 
     def test_empty_backend_config_uses_hardwired(self):
         """{} backends → _DEFAULT_BACKEND."""
         backend_id, _ = BaseModelRunner.resolve_defaults({}, {})
-        assert backend_id == "vulkan-radv"
+        assert backend_id == "cpu"
 
 
 # ── Tests: Runner priority ─────────────────────────────────────────────────
@@ -101,7 +101,7 @@ class TestRunnerPriority:
     def test_hardwired_runner_when_both_sections_missing(self):
         """No backends and no runners → both hardwired."""
         backend_id, runner = BaseModelRunner.resolve_defaults(None, None)
-        assert backend_id == "vulkan-radv"
+        assert backend_id == "cpu"
         assert runner == "process"
 
 
@@ -110,7 +110,7 @@ class TestRunnerPriority:
 
 class TestHardwiredConstants:
     def test_default_backend_is_class_constant(self):
-        assert BaseModelRunner._DEFAULT_BACKEND == "vulkan-radv"
+        assert BaseModelRunner._DEFAULT_BACKEND == "cpu"
 
     def test_default_runner_is_class_constant(self):
         assert BaseModelRunner._DEFAULT_RUNNER == "process"

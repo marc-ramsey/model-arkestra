@@ -4,7 +4,7 @@ import os
 import signal
 from typing import Any, Dict, List
 from model_arkestra.base import BaseModelRunner
-from model_arkestra.common import _merge_engine_defaults, _resolve_engine, build_model_args
+from model_arkestra.common import _merge_engine_defaults, _resolve_backend, _resolve_engine, build_model_args
 from model_arkestra.llama_cpp import LlamaCppEngine
 from model_arkestra.types import _ModelContext
 
@@ -27,8 +27,7 @@ class ProcessModelRunner(BaseModelRunner):
 
         # Resolve backend and merge engine defaults.
         be_id = ctx.backend_id or model_data.get("backend")
-        if not be_id:
-            be_id = self.cm.data.get("backends", {}).get("default")
+        be_id = _resolve_backend(self.cm, model_data, ctx.name, be_id)
         backend = self.cm.get_backend(be_id) if be_id else {}
 
         # Resolve engine and merge its defaults into the backend config.
