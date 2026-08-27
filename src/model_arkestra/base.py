@@ -405,8 +405,7 @@ class BaseModelRunner(ABC):
                 os.makedirs(ctx._cache_dir, exist_ok=True)
             self._models[model_name] = ctx
             ctx.state = RunnerState.LOADING
-            logger.info("Starting model %s on port %d (backend=%s, runner=%s)",
-                        model_name, eff_port, effective_backend, type(self).__name__)
+            print(f"[RUNNER:{type(self).__name__}] Starting model {model_name} on port {eff_port} (backend={effective_backend})", flush=True)
 
         await self._ensure_port_available(eff_port)
 
@@ -465,7 +464,7 @@ class BaseModelRunner(ABC):
                 f"within {self.ready_timeout}s"
             )
 
-        logger.info("Model %s ready on port %d", model_name, eff_port)
+        print(f"[RUNNER:{type(self).__name__}] Model {model_name} ready on port {eff_port}", flush=True)
         await asyncio.sleep(self.warmup_delay)
 
         ctx.state = RunnerState.RUNNING
@@ -484,13 +483,13 @@ class BaseModelRunner(ABC):
             if hasattr(self, '_cancel_log_task'):
                 self._cancel_log_task(ctx)
         ctx.state = RunnerState.STOPPING
-        logger.info("Stopping model %s (port=%d)", ctx.name, ctx.port)
+        print(f"[RUNNER:{type(self).__name__}] Stopping model {ctx.name} (port={ctx.port})", flush=True)
         await self._stop_model_process(ctx)
         # Release port but keep entry for restart-on-start semantics
         if hasattr(ctx, 'port'):
             await self._release_port(ctx.port)
         ctx.state = RunnerState.STOPPED
-        logger.info("Model %s stopped", ctx.name)
+        print(f"[RUNNER:{type(self).__name__}] Model {ctx.name} stopped", flush=True)
 
     async def stop_all(self) -> None:
         """Stop all model processes, leaving entries in STOPPED state for restart-on-start."""

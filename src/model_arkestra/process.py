@@ -1,6 +1,5 @@
 from __future__ import annotations
 import asyncio
-import logging
 import os
 import signal
 from typing import Any, Dict, List
@@ -8,8 +7,6 @@ from model_arkestra.base import BaseModelRunner
 from model_arkestra.common import _merge_engine_defaults, _resolve_backend, _resolve_engine, build_model_args
 from model_arkestra.llama_cpp import LlamaCppEngine
 from model_arkestra.types import _ModelContext
-
-logger = logging.getLogger(__name__)
 
 
 
@@ -82,8 +79,7 @@ class ProcessModelRunner(BaseModelRunner):
             preexec_fn=os.setsid
         )
 
-        logger.info("Model %s launched: pid=%d binary=%s port=%d",
-                    ctx.name, ctx.process.pid, binary_path, ctx.port)
+        print(f"[PROCESS] Model {ctx.name} launched: pid={ctx.process.pid} binary={binary_path} port={ctx.port}", flush=True)
 
         # Start log capture: feed stdout/stderr lines into ctx ring buffer
         async def _read_stream(stream: asyncio.Stream, model_name: str) -> None:
@@ -117,14 +113,14 @@ class ProcessModelRunner(BaseModelRunner):
         """Kill model process group using mandated strategy: SIGHUP → wait 20s → SIGKILL."""
         if ctx.process and ctx.process.returncode is None:
             pid = ctx.process.pid
-            logger.info("Stopping model %s (pid=%d): sending SIGHUP", ctx.name, pid)
+            print(f"[PROCESS] Stopping model {ctx.name} (pid={pid}): sending SIGHUP", flush=True)
             try:
                 os.killpg(ctx.process.pid, signal.SIGHUP)
                 await asyncio.wait_for(ctx.process.wait(), timeout=20.0)
                 return
             except (asyncio.TimeoutError, ProcessLookupError):
                 pass
-            logger.warning("Model %s did not exit after SIGHUP — sending SIGKILL", ctx.name)
+            print(f"[PROCESS] Model {ctx.name} did not exit after SIGHUP — sending SIGKILL", flush=True)
             try:
                 os.killpg(ctx.process.pid, signal.SIGKILL)
                 await ctx.process.wait()
