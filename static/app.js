@@ -1,5 +1,6 @@
 // ── 1.0 Configuration ─────────────────────────────────────
-const ADMIN_KEY    = document.querySelector('meta[name="arkestra-admin-key"]')?.content || '';
+const ADMIN_KEY    = (document.querySelector('meta[name="arkestra-admin-key"]')?.content) || '';
+console.log('[app] ADMIN_KEY:', ADMIN_KEY ? 'set (' + ADMIN_KEY.length + ' chars)' : 'EMPTY');
 const BASE_URL     = window.location.origin;
 const POLL_INTERVAL = 2000;            // ms — settable constant for model status polling
 

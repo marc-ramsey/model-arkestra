@@ -170,7 +170,8 @@ class ArkestraAdmin:
             if not file_path.is_file():
                 raise HTTPException(404, "Not found")
             mime = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
-            return Response(content=file_path.read_bytes(), media_type=mime)
+            return Response(content=file_path.read_bytes(), media_type=mime,
+                            headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
     def _add_auth_middleware(self) -> None:
         # Always install the middleware (plumbing stays in place even when no key is set).
