@@ -176,6 +176,7 @@ async function refreshModels() {
             const newNames = new Set(statusData.models.map(m => m.id));
             const oldNames = new Set(modelsCache.map(m => m.id));
             listChanged = newNames.size !== oldNames || ![...newNames].every(n => oldNames.has(n));
+            if (listChanged) console.log('[refreshModels] list changed:', [...newNames], '→', [...oldNames]);
 
             modelsCache = statusData.models;
             backendOptions = statusData.backends || {};
@@ -211,6 +212,7 @@ async function refreshModels() {
         // Status-only changes just update dots — avoids destroying config panels,
         // button listeners, and expanded state on every 2s poll.
         if (listChanged || !document.getElementById('model-accordion-items')) {
+            console.log('[refreshModels] REBUILDING accordion (listChanged=' + listChanged + ', elemExists=' + !!document.getElementById('model-accordion-items') + ')');
             buildAccordionItems();
         } else {
             // Update status dots and cluster health in-place — no flicker.
@@ -272,6 +274,7 @@ function populateRightDropdowns() {
 
 // ── 3. Per-model config panel on expand ────────────────────
 async function populateModelPanel(modelName) {
+    console.log('[populateModelPanel] called for', modelName);
     // Find the model row by data-model attribute, then get its nested config panel
     const row = document.querySelector('.model-row[data-model="' + escapeHTML(modelName) + '"]');
     if (!row) return;
