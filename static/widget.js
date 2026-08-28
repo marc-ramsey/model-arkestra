@@ -369,7 +369,9 @@ function startLogPoll(modelId) {
     const poll = async () => {
         try {
             if (!modelId) return;
-            const data = await adminGet('/admin/log/' + encodeURIComponent(modelId), { lines:200, since:logSince || undefined });
+            const params = { lines: 200 };
+            if (logSince) params.since = logSince;
+            const data = await adminGet('/admin/log/' + encodeURIComponent(modelId), params);
             if (!data?.lines?.length) return;
 
             const display = document.getElementById('log-display');
