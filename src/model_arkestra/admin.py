@@ -87,8 +87,12 @@ class ArkestraAdmin:
     def _load_schema_registry(self) -> None:
         """Load named schemas from schemas.yaml in the config directory."""
         import yaml
-        parent = Path(self.server._arkestra._config_path).parent
-        schema_path = parent / "schemas.yaml"
+        try:
+            parent = Path(self.server._arkestra._config_path).parent
+            schema_path = parent / "schemas.yaml"
+        except (AttributeError, TypeError):
+            self._schemas = {}
+            return
         if schema_path.exists():
             with open(schema_path) as f:
                 self._schemas = yaml.safe_load(f) or {}
