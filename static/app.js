@@ -465,12 +465,29 @@ async function modelAction(modelName, action) {
             body = { ...getModelFormValues(modelName), capabilities: getModelCapabilities(modelName) };
         }
         await adminPost('/admin/' + action + '/' + encodeURIComponent(modelName), body);
-        refreshModels();
     } catch (e) {
         console.error('[admin] ' + action + ' failed for ' + modelName + ':', e.message);
+        // Show visible error feedback
+        const msg = document.getElementById('action-status');
+        if (!msg) { /* create inline status area in right panel */
+            const header = document.querySelector('.right-panel-header, #config-header');
+            if (header) {
+                msg = document.createElement('div');
+                msg.id = 'action-status';
+                msg.style.cssText = 'padding:8px 12px;margin:0;background:#2a0a0a;color:#ff6b6b;font-size:13px;border-radius:4px;';
+                header.after(msg);
+            }
+        }
+        if (msg) {
+            msg.textContent = action + ' failed: ' + e.message;
+            msg.className = 'action-status-error';
+            setTimeout(() => { msg.textContent = ''; }, 8000);
+        }
+        return; // skip refreshModels on failure
     } finally {
         btn.disabled = origDisabled;
     }
+    refreshModels();
 }
 
 async function startModel(modelName) { await modelAction(modelName, 'start'); }
