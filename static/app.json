@@ -1,0 +1,7 @@
+{ "widget":"SplitPane", "axis":"h", "ratio":40, "children":[
+    { "widget":"AccordionContainer" },
+    { "widget":"SplitPane", "axis":"v", "ratio":65, "children":[
+        { "widget":"LogPane" },
+        { "widget":"ChatPane" }
+    ]}
+]}

@@ -8,92 +8,13 @@
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-
-    <!-- ── Header ──────────────────────────────────────────────── -->
     <header class="header-bar">
-        <div class="title">
-            ArkestraAdmin
-            <span class="model-count" id="model-count"></span>
-            <button id="btn-collapse-all" title="Collapse all expanded items" style="font-size:11px;padding:3px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-alt);color:var(--text);cursor:pointer;">▼ Collapse All</button>
-        </div>
+        <div class="title">ArkestraAdmin</div>
+        <button id="btn-collapse-all" title="Collapse all">v</button>
     </header>
-
-    <!-- ── Main Layout ─────────────────────────────────────────── -->
-    <div class="layout">
-
-        <!-- ── Left Column — single accordion widget ─────────────── -->
-        <aside class="left-panel" id="left-panel">
-            <section class="accordion" id="left-accordion">
-                <!-- Settings placeholder (disabled, collapsed) -->
-                <section class="accordion-item collapsed" id="sec-settings">
-                    <h3>⚙ Settings</h3>
-                    <div class="acc-body"><p class="placeholder-text">Server configuration — coming soon.</p></div>
-                </section>
-                <!-- Model items: dynamically generated at runtime -->
-                <div id="model-accordion-items"></div>
-            </section>
-        </aside>
-
-        <!-- Vertical divider (for resize) -->
-        <div class="divider-v" id="col-divider"></div>
-
-        <!-- ── Right Column — two independent panes ──────────────── -->
-        <main class="right-panel" id="right-panel">
-            <!-- Logs Pane -->
-            <div class="pane pane-logs" id="pane-logs">
-                <div class="pane-header">
-                    <label>Select Model:</label>
-                    <select id="log-model-select"></select>
-                </div>
-                <pre class="log-container" id="log-display"></pre>
-            </div>
-
-            <!-- Horizontal divider (for resize) -->
-            <div class="divider-h" id="row-divider"></div>
-
-            <!-- Chat Pane -->
-            <div class="pane pane-chat" id="pane-chat">
-                <div class="pane-header">
-                    <label>Select Model:</label>
-                    <select id="chat-model-select"></select>
-                    <span class="chat-params-toggle" id="right-chat-params-toggle">⚙ Parameters ▾</span>
-                </div>
-                <div class="chat-messages" id="chat-display"></div>
-
-                <div class="chat-params-panel" id="chat-params-panel">
-                    <div class="chat-params-grid">
-                        <div class="chat-param">
-                            <label for="rcp-temp">Temperature</label>
-                            <input type="number" id="rcp-temp" min="0" max="2" step="0.05" value="0.7">
-                        </div>
-                        <div class="chat-param">
-                            <label for="rcp-max-tokens">Max Tokens</label>
-                            <input type="number" id="rcp-max-tokens" min="1" max="8192" step="1" value="512">
-                        </div>
-                        <div class="chat-param">
-                            <label for="rcp-top-p">Top-P</label>
-                            <input type="number" id="rcp-top-p" min="0" max="1" step="0.05" value="0.95">
-                        </div>
-                        <div class="chat-param">
-                            <label for="rcp-top-k">Top-K</label>
-                            <input type="number" id="rcp-top-k" min="1" max="256" step="1" value="40">
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Chat input bar -->
-                <div class="chat-input-bar">
-                    <input type="text" id="chat-input" placeholder="Type a message…">
-                    <button id="chat-send-btn">Send</button>
-                    <span class="chat-status" id="chat-status"></span>
-                </div>
-            </div>
-        </main>
-
-    </div>
-
-    <!-- ── Markdown rendering (loaded lazily by JS) ──────────── -->
+    <div class="layout" id="app-root"></div>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js" defer></script>
+    <script src="/static/widget.js"></script>
     <script src="/static/app.js"></script>
 </body>
 </html>
