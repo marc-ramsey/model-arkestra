@@ -206,11 +206,13 @@ async function refreshModels() {
         updateModelCount();
         populateRightDropdowns();
 
-        // Only rebuild DOM if models were added or removed
+        // Rebuild DOM only when models are added/removed or clusters change.
+        // Status-only changes just update dots — avoids destroying config panels,
+        // button listeners, and expanded state on every 2s poll.
         if (listChanged || !document.getElementById('model-accordion-items')) {
             buildAccordionItems();
         } else {
-            // Just update status dots in place
+            // Update status dots and cluster health in-place — no flicker.
             for (const m of modelsCache) {
                 const name = m.id;
                 const dotId = 'dot-' + sanitizeId(name);
@@ -218,6 +220,26 @@ async function refreshModels() {
                 if (dot && m.status) {
                     const statusClass = normalizeStatus(m.status);
                     dot.className = 'status-dot ' + statusClass;
+                }
+            }
+            // Update cluster health dots and model counts
+            for (const [clusterName, items] of Object.entries(
+                modelsCache.reduce((acc, m) => {
+                    const [c] = parseClusterPrefix(m.id);
+                    (acc[c] ||= []).push(m);
+                    return acc;
+                }, {})
+            )) {
+                const el = document.getElementById('sec-cluster-' + sanitizeId(clusterName));
+                if (!el) continue;
+                const healthDot = el.querySelector('.cluster-health-dot');
+                const clusterCfg = clusterMap[clusterName] || { healthy: true };
+                if (healthDot) {
+                    healthDot.className = 'cluster-health-dot' + (clusterCfg.healthy ? '' : ' unhealthy');
+                }
+                const countEl = el.querySelector('.cluster-count');
+                if (countEl) {
+                    countEl.textContent = items.length + ' model' + (items.length !== 1 ? 's' : '');
                 }
             }
         }
