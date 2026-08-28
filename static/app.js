@@ -24,7 +24,7 @@ async function adminFetch(path, options = {}) {
         headers['X-Admin-Key'] = ADMIN_KEY;
     }
     console.log('[adminFetch]', BASE_URL + path, 'key=' + (ADMIN_KEY ? '✓' : '(none)'));
-    const opts = { method: 'GET', headers, ...options };
+    const opts = { ...options, method: options.method || 'GET', headers };
     // Remove Content-Type for GET (browser handles it)
     if (opts.method === 'GET') delete opts.headers['Content-Type'];
 
