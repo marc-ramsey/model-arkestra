@@ -982,8 +982,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const HKEY = 'arkestra-log-ratio';
 
     // Restore saved ratios
+    const rs = document.documentElement.style;
     const sv = localStorage.getItem(VKEY);
-    if (sv && !isNaN(sv)) rootStyle.setProperty('--col-width', sv + '%');
+    if (sv && !isNaN(sv)) rs.setProperty('--col-width', sv + '%');
     const sh = localStorage.getItem(HKEY);
     if (sh && !isNaN(sh)) {
         const logsP = document.getElementById('pane-logs');
@@ -1016,7 +1017,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const layout = document.querySelector('.layout');
             const rect = layout.getBoundingClientRect();
             const pct = Math.round(((e.clientX - rect.left) / rect.width) * 100);
-            if (pct >= 20 && pct <= 80) rootStyle.setProperty('--col-width', pct + '%');
+            if (pct >= 20 && pct <= 80) rs.setProperty('--col-width', pct + '%');
         } else {
             const rightCol = document.getElementById('right-panel');
             const rRect = rightCol.getBoundingClientRect();
