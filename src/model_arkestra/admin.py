@@ -80,6 +80,18 @@ class ArkestraAdmin:
         self.admin_key = admin_key
         self._app = app
         self._installed = False
+        # Load schema registry from schemas.yaml (same dir as config)
+        self._schemas: Dict[str, Any] = {}
+        self._load_schema_registry()
+
+    def _load_schema_registry(self) -> None:
+        """Load named schemas from schemas.yaml in the config directory."""
+        import yaml
+        parent = Path(self.server._arkestra._config_path).parent
+        schema_path = parent / "schemas.yaml"
+        if schema_path.exists():
+            with open(schema_path) as f:
+                self._schemas = yaml.safe_load(f) or {}
 
     def install(self) -> "ArkestraAdmin":
         """Install all admin routes on the FastAPI app. Idempotent."""
@@ -123,6 +135,35 @@ class ArkestraAdmin:
             if isinstance(be_cfg, dict) and str(be_cfg.get("image", "")) == image_tag:
                 return bid
         return None
+
+    def _args_schema(self, model_name: str) -> Dict[str, Any]:
+        """Return arg schema for a model from the schema registry.
+
+        Resolution:
+          1. Explicit ``args_schema`` in model config (override)
+          2. Backend.engine → schemas["model-args"][engine_name]
+          3. engines.default-engine (from backends.yaml) fallback
+
+        Returns the full schema — backend and model configs merge their
+        values into these keys via `config.args`.
+        """
+        cfg = self._models_cfg.get(model_name, {})
+        explicit = cfg.get("args_schema")
+        if explicit:
+            return explicit
+
+        # Resolve engine name for this model's backend
+        bid = _resolve_backend(self.server._arkestra.cm, cfg, model_name)
+        bcfg = (self._backends_cfg.get("backends") or {}).get(bid, {})
+        engine_name = bcfg.get("engine") if isinstance(bcfg, dict) else None
+        if not engine_name:
+            engine_name = self._backends_cfg.get("engines", {}).get("default-engine")
+        if not engine_name:
+            return {}
+
+        # Look up in schema registry
+        model_args_schema = self._schemas.get("model-args", {})
+        return model_args_schema.get(engine_name, {}) or {}
 
     def _resolve_model_backend(self, model_name: str, model_cfg: dict) -> str:
         """Resolve backend for a model using the normal chain."""
@@ -404,6 +445,7 @@ class ArkestraAdmin:
             return {
                 "ok": True, "model": model,
                 "config": copy.deepcopy(cfg[model]),
+                "args_schema": self._args_schema(model),
                 "status": status,
                 "available_capabilities": available_caps,
             }

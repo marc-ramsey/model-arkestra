@@ -1,0 +1,39 @@
+model-args:
+  llama-cpp:
+    ngl:
+      type: integer
+      default: 999
+    hf:
+      type: string
+    ctx-size:
+      type: integer
+    temp:
+      type: float
+      minimum: 0.0
+      maximum: 2.0
+    top-p:
+      type: float
+      minimum: 0.0
+      maximum: 1.0
+    top-k:
+      type: integer
+      minimum: 1
+    min-p:
+      type: float
+      minimum: 0.0
+      maximum: 1.0
+    batch-size:
+      type: integer
+      minimum: 1
+    threads:
+      type: integer
+      minimum: 1
+    presence-penalty:
+      type: float
+      step: 0.1
+    repeat-penalty:
+      type: float
+      step: 0.1
+    max-tokens:
+      type: integer
+      minimum: 1

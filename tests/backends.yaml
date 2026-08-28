@@ -1,0 +1,9 @@
+engines:
+  default-engine: llama-cpp
+
+  llama-cpp:
+    runner: ProcessModelRunner
+
+backends:
+  vulkan-radv:
+    engine: llama-cpp

@@ -1,0 +1,49 @@
+# ── Schema Registry ────────────────────────────────────────────────
+# Each top-level section is a named schema group, resolved by type.
+# Values are JSON Schema field definitions (type + constraints).
+#
+# Usage:
+#   GET /admin/config/{model} → args_schema = schemas["model-args"][<engine>]
+#   GET /admin/settings       → config_schema = schemas["server-config"]
+
+model-args:
+
+  llama-cpp:            # engine/backend-specific model parameter schema
+  llama-cpp:
+    ngl:
+      type: integer
+      default: 999
+    hf:
+      type: string
+    ctx-size:
+      type: integer
+    temp:
+      type: float
+      minimum: 0.0
+      maximum: 2.0
+    top-p:
+      type: float
+      minimum: 0.0
+      maximum: 1.0
+    top-k:
+      type: integer
+      minimum: 1
+    min-p:
+      type: float
+      minimum: 0.0
+      maximum: 1.0
+    batch-size:
+      type: integer
+      minimum: 1
+    threads:
+      type: integer
+      minimum: 1
+    presence-penalty:
+      type: float
+      step: 0.1
+    repeat-penalty:
+      type: float
+      step: 0.1
+    max-tokens:
+      type: integer
+      minimum: 1
