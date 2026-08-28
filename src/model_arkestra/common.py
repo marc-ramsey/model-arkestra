@@ -1,7 +1,6 @@
 """Shared constants and utilities for container-based runners."""
 from __future__ import annotations
 import re
-import shlex
 import subprocess as _subprocess
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -545,14 +544,9 @@ def build_model_args(
     resolve_macros["PORT"] = port
     resolve_macros["NPROC"] = str(os.cpu_count())
 
-    # 4. Resolve backend args — handle both string template and flat dict
+    # 4. Resolve backend args — flat dict only
     backend_args_raw = backend.get("args")
-    if isinstance(backend_args_raw, str):
-        # Legacy: expand macros via _resolve_string
-        backend_args_resolved = cm._resolve_string(backend_args_raw, resolve_macros, strict=False)  # noqa: SLF001
-        backend_arg_list = shlex.split(backend_args_resolved) if backend_args_resolved.strip() else []
-    elif isinstance(backend_args_raw, dict):
-        # Macro-resolve string values in dict before CLI conversion.
+    if isinstance(backend_args_raw, dict):
         resolved_backend: Dict[str, Any] = {}
         for key, val in backend_args_raw.items():
             if isinstance(val, str) and "${" in val:
@@ -563,13 +557,9 @@ def build_model_args(
     else:
         backend_arg_list = []
 
-    # 5. Resolve defaults — handle both string template and flat dict
+    # 5. Resolve defaults — flat dict only
     defaults_raw = cm.data.get("defaults")
-    if isinstance(defaults_raw, str):
-        defaults_resolved = cm._resolve_string(defaults_raw, resolve_macros, strict=False)  # noqa: SLF001
-        default_arg_list = shlex.split(defaults_resolved) if defaults_resolved.strip() else []
-    elif isinstance(defaults_raw, dict):
-        # Macro-resolve string values in dict before CLI conversion.
+    if isinstance(defaults_raw, dict):
         resolved_defaults: Dict[str, Any] = {}
         for key, val in defaults_raw.items():
             if isinstance(val, str) and "${" in val:
@@ -580,20 +570,15 @@ def build_model_args(
     else:
         default_arg_list = []
 
-    # 6. Get model args — handle both string and flat dict
+    # 6. Get model args — flat dict only
     #    Merge inference_kwargs into model args (last-wins).
     model_args_raw = model.get("args")
-    if isinstance(model_args_raw, str):
-        model_args_text = " ".join(model_args_raw.split())  # normalize whitespace
-        model_arg_list = shlex.split(model_args_text) if model_args_text.strip() else []
-    elif isinstance(model_args_raw, dict):
-        # Merge inference kwargs on top (last-wins for overlapping keys).
+    if isinstance(model_args_raw, dict):
         merged_model = dict(model_args_raw)
         if inference_kwargs:
             for k, v in inference_kwargs.items():
                 if k not in ("backend", "checkpoint"):
                     merged_model[k] = v
-        # Macro-resolve any string values before CLI conversion.
         resolved_dict: Dict[str, Any] = {}
         for key, val in merged_model.items():
             if isinstance(val, str) and "${" in val:
