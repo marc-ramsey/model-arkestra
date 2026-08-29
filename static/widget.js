@@ -435,7 +435,7 @@ function stopLogPoll() { if (logTimer) clearInterval(logTimer); logTimer=null; l
 // Handles internal 'chat.send' event for self-contained operation
 // ═══════════════════════════════════════════════════════════
 
-let _chatCtrl = null, _streamAcc = '', _streamBubble = null;
+let _streamAcc = '', _streamBubble = null;
 
 // Start streaming chat for a given model - called by EventBus or externally
 async function sendChat(modelName) {
@@ -448,22 +448,27 @@ async function sendChat(modelName) {
     chatHistory.push({ role:'user', content:text });
     textEl.value = '';
 
+    // Clean up any in-flight stream from a previous message
+    if (_streamBubble && _streamBubble.classList.contains('streaming')) {
+        _streamBubble.classList.remove('streaming');
+    }
     const bubble = appendBubble('assistant', '', true);
-    _streamAcc = ''; _streamBubble = bubble;
-    _chatCtrl?.abort();
-    _chatCtrl = new AbortController();
+    _streamAcc = '';
+    _streamBubble = bubble;
 
     stopLogPoll();  // pause logs during stream
 
+    const abortCtrl = new AbortController();
     try {
         await doStream(text, modelName, (delta) => {
+            if (abortCtrl.signal.aborted) return; // cancelled by new message
             _streamAcc += delta;
             requestAnimationFrame(() => {
-                if (_streamBubble) {
+                if (_streamBubble && !abortCtrl.signal.aborted) {
                     _streamBubble.innerHTML = typeof marked !== 'undefined' ? marked.parse(_streamAcc) : _streamAcc + '<span class="cursor"></span>';
                 }
             });
-        });
+        }, { signal: abortCtrl.signal });
 
         // Done streaming
         _streamBubble?.classList.remove('streaming');
@@ -476,13 +481,15 @@ async function sendChat(modelName) {
 }
 
 // Internal SSE streaming logic
-async function doStream(text, modelName, onData) {
+async function doStream(text, modelName, onData, options = {}) {
+    const { signal } = options;
     const info = window._modelsCache?.find(m => m.id === modelName);
     if (!info?.port) throw new Error('Model not running');
 
     const params = JSON.parse(localStorage.getItem('arkestra-chat-params')||'{}')[modelName] || {};
     const resp = await fetch('http://127.0.0.1:' + info.port + '/v1/chat/completions', {
         method: 'POST', headers:{'Content-Type':'application/json'},
+        signal,
         body: JSON.stringify({
             model:modelName, messages:chatHistory, stream:true,
             temperature: params.temperature??0.7,
