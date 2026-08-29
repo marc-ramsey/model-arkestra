@@ -722,3 +722,19 @@ body {
     padding: 16px 8px;
     font-style: italic;
 }
+
+/* ── Toast notification ────────────────────────────────────── */
+.toast {
+    position: fixed;
+    top: 40px;
+    right: 20px;
+    padding: 8px 16px;
+    background: var(--red);
+    color: #fff;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    z-index: 999;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    transition: opacity 0.2s;
+}
+.toast.hidden { display: none; }

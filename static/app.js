@@ -1,5 +1,15 @@
 /* app.js — Glue: actions + data loading + init */
 
+let toastTimer = null;
+function showToast(msg) {
+    const el = document.getElementById('toast-msg');
+    if (!el) return;
+    clearTimeout(toastTimer);
+    el.textContent = msg;
+    el.classList.remove('hidden');
+    toastTimer = setTimeout(() => el.classList.add('hidden'), 4000);
+}
+
 (async () => {
     // ── Load and render JSON tree ────────────────────────────────
     const tree = await fetch('/static/app.json').then(r => r.json());
@@ -12,8 +22,7 @@
     const actions = {
         async start(id)   { await window.adminPost('/admin/start/'+encodeURIComponent(id), {}); },
         async stop(id)    { await window.adminPost('/admin/stop/'+encodeURIComponent(id), {}); },
-        reset()           { location.reload(); },
-        async eject(id)       { try { await window.adminPost('/admin/eject/'+encodeURIComponent(id), {}); } catch(e) { console.error('[app] eject:',e.message); } },
+        async eject(id)   { try { await window.adminPost('/admin/eject/'+encodeURIComponent(id), {}); } catch(e) { console.error('[app] eject:',e.message); } },
 
         sendChat() {
             const modelId = document.getElementById('chat-model-select')?.value;
@@ -33,7 +42,8 @@
             for (const w of panel.querySelectorAll('.field-wrapper')) {
                 const el = w.querySelector('input, select');
                 if (!el) continue;
-                const name = el.id.match(/f-[^-]+-(.+)$/)?.[1]?.replace(/_/g,'-');
+                const m = el.id.match(/^f-(.+?)-(?:repo|model|backend|runner|checkpoint|max-tokens|top-p|top-k)$/);
+                const name = m ? m[1].replace(/_/g, '-') : null;
                 if (!name) continue;
                 if (name === 'repo') { body.repo = el.value; continue; }
                 if (name === 'model') {
@@ -48,8 +58,17 @@
                     body[name] = el.value;
                 }
             }
-            await window.adminPost('/admin/config/'+encodeURIComponent(id), body);
-            if (window._configSnapshots?.[id]) window._configSnapshots[id] = {...body};
+            try {
+                await window.adminPost('/admin/config/'+encodeURIComponent(id), body);
+                window._configSnapshots[id] = { ...body };
+            } catch(e) {
+                showToast('Save failed: ' + e.message);
+            }
+        },
+
+        async reset() {
+            if (!confirm('Reset the whole page?')) return;
+            location.reload();
         },
     };
 
@@ -62,13 +81,13 @@
     });
 
     // Clear chat history when model changes
-    document.addEventListener('change', (e) => {
-        if (e.target.id === 'chat-model-select') {
+    const sel = document.getElementById('chat-model-select');
+    if (sel) {
+        sel.addEventListener('change', (e) => {
             chatHistory = [];
-            const modelId = e.target.value;
-            EventBus.emit('model.select', { modelId });
-        }
-    });
+            EventBus.emit('model.select', { modelId: e.target.value });
+        });
+    }
 
     window.wireEvents(actions);
 
