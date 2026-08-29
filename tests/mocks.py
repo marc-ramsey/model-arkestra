@@ -13,7 +13,7 @@ def mock_cm(model_data: dict | None = None):
     """Create a ConfigManager mock that returns *model_data* from get_model()."""
     cm = MagicMock()
     cm.get_model.return_value = model_data or {}
-    cm.get_vector.return_value = None  # no env section by default
+    cm.data = {"env": {}}
     return cm
 
 

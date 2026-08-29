@@ -27,7 +27,7 @@ def _resolve_backend(
     """Resolve the effective backend dict for a model launch.
 
     Priority: ``ctx.backend_id`` → ``model_data["backend"]`` → config backends.default.
-    Returns the full backend dict (via ``runner.cm.get_backend()``) or **None** if
+    Returns the full backend dict (via ``runner.cm["backends/<id>"]``) or **None** if
     nothing resolves.
     """
     backend_id = None
@@ -46,7 +46,7 @@ def _resolve_backend(
         if isinstance(backends, dict):
             backend_id = backends.get("default")
 
-    return runner.cm.get_backend(backend_id) if backend_id else None
+    return runner.cm[f"backends/{backend_id}"] if backend_id else None
 
 
 def _build_container_cmd(
@@ -61,7 +61,7 @@ def _build_container_cmd(
 ) -> List[str]:
     """Build a container run command for the backend-config architecture.
 
-    ``backend_config`` is the full backend dict (from ``cm.get_backend()``).
+    ``backend_config`` is the full backend dict (from ``cm["backends/<id>"]``).
     """
     devices: List[str] = list(backend_config.get("devices", []))
     container_env: Dict[str, str] = dict(backend_config.get("env_container", {}))

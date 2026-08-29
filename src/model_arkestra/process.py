@@ -28,7 +28,7 @@ class ProcessModelRunner(BaseModelRunner):
         # Resolve backend and merge engine defaults.
         be_id = ctx.backend_id or model_data.get("backend")
         be_id = _resolve_backend(self.cm, model_data, ctx.name, be_id)
-        backend = self.cm.get_backend(be_id) if be_id else {}
+        backend = self.cm[f"backends/{be_id}"] if be_id else {}
 
         # Resolve engine and merge its defaults into the backend config.
         engine_name = (backend or {}).get("engine", "llama_cpp")
@@ -66,7 +66,7 @@ class ProcessModelRunner(BaseModelRunner):
 
         # Merge environment: process + global env + backend env_container.
         env = os.environ.copy()
-        for k, v in (self.cm.get_vector("env") or {}).items():
+        for k, v in (self.cm.data.get("env") or {}).items():
             env[k] = str(v)
         for k, v in (backend.get("env_container") or {}).items():
             env[k] = str(v)

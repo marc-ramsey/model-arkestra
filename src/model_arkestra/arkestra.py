@@ -9,7 +9,7 @@ import yaml
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional, Set
 
-from llm_config_manager.config_manager import ConfigManager
+from model_arkestra.config_manager import ModelConfigManager
 from model_arkestra.base import BaseModelRunner
 from model_arkestra.common import (
     _resolve_backend, default_cache_root, resolve_config_path,
@@ -36,7 +36,7 @@ class ModelArkestra:
     ):
         # Resolve config path — defaults to ~/.config/arkestra/config.yaml
         self._config_path = resolve_config_path(config_path)
-        self._cm = ConfigManager(str(self._config_path))
+        self._cm = ModelConfigManager(str(self._config_path))
 
         # Single source of truth: backends.yaml (base) merged with config.yaml (overlay).
         # Nested dicts deep-merge; top-level keys coexist.

@@ -506,7 +506,7 @@ def build_model_args(
         individual arguments ready for subprocess_exec,
         and cmd_str is the space-joined string representation.
     """
-    models = cm.get_vector("models")
+    models = cm.data.get("models")
     if not models:
         return None
     model = models.get(model_name)
@@ -517,7 +517,7 @@ def build_model_args(
     backend_id = _resolve_backend(cm, model, model_name, override_backend)
 
     # 2. Get backend definition
-    backend = cm.get_backend(backend_id)
+    backend = cm.data.get("backends", {}).get(backend_id)
     if backend is None:
         raise RuntimeError(f"Backend '{backend_id}' not found in backends config")
 
