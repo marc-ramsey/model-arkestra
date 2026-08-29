@@ -40,19 +40,10 @@ class ModelArkestra:
 
         # Single source of truth: backends.yaml (base) merged with config.yaml (overlay).
         # Nested dicts deep-merge; top-level keys coexist.
-        def _merge(base: dict, override: dict) -> dict:
-            for k, v in override.items():
-                if k in base and isinstance(base[k], dict) and isinstance(v, dict):
-                    _merge(base[k], v)
-                else:
-                    base[k] = v
-            return base
-
         backends_path = Path(self._config_path).parent / "backends.yaml"
         base = (backends_config if backends_config is not None
                 else (yaml.safe_load(open(backends_path)) or {} if backends_path.exists() else {}))
-        merged = _merge(base, self._cm.data or {})
-        self._cm.data = merged
+        self._cm.merge(base)
         self._next_port = self._cm.data.get('models-start-port', start_port)
 
         self._runners: Dict[str, BaseModelRunner] = {}
