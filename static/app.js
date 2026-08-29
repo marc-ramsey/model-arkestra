@@ -1,6 +1,8 @@
 /* app.js — Glue: actions + data loading + init */
 
+let _init = false;
 let toastTimer = null;
+
 function showToast(msg) {
     const el = document.getElementById('toast-msg');
     if (!el) return;
@@ -11,6 +13,10 @@ function showToast(msg) {
 }
 
 (async () => {
+    if (_init) return;
+    _init = true;
+
+    // ── Load and render JSON tree ────────────────────────────────
     // ── Load and render JSON tree ────────────────────────────────
     const tree = await fetch('/static/app.json').then(r => r.json());
     const root = document.getElementById('app-root');
