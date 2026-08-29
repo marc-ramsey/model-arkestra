@@ -188,6 +188,7 @@ renderers.ConfigPanel = function({ id, fields }) {
     const el = document.createElement('div');
     el.className = 'config-panel';
     el.id = 'config-' + sanitizeId(id);
+    el.dataset.model = id;
 
     (fields||[]).forEach(f => {
         const wrapper = document.createElement('div');
@@ -227,7 +228,7 @@ renderers.ConfigPanel = function({ id, fields }) {
         }
 
         if (input) {
-            input.id = 'f-' + sanitizeId(id) + '-' + f.name;
+            input.id = f.name;
             input.value = f.value ?? '';
             wrapper.appendChild(input);
         }
@@ -340,7 +341,7 @@ function checkDirty(modelId, panel) {
     if (!snap) return;
 
     const val = (name) => {
-        const el = panel.querySelector('#f-' + sanitizeId(modelId) + '-' + name);
+        const el = panel.querySelector('#' + name);
         return el ? (el.type === 'number' ? Number(el.value) : el.value) : '';
     };
 
@@ -370,12 +371,13 @@ function wireEvents(actions) {
         actions[m[1]]?.(m[2].replace(/_/g, '-'));
     });
 
-    // Field change: id="f-{context}-{name}" -> fires CustomEvent('field.change')
+    // Field change: id="{name}" -> fires CustomEvent('field.change')
     document.addEventListener('input', (e) => {
-        const m = e.target.id?.match(/^f-(.+)-(.+)$/);
-        if (!m) return;
-        e.detail = { context: m[1].replace(/_/g,'-'), name: m[2], value: e.target.value };
-        e.target.dispatchEvent(new CustomEvent('field.change', { bubbles:true, detail:e.detail }));
+        const input = e.target;
+        if (!input.id) return;
+        const panel = input.closest('.config-panel');
+        e.detail = { model: panel?.dataset.model ?? '', name: input.id, value: input.value };
+        input.dispatchEvent(new CustomEvent('field.change', { bubbles:true, detail:e.detail }));
     });
 }
 

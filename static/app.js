@@ -42,9 +42,7 @@ function showToast(msg) {
             for (const w of panel.querySelectorAll('.field-wrapper')) {
                 const el = w.querySelector('input, select');
                 if (!el) continue;
-                const m = el.id.match(/^f-(.+?)-(?:repo|model|backend|runner|checkpoint|max-tokens|top-p|top-k)$/);
-                const name = m ? m[1].replace(/_/g, '-') : null;
-                if (!name) continue;
+                const name = el.id;
                 if (name === 'repo') { body.repo = el.value; continue; }
                 if (name === 'model') {
                     const repo = body.repo || '';
