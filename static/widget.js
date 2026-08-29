@@ -60,6 +60,8 @@ renderers.SplitPane = function({ axis, ratio, children }) {
     // Wire drag-to-resize on dividers in this container
     setTimeout(() => {
         for (const d of el.querySelectorAll(':scope > .divider-v, :scope > .divider-h')) {
+            if (d.dataset.dragWired) continue;
+            d.dataset.dragWired = '1';
             const isH = d.classList.contains('divider-v');
             let dragging = false;
             let val = 0;
@@ -218,7 +220,7 @@ renderers.ConfigPanel = function({ id, fields }) {
         } else if (f.widget === 'TextArea') {
             // Explicit TextArea — multi-line
             const ta = document.createElement('textarea');
-            ta.rows = 2;
+            ta.rows = f.schema?.rows ?? 2;
             input = ta;
         } else {
             input = document.createElement('input'); input.type = 'text';
