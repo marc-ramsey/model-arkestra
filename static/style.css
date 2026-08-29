@@ -100,6 +100,14 @@ body {
     font-size: 11px;
     flex-shrink: 0;
 }
+.pane-header .pane-title {
+    font-weight: 700;
+    color: var(--text);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-size: 10px;
+    flex-shrink: 0;
+}
 .pane-header label { white-space: nowrap; display: flex; align-items: center; gap: 4px; cursor: pointer; }
 .pane-header select {
     padding: 3px 6px;

@@ -128,7 +128,7 @@ renderers.LogPane = function() {
 
     const header = document.createElement('div');
     header.className = 'pane-header';
-    header.innerHTML = '<label>Select Model:</label><select id="log-model-select"></select>';
+    header.innerHTML = '<span class="pane-title">Log</span><label>Select Model:</label><select id="log-model-select"></select>';
     el.appendChild(header);
 
     const display = document.createElement('pre');
@@ -145,7 +145,7 @@ renderers.ChatPane = function() {
 
     const header = document.createElement('div');
     header.className = 'pane-header';
-    header.innerHTML = '<label>Select Model:</label><select id="chat-model-select"></select>' +
+    header.innerHTML = '<span class="pane-title">Chat</span><label>Select Model:</label><select id="chat-model-select"></select>' +
         '<span class="chat-params-toggle" id="btn-toggle-chat-params">Params</span>';
     el.appendChild(header);
 
