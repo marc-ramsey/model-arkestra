@@ -85,9 +85,10 @@ body {
     flex-direction: column;
     overflow: hidden;
     min-height: 0;
+    min-width: 0;
 }
-.pane-logs { flex: 1; min-height: 0; }
-.pane-chat { flex: 1; min-height: 0; }
+.pane-logs { flex: 1; }
+.pane-chat { flex: 1; }
 
 .pane-header {
     display: flex;
@@ -138,6 +139,8 @@ body {
 /* ── Accordion (shared) ────────────────────────────────────── */
 .accordion, .accordion-item {
     flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
     border-bottom: 1px solid var(--border);
     background: var(--surface);
     overflow: hidden;
@@ -185,7 +188,8 @@ body {
 .accordion-body, .accordion-item .acc-body {
     padding: var(--padding) 8px;
     overflow-y: auto;
-    display: block;
+    display: flex;
+    flex-direction: column;
 }
 .accordion.collapsed > .accordion-body,
 .accordion-item.collapsed > .acc-body {
@@ -549,9 +553,9 @@ body {
 .left-panel .accordion.collapsed > .accordion-body { display: none; }
 #model-accordion-items {
     /* Fills remaining height of accordion, scrolls if needed */
-    max-height: calc(100vh - 60px);
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
-    flex-shrink: 1;
 }
 
 /* ── Model config panel (inside expanded model row) ─────────── */

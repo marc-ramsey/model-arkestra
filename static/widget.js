@@ -37,12 +37,14 @@ renderers.SplitPane = function({ axis, ratio, children }) {
     const el = document.createElement('div');
     el.style.display = 'flex';
     el.style.overflow = 'hidden';
-    if (axis === 'v') el.style.flexDirection = 'column';
+    if (axis === 'v') { el.style.flexDirection = 'column'; }
 
     for (let i = 0; i < children.length; i++) {
         const c = render(children[i]);
         if (!c) continue;
         const last = i === children.length - 1;
+        c.style.minHeight = axis === 'v' ? '0' : '';
+        c.style.minWidth = axis === 'h' ? '0' : '';
         if (ratio !== undefined && !last) {
             c.style.flex = `0 0 ${ratio}%`;
             el.appendChild(c);
