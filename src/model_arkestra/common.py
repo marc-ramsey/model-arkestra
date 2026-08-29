@@ -4,6 +4,8 @@ import re
 import subprocess as _subprocess
 from typing import Any, Dict, List, Optional, Tuple
 
+from model_arkestra.gpu_detect import detect_all
+
 
 import os
 from pathlib import Path
@@ -552,6 +554,13 @@ def build_model_args(
                 resolved_backend[key] = cm._resolve_string(val, resolve_macros, strict=False)  # noqa: SLF001
             else:
                 resolved_backend[key] = val
+
+        # Merge device-profile args (GPU-specific defaults like ngl, flash-attn)
+        profile_args = _merge_device_profile_args(cm, backend)
+        for k, v in profile_args.items():
+            if k not in resolved_backend:
+                resolved_backend[k] = v
+
         backend_arg_list = _dict_to_cli(resolved_backend)
     else:
         backend_arg_list = []
@@ -676,3 +685,101 @@ def _merge_engine_defaults(engine_cfg: Dict[str, Any], backend_cfg: Dict[str, An
         else:
             merged[key] = backend_cfg[key]
     return merged
+
+
+def _merge_device_profile_args(
+    cm: Any, backend: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Detect GPU and merge matching device-profile args.
+
+    Detects the primary GPU, finds the best-matching key in engine
+device-profiles (exact match → family fallback), and returns the
+    matched profile's args dict.  Returns {} if no profiles defined.
+    """
+    result = detect_all()
+    primary = result.get("primary_gpu")
+    if not primary:
+        return {}
+
+    # Collect device-profiles from all engines that have them
+    profiles: Dict[str, Any] = {}
+    for engine_cfg in (cm.data.get("engines") or {}).values():
+        if isinstance(engine_cfg, dict) and "device-profiles" in engine_cfg:
+            profiles.update(engine_cfg["device-profiles"])
+    if not profiles:
+        return {}
+
+    vendor = primary.get("vendor", "")
+    matched_key: Optional[str] = None
+
+    if vendor == "amd":
+        gfx = result.get("gfx_family")
+        if gfx and gfx in profiles:
+            matched_key = gfx
+        elif "rocm" in profiles:
+            matched_key = "rocm"
+    elif vendor == "nvidia":
+        gpu_name = primary.get("name", "").lower()
+        for key in profiles:
+            if any(part in gpu_name for part in key.replace('-', ' ').split()):
+                matched_key = key
+                break
+        if not matched_key and "cuda" in profiles:
+            matched_key = "cuda"
+    elif vendor == "intel":
+        if "vulkan" in profiles:
+            matched_key = "vulkan"
+
+    if matched_key is None:
+        return {}
+
+    prof = profiles.get(matched_key, {})
+    return prof.get("args") or {}
+
+
+def _get_device_profile_env(
+    cm: Any,
+) -> Dict[str, Any]:
+    """Detect GPU and return matching device-profile env vars.
+
+    Same detection logic as `_merge_device_profile_args`, but returns
+    the ``env`` sub-dict instead of ``args``.
+    """
+    result = detect_all()
+    primary = result.get("primary_gpu")
+    if not primary:
+        return {}
+
+    profiles: Dict[str, Any] = {}
+    for engine_cfg in (cm.data.get("engines") or {}).values():
+        if isinstance(engine_cfg, dict) and "device-profiles" in engine_cfg:
+            profiles.update(engine_cfg["device-profiles"])
+    if not profiles:
+        return {}
+
+    vendor = primary.get("vendor", "")
+    matched_key: Optional[str] = None
+
+    if vendor == "amd":
+        gfx = result.get("gfx_family")
+        if gfx and gfx in profiles:
+            matched_key = gfx
+        elif "rocm" in profiles:
+            matched_key = "rocm"
+    elif vendor == "nvidia":
+        gpu_name = primary.get("name", "").lower()
+        for key in profiles:
+            if any(part in gpu_name for part in key.replace('-', ' ').split()):
+                matched_key = key
+                break
+        if not matched_key and "cuda" in profiles:
+            matched_key = "cuda"
+    elif vendor == "intel":
+        if "vulkan" in profiles:
+            matched_key = "vulkan"
+
+    if matched_key is None:
+        return {}
+
+    prof = profiles.get(matched_key, {})
+    return prof.get("env") or {}

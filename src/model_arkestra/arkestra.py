@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional, Set
 
 from model_arkestra.config_manager import ModelConfigManager
+from model_arkestra.gpu_detect import detect_all, has_rocm, has_vulkan, has_nvidia
 from model_arkestra.base import BaseModelRunner
 from model_arkestra.common import (
     _resolve_backend, default_cache_root, resolve_config_path,
@@ -59,6 +60,8 @@ class ModelArkestra:
         self._global_log_seq: int = 0
         # ── Backend runtime validation (hard error on mismatch) ───────
         self._validate_backend_runtime()
+        # ── Device profile detection & matching ────────────────────
+        self._matched_profile = self._detect_device_profiles()
 
     # ── port allocation (global) ───────────────────────────────────────
     def log(self, text: str, level: str = "INFO") -> None:
@@ -128,9 +131,9 @@ class ModelArkestra:
             return  # no default backend set — skip validation
 
         runtime_checks = {
-            "vulkan-radv": self._check_vulkan,
-            "rocm": self._check_rocm,
-            "cuda": self._check_nvidia,
+            "vulkan-radv": has_vulkan,
+            "rocm": has_rocm,
+            "cuda": has_nvidia,
         }
         checker = runtime_checks.get(backend_id)
         if checker:
@@ -140,6 +143,60 @@ class ModelArkestra:
                     f"Backend '{backend_id}' configured but runtime not detected. {suggestion}"
                 )
         # CPU backends and unknown IDs pass by default
+
+    def _detect_device_profiles(self) -> Dict[str, Any]:
+        """Detect GPU hardware and find matching engine device-profile.
+
+        Returns {env: {...}, args: {...}} for the best-matching device profile,
+        or empty dict if no match found (backend-specific settings still apply).
+
+        Priority: exact key match → family fallback (rocm/cuda/vulkan) → none.
+        """
+        result = detect_all()
+        primary = result.get("primary_gpu")
+        if not primary:
+            return {}
+
+        # Collect device-profiles from all engines
+        profiles: Dict[str, Dict] = {}
+        for engine_cfg in (self.cm.data.get("engines") or {}).values():
+            if isinstance(engine_cfg, dict) and "device-profiles" in engine_cfg:
+                profiles.update(engine_cfg["device-profiles"])
+        if not profiles:
+            return {}
+
+        vendor = primary.get("vendor", "")
+        matched_key: Optional[str] = None
+
+        # ROCm: try exact gfx_family → family fallback
+        if vendor == "amd":
+            gfx = result.get("gfx_family")
+            if gfx and gfx in profiles:
+                matched_key = gfx
+            elif "rocm" in profiles:
+                matched_key = "rocm"
+        # NVIDIA: try GPU name patterns → family fallback
+        elif vendor == "nvidia":
+            gpu_name = primary.get("name", "").lower()
+            for key in profiles:
+                if any(part in gpu_name for part in key.replace('-', ' ').split()):
+                    matched_key = key
+                    break
+            if not matched_key and "cuda" in profiles:
+                matched_key = "cuda"
+        # Vulkan/Intel: family fallback
+        elif vendor in ("intel",):
+            if "vulkan" in profiles:
+                matched_key = "vulkan"
+
+        if matched_key is None:
+            return {}
+
+        prof = profiles[matched_key]
+        return {
+            "env": prof.get("env") or {},
+            "args": prof.get("args") or {},
+        }
 
     # ── cluster topology ───────────────────────────────────────────
     def _load_clusters(self) -> None:
@@ -214,44 +271,6 @@ class ModelArkestra:
         base_url = cfg.get("base-url") if cluster_name != self._local_cluster_key else None
         return cluster_name, base_url, local_id
 
-    @staticmethod
-    def _check_vulkan() -> bool:
-        try:
-            result = subprocess.run(
-                ["vulkaninfo", "--summary"],
-                capture_output=True, timeout=5, text=True,
-            )
-            return result.returncode == 0 and "Vulkan Instance Version" in result.stdout
-        except (FileNotFoundError, OSError):
-            return False
-
-    @staticmethod
-    def _check_rocm() -> bool:
-        try:
-            subprocess.run(
-                ["rocm-smi", "--showconfig"],
-                capture_output=True, timeout=5,
-            )
-            return True
-        except (FileNotFoundError, OSError):
-            pass
-        # Fallback: check for ROCm lib directory
-        return any(
-            p.exists() for p in [Path("/opt/rocm/lib"), Path("/usr/lib64/rocm")]
-        )
-
-    @staticmethod
-    def _check_nvidia() -> bool:
-        try:
-            result = subprocess.run(
-                ["nvidia-smi", "--query-gpu=name,driver_version",
-                 "--format=csv"],
-                capture_output=True, timeout=5, text=True,
-            )
-            return result.returncode == 0 and "NVIDIA" in result.stdout
-        except (FileNotFoundError, OSError):
-            return False
-    
     # ── ConfigManager delegation ───────────────────────────────────────
     @property
     def cm(self) -> ConfigManager:

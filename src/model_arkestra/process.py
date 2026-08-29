@@ -4,7 +4,7 @@ import os
 import signal
 from typing import Any, Dict, List
 from model_arkestra.base import BaseModelRunner
-from model_arkestra.common import _merge_engine_defaults, _resolve_backend, _resolve_engine, build_model_args
+from model_arkestra.common import _merge_engine_defaults, _resolve_backend, _resolve_engine, build_model_args, _get_device_profile_env
 from model_arkestra.llama_cpp import LlamaCppEngine
 from model_arkestra.types import _ModelContext
 
@@ -64,9 +64,12 @@ class ProcessModelRunner(BaseModelRunner):
 
         args_list, _cmd_str = result
 
-        # Merge environment: process + global env + backend env_container.
+        # Merge environment: process + global env + device-profile env + backend env_container.
         env = os.environ.copy()
         for k, v in (self.cm.data.get("env") or {}).items():
+            env[k] = str(v)
+        # Device-profile env vars from detected GPU
+        for k, v in _get_device_profile_env(self.cm).items():
             env[k] = str(v)
         for k, v in (backend.get("env_container") or {}).items():
             env[k] = str(v)

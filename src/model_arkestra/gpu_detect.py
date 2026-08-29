@@ -68,6 +68,23 @@ def has_nvidia() -> bool:
         return False
 
 
+def has_npu() -> bool:
+    """Check if AMD XDNA NPU is available.
+
+    Detects via amdxdna kernel module presence or rocminfo -A output.
+    """
+    # Primary: check for amdxdna kernel module
+    if Path("/sys/module/amdxdna").exists():
+        return True
+
+    # Fallback: check rocminfo for XDNA device
+    result = _run_cmd(["rocminfo", "-A"])
+    if result and result.stdout:
+        return "xdna" in result.stdout.lower()
+
+    return False
+
+
 def detect_cuda_compute_cap() -> str | None:
     """Detect the CUDA compute capability from nvidia-smi.
 
@@ -375,6 +392,7 @@ def detect_all() -> dict[str, Any]:
         "vulkan": has_vulkan(),
         "rocm": has_rocm(),
         "nvidia": has_nvidia(),
+        "npu": has_npu(),
         "cpu": True,  # always available if binary can be downloaded
     }
 
