@@ -72,6 +72,13 @@
 
     window.wireEvents(actions);
 
+    // Toggle chat params panel (one-time registration, not per-render)
+    document.addEventListener('click', (e) => {
+        if (e.target.id === 'btn-toggle-chat-params') {
+            document.getElementById('chat-params-panel')?.classList.toggle('open');
+        }
+    });
+
     // Save chat params to localStorage on change
     document.addEventListener('input', (e) => {
         if (!e.target.id?.startsWith('f-chat-')) return;

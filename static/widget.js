@@ -62,28 +62,32 @@ renderers.SplitPane = function({ axis, ratio, children }) {
         for (const d of el.querySelectorAll(':scope > .divider-v, :scope > .divider-h')) {
             const isH = d.classList.contains('divider-v');
             let dragging = false;
+            let val = 0;
+            const onMove = (ev) => {
+                if (!dragging) return;
+                const rect = d.parentElement.getBoundingClientRect();
+                val = isH ? ((ev.clientX-rect.left)/rect.width)*100 : ((ev.clientY-rect.top)/rect.height)*100;
+                if (val < 20 || val > 80) return;
+                const p = d.previousElementSibling, n = d.nextElementSibling;
+                if (p && n) { p.style.flex=`0 0 ${val}%`; n.style.flex=`0 0 ${100-val}%`; }
+                localStorage.setItem('arkestra-layout-' + (isH?'h':'v'), Math.round(val));
+            };
+            const onUp = () => {
+                dragging=false; d.classList.remove('active');
+                document.body.style.userSelect='';
+                window.removeEventListener('mousemove',onMove);
+                window.removeEventListener('mouseup',onUp);
+                document.removeEventListener('mouseup',onUpGlobal);
+            };
+            const onUpGlobal = () => { if (dragging) onUp(); };
             d.addEventListener('mousedown', (e) => {
                 e.preventDefault();
                 document.body.style.userSelect = 'none';
                 d.classList.add('active');
                 dragging = true;
-                const onMove = (ev) => {
-                    if (!dragging) return;
-                    const rect = d.parentElement.getBoundingClientRect();
-                    let val = isH ? ((ev.clientX-rect.left)/rect.width)*100 : ((ev.clientY-rect.top)/rect.height)*100;
-                    if (val < 20 || val > 80) return;
-                    const p = d.previousElementSibling, n = d.nextElementSibling;
-                    if (p && n) { p.style.flex=`0 0 ${val}%`; n.style.flex=`0 0 ${100-val}%`; }
-                    localStorage.setItem('arkestra-layout-' + (isH?'h':'v'), Math.round(val));
-                };
-                const onUp = () => {
-                    dragging=false; d.classList.remove('active');
-                    document.body.style.userSelect='';
-                    window.removeEventListener('mousemove',onMove);
-                    window.removeEventListener('mouseup',onUp);
-                };
                 window.addEventListener('mousemove',onMove);
                 window.addEventListener('mouseup',onUp);
+                document.addEventListener('mouseup',onUpGlobal);
             });
         }
     }, 0);
@@ -170,13 +174,6 @@ renderers.ChatPane = function() {
         '<button id="btn-send-chat" title="Send">Send</button>' +
         '<span class="chat-status" id="chat-status"></span>';
     el.appendChild(inputBar);
-
-    // Toggle params panel on click of toggle button
-    document.addEventListener('click', (e) => {
-        if (e.target.id === 'btn-toggle-chat-params') {
-            document.getElementById('chat-params-panel')?.classList.toggle('open');
-        }
-    });
 
     return el;
 };
