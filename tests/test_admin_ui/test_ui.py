@@ -100,7 +100,7 @@ class TestWidgetRendering:
         assert has_cls is True
 
     def test_chat_input_exists(self, page):
-        exists = page.evaluate("!!document.getElementById('chat-input')")
+        exists = page.evaluate("!!document.getElementById('f-chat-input')")
         assert exists is True
 
     def test_split_dividers_present(self, page):
@@ -159,7 +159,7 @@ class TestInteractions:
         assert has_panel is True, "Config panel did not appear after click"
 
     def test_params_toggle(self, page):
-        toggle = page.query_selector("#right-chat-params-toggle")
+        toggle = page.query_selector("#btn-toggle-chat-params")
         if not toggle:
             pytest.skip("Params toggle button not found")
 
@@ -178,7 +178,7 @@ class TestInteractions:
         assert hidden is True, "Params panel should be hidden again"
 
     def test_chat_send_button(self, page):
-        btn = page.query_selector("#chat-send-btn")
+        btn = page.query_selector("#btn-send-chat")
         assert btn is not None, "Chat send button not found"
 
     def test_action_buttons_in_config(self, page):
@@ -198,6 +198,38 @@ class TestInteractions:
             "() => document.querySelectorAll('.config-panel .field-wrapper').length"
         )
         assert wrapper_count >= 1, f"No field wrappers in config panel (got {wrapper_count})"
+
+    def test_arg_fields_from_schema(self, page):
+        """Individual arg fields are rendered from args_schema, not a raw textarea."""
+        rows = page.query_selector_all(".model-row")
+        if len(rows) < 1:
+            pytest.skip("No model rows to click")
+        rows[0].click()
+        time.sleep(1.5)
+
+        has_textarea = page.evaluate(
+            "() => !!document.querySelector('.config-panel textarea')"
+        )
+        assert has_textarea is False, "Args should be individual fields, not a textarea"
+
+    def test_arg_field_count_matches_schema(self, page):
+        """Config panel has arg fields beyond checkpoint/backend."""
+        rows = page.query_selector_all(".model-row")
+        if len(rows) < 1:
+            pytest.skip("No model rows to click")
+
+        rows[0].click()
+        time.sleep(1.5)
+
+        wrapper_count = page.evaluate(
+            "() => document.querySelectorAll('.config-panel .field-wrapper').length"
+        )
+        schema_keys = page.evaluate(
+            "() => Object.keys(window._argSchema || {})"
+        )
+        # checkpoint + args from schema (backend/runner optional)
+        assert wrapper_count >= len(schema_keys) + 1, \
+            f"Expected {len(schema_keys)}+1 fields (got {wrapper_count}, schema keys={schema_keys})"
 
 
 # ═══════════════════════════════════════════════════════════
