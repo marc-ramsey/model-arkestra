@@ -440,10 +440,10 @@ function stopLogPoll() { if (logTimer) clearInterval(logTimer); logTimer=null; l
 let _streamAcc = '', _streamBubble = null;
 
 // Start streaming chat for a given model - called by EventBus or externally
-async function sendChat(modelName) {
-    const textEl = document.getElementById('f-chat-input');
-    if (!textEl) return;
-    const text = textEl.value.trim();
+async function sendChat(modelName, inputEl = null) {
+    const el = inputEl ?? document.getElementById('f-chat-input');
+    if (!el) return;
+    const text = el.value.trim();
     if (!text || !modelName) return;
 
     appendBubble('user', text);

@@ -19,7 +19,7 @@
             const modelId = document.getElementById('chat-model-select')?.value;
             const textEl = document.getElementById('f-chat-input');
             if (!modelId || !textEl?.value.trim()) return;
-            window.sendChat(modelId);
+            window.sendChat(modelId, textEl);
         },
 
         toggleChatParams() {
