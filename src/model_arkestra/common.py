@@ -440,7 +440,6 @@ def safe_container_name(name: str, port: int) -> str:
     safe = name.replace("_", "-").replace(".", "-")
     return f"llm-{safe}-{port}"
 
-
 def _dict_to_cli(args_dict: Dict[str, Any]) -> List[str]:
     """Convert a flat args dict to CLI flag list (snake_case → kebab-case).
 

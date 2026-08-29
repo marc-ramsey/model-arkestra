@@ -9,7 +9,7 @@ Resolution chain tested:
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -26,16 +26,13 @@ def _make_admin(backends_cfg, models_data, schemas_cfg):
 
     admin = ArkestraAdmin.__new__(ArkestraAdmin)
     admin.server = MagicMock()
-    admin.server._arkestra.cm.data = {"models": models_data}
+    # Full merged config: backends + engines at top level, models nested
+    cm_data = {"models": models_data}
+    if isinstance(backends_cfg, dict):
+        cm_data.update({k: v for k, v in backends_cfg.items() if k not in ("models",)})
+    admin.server._arkestra.cm.data = cm_data
+    admin._schemas = schemas_cfg
     return admin
-
-
-def _patch_backends(admin, cfg):
-    return patch.object(
-        type(admin), "_backends_cfg",
-        new_callable=PropertyMock,
-        return_value=cfg,
-    )
 
 
 # ── Fixtures ───────────────────────────────────────────────────────────────
@@ -64,8 +61,7 @@ class TestModelOverride:
         }
         admin = _make_admin({}, models, {})
 
-        with _patch_backends(admin, {}):
-            result = admin._args_schema("m")
+        result = admin._args_schema("m")
 
         assert result == {"my-float": {"type": "float"}}
 
@@ -81,11 +77,8 @@ class TestBackendEngineLookup:
         }
         admin = _make_admin(backends, models, full_schemas)
 
-        with _patch_backends(admin, backends):
-            # Override _schemas to use fixture data
-            admin._schemas = full_schemas
-            with patch("model_arkestra.admin._resolve_backend", side_effect=_resolve_backend_identity):
-                result = admin._args_schema("m")
+        with patch("model_arkestra.admin._resolve_backend", side_effect=_resolve_backend_identity):
+            result = admin._args_schema("m")
 
         assert "temp" in result
         assert result["temp"]["type"] == "float"
@@ -97,14 +90,10 @@ class TestBackendEngineLookup:
         }
         admin = _make_admin(backends, models, full_schemas)
 
-        with _patch_backends(admin, backends):
-            admin._schemas = full_schemas
-            with patch("model_arkestra.admin._resolve_backend", side_effect=_resolve_backend_identity):
-                result = admin._args_schema("m")
+        with patch("model_arkestra.admin._resolve_backend", side_effect=_resolve_backend_identity):
+            result = admin._args_schema("m")
 
         assert "temp" in result
-        # Schema is the FULL engine schema (no filtering) — keys not in model args are still present
-        # but values come from config.args, so they may be empty
 
 
 # ── Tests: Default engine fallback ─────────────────────────────────────────
@@ -118,10 +107,8 @@ class TestDefaultEngine:
         }
         admin = _make_admin(backends, models, full_schemas)
 
-        with _patch_backends(admin, backends):
-            admin._schemas = full_schemas
-            with patch("model_arkestra.admin._resolve_backend", side_effect=_resolve_backend_identity):
-                result = admin._args_schema("m")
+        with patch("model_arkestra.admin._resolve_backend", side_effect=_resolve_backend_identity):
+            result = admin._args_schema("m")
 
         assert "temp" in result
 
@@ -137,8 +124,7 @@ class TestNoEngine:
         }
         admin = _make_admin(backends, models, {})
 
-        with _patch_backends(admin, backends):
-            with patch("model_arkestra.admin._resolve_backend", side_effect=_resolve_backend_identity):
-                result = admin._args_schema("m")
+        with patch("model_arkestra.admin._resolve_backend", side_effect=_resolve_backend_identity):
+            result = admin._args_schema("m")
 
         assert result == {}

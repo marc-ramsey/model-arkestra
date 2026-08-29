@@ -128,14 +128,9 @@ class ArkestraAdmin:
     def _models_cfg(self) -> Dict[str, Any]:
         return self.server._arkestra.cm.data.get("models") or {}
 
-    @property
-    def _backends_cfg(self) -> Dict[str, Any]:
-        return self.server._arkestra.cm.data.get("backends") or {}
-
     def _backend_for_image(self, image_tag: str) -> Optional[str]:
         """Return the backend_id whose ``image`` matches *image_tag*, or None."""
-        backends = self._backends_cfg
-        for bid, be_cfg in backends.items():
+        for bid, be_cfg in (self.server._arkestra.cm.data.get("backends") or {}).items():
             if isinstance(be_cfg, dict) and str(be_cfg.get("image", "")) == image_tag:
                 return bid
         return None
@@ -158,10 +153,11 @@ class ArkestraAdmin:
 
         # Resolve engine name for this model's backend
         bid = _resolve_backend(self.server._arkestra.cm, cfg, model_name)
-        bcfg = (self._backends_cfg.get("backends") or {}).get(bid, {})
+        cm_data = self.server._arkestra.cm.data
+        bcfg = (cm_data.get("backends") or {}).get(bid, {})
         engine_name = bcfg.get("engine") if isinstance(bcfg, dict) else None
         if not engine_name:
-            engine_name = self._backends_cfg.get("engines", {}).get("default-engine")
+            engine_name = cm_data.get("engines", {}).get("default-engine")
         if not engine_name:
             return {}
 
@@ -293,7 +289,7 @@ class ArkestraAdmin:
                     data.append(entry)
 
                 # Top-level metadata for dropdown options (static per-server)
-                backends = self._backends_cfg
+                backends = self.server._arkestra.cm.data.get("backends") or {}
                 runner_types = list(self.server._arkestra._runner_classes.keys()) if hasattr(self.server._arkestra, "_runner_classes") else []
 
                 return {
@@ -585,7 +581,7 @@ class ArkestraAdmin:
         @self._app.get("/admin/images")
         async def admin_images():
             cm_data = self._config_data
-            backends = self._backends_cfg
+            backends = self.server._arkestra.cm.data.get("backends") or {}
             if not isinstance(backends, dict):
                 raise HTTPException(status_code=500,
                                     detail="No backends section in config")

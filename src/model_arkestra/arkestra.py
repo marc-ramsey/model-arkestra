@@ -37,35 +37,31 @@ class ModelArkestra:
         # Resolve config path — defaults to ~/.config/arkestra/config.yaml
         self._config_path = resolve_config_path(config_path)
         self._cm = ConfigManager(str(self._config_path))
+
+        # Single source of truth: backends.yaml (base) merged with config.yaml (overlay).
+        # Nested dicts deep-merge; top-level keys coexist.
+        def _merge(base: dict, override: dict) -> dict:
+            for k, v in override.items():
+                if k in base and isinstance(base[k], dict) and isinstance(v, dict):
+                    _merge(base[k], v)
+                else:
+                    base[k] = v
+            return base
+
+        backends_path = Path(self._config_path).parent / "backends.yaml"
+        base = (backends_config if backends_config is not None
+                else (yaml.safe_load(open(backends_path)) or {} if backends_path.exists() else {}))
+        merged = _merge(base, self._cm.data or {})
+        self._cm.data = merged
         self._next_port = self._cm.data.get('models-start-port', start_port)
-        # Load backends.yaml from same directory as config (if present)
-        parent = self._config_path.parent
-        backends_path = parent / "backends.yaml"
-        if backends_config is not None:
-            self._backends_cfg = backends_config
-        elif backends_path.exists():
-            with open(backends_path) as f:
-                self._backends_cfg = yaml.safe_load(f) or {}
-        else:
-            self._backends_cfg = {}
-        # Merge backends.yaml into config data so cm.get_backend() finds both
-        be_section = self._backends_cfg.get("backends", {})
-        if be_section and isinstance(be_section, dict):
-            existing_backends = self._cm.data.get("backends") or {}
-            if not isinstance(existing_backends, dict):
-                existing_backends = {}
-            for k, v in be_section.items():
-                if k == "default":
-                    continue  # skip the 'default' key (just picks a backend name)
-                existing_backends[k] = v
-            self._cm.data["backends"] = existing_backends
+
         self._runners: Dict[str, BaseModelRunner] = {}
         self._runner_kwargs = runner_kwargs
         self._build_runner_class_map()
         # ── Cluster topology ───────────────────────────────────────
         self._load_clusters()
         # Extract sources section for binary_downloader compatibility
-        self._sources: Dict[str, Any] = self._backends_cfg.get("sources", {})
+        self._sources: Dict[str, Any] = self._cm.data.get("sources", {})
         # ── Global log buffer (single ring for all server-level events) ─
         app_log_lines = int(self._cm.data.get('app-log-lines', 2000))
         self._global_log_buf = UnicodeRingBuffer(app_log_lines * _ModelContext.AVG_LINE_BYTES)
@@ -278,7 +274,7 @@ class ModelArkestra:
 
     def get_backend(self, backend_id: str) -> Optional[Dict[str, Any]]:
         # Check backends.yaml first (preferred), then config.yaml (legacy)
-        be = self._backends_cfg.get("backends", {}).get(backend_id)
+        be = self._cm.data.get("backends", {}).get(backend_id)
         if be and isinstance(be, dict):
             return be
         # Fall back to config.yaml for legacy inline backend definitions
