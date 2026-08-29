@@ -88,7 +88,7 @@ body {
     min-width: 0;
 }
 .pane-logs { flex: 1; }
-.pane-chat { flex: 1; }
+.pane-chat { flex: 1; position: relative; }
 
 .pane-header {
     display: flex;
@@ -112,6 +112,42 @@ body {
     outline: none;
 }
 .pane-header select:focus { border-color: var(--accent); }
+
+.chat-input-bar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 8px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+}
+.chat-input-bar input[type="text"] {
+    flex: 1;
+    padding: 5px 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    font-family: var(--font);
+    background: var(--surface-alt);
+    outline: none;
+}
+.chat-input-bar input[type="text"]:focus { border-color: var(--accent); }
+.chat-input-bar button {
+    padding: 4px 10px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: var(--accent);
+    color: #fff;
+    font-size: 12px;
+    cursor: pointer;
+}
+.chat-input-bar button:hover { background: var(--accent-hover); }
+.chat-status {
+    font-size: 10px;
+    color: var(--text-dim);
+    flex-shrink: 0;
+}
 
 .divider-v, .divider {
     width: 5px;
@@ -190,6 +226,7 @@ body {
     overflow-y: auto;
     display: flex;
     flex-direction: column;
+    background: var(--surface);
 }
 .accordion.collapsed > .accordion-body,
 .accordion-item.collapsed > .acc-body {
