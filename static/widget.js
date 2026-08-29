@@ -111,7 +111,6 @@ renderers.AccordionContainer = function() {
     let collapsed = false;
     header.addEventListener('click', () => {
         collapsed = !collapsed;
-        header.style.display = collapsed ? 'none' : '';
         body.style.display = collapsed ? 'none' : '';
     });
 
@@ -245,6 +244,8 @@ renderers.ConfigPanel = function({ id, fields }) {
         btn.type = 'button';
         btn.id = 'btn-' + a + '-' + sanitizeId(id);
         btn.title = a.charAt(0).toUpperCase() + a.slice(1);
+        const iconMap = { start:'▶', stop:'■', save:'✓', reset:'↺', eject:'⏏' };
+        btn.textContent = iconMap[a] || a;
         if (['stop','eject'].includes(a)) btn.classList.add('btn-danger');
         if (a === 'start') btn.classList.add('btn-success');
         bar.appendChild(btn);
@@ -269,8 +270,11 @@ function renderModelRow(model) {
         '<span class="model-name">'+esc(name)+'</span></div>';
 
     // Click -> expand + fetch config (deferred)
-    row.addEventListener('click', async () => {
+    row.addEventListener('click', async (e) => {
+        if (row.querySelector('.config-panel')?.contains(e.target)) return;
+        if (e.target.tagName === 'BUTTON') return;
         EventBus.emit('model.select', { modelId: model.id });
+        row.classList.toggle('expanded');
         if (row.querySelector('.config-panel')) return;
 
         try {
@@ -278,8 +282,17 @@ function renderModelRow(model) {
             if (!data?.config) return;
             window._argSchema = data.args_schema || {};
 
+            const cp = data.config.checkpoint || '';
+            // Parse into repo + model (backwards compat: no prefix -> all in model)
+            let repoVal = '', modelVal = cp;
+            if (cp.includes('/')) {
+                const [first, ...rest] = cp.split('/');
+                if (['hf'].includes(first)) { repoVal = first; modelVal = rest.join('/'); }
+            }
+
             const fields = [
-                { name:'checkpoint', value:data.config.checkpoint, label:'Checkpoint' },
+                { name:'repo', value:repoVal, label:'Repo' },
+                { name:'model', value:modelVal, label:'Model' },
             ];
 
             // Backend selector
@@ -300,10 +313,10 @@ function renderModelRow(model) {
             // Individual args from backend-provided schema
             for (const [k, schema] of Object.entries(data.args_schema || {})) {
                 fields.push({ name:k, value:String(data.config.args?.[k] ?? ''),
-                    label:keyToLabel(k), schema:schema });
+                    label:k, schema:schema });
             }
 
-    const panel = renderers.ConfigPanel({ id: model.id, fields });
+            const panel = renderers.ConfigPanel({ id: model.id, fields });
 
             // Snapshot for dirty detection
             _configSnapshots[model.id] = JSON.parse(JSON.stringify(data.config));
@@ -337,7 +350,8 @@ function checkDirty(modelId, panel) {
     for (const key of argKeys) {
         if (val(key) !== (snap.args?.[key] ?? '')) { isDirty = true; break; }
     }
-    if (!isDirty && val('checkpoint') !== (snap.checkpoint||'')) isDirty = true;
+    if (!isDirty && val('repo') !== (snap.repo||'')) isDirty = true;
+    else if (!isDirty && val('model') !== (snap.model||snap.checkpoint||'')) isDirty = true;
     else if (!isDirty && val('backend') !== snap.backend) isDirty = true;
     else if (!isDirty && val('runner') !== snap.runner) isDirty = true;
 
@@ -428,7 +442,7 @@ let _chatCtrl = null, _streamAcc = '', _streamBubble = null;
 
 // Start streaming chat for a given model - called by EventBus or externally
 async function sendChat(modelName) {
-    const textEl = document.getElementById('chat-input');
+    const textEl = document.getElementById('f-chat-input');
     if (!textEl) return;
     const text = textEl.value.trim();
     if (!text || !modelName) return;

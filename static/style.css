@@ -206,8 +206,11 @@ body {
     align-items: center;
     justify-content: space-between;
     user-select: none;
-    background: var(--surface-alt);
+    background: var(--surface);
     border-bottom: 1px solid var(--border);
+}
+.accordion h3.expanded, .accordion-item h3.expanded {
+    background: var(--surface-alt);
 }
 .accordion h3:hover, .accordion-item h3:hover {
     background: var(--accent-light);
@@ -215,18 +218,15 @@ body {
 }
 
 .accordion h3::after, .accordion-item h3::after {
-    content: '';
-    display: inline-block;
-    width: 6px; height: 6px;
-    border-right: 1.5px solid currentColor;
-    border-bottom: 1.5px solid currentColor;
-    transform: rotate(-45deg);
-    transition: transform 0.2s;
+    content: '▸';
+    font-size: 10px;
+    transition: transform 0.15s;
     flex-shrink: 0;
+    margin-left: auto;
 }
 .accordion.collapsed h3::after,
 .accordion-item.collapsed h3::after {
-    transform: rotate(45deg);
+    content: '▾';
 }
 
 .accordion-body, .accordion-item .acc-body {
@@ -314,16 +314,13 @@ body {
 }
 .cluster-header:hover { background: var(--accent-light); color: var(--accent-hover); }
 .cluster-header::after {
-    content: '';
-    display: inline-block;
-    width: 5px; height: 5px;
-    border-right: 1.5px solid currentColor;
-    border-bottom: 1.5px solid currentColor;
-    transform: rotate(-45deg);
-    transition: transform 0.2s;
+    content: '▸';
+    font-size: 10px;
+    transition: transform 0.15s;
     flex-shrink: 0;
+    margin-left: auto;
 }
-.cluster-header.collapsed::after { transform: rotate(45deg); }
+.cluster-header.collapsed::after { content: '▾'; }
 .cluster-models {
     padding: 2px 8px 6px 18px;
     display: block;
@@ -344,54 +341,51 @@ body {
     margin-left: 4px;
 }
 .model-row {
-    display: block;
+    display: flex;
+    flex-direction: column;
     padding: 4px 6px;
     border-radius: var(--radius-sm);
     cursor: pointer;
     font-size: 12px;
     margin-bottom: 1px;
+    border: 1px solid transparent;
+    transition: background 0.1s, border-color 0.1s;
+}
+.model-row:nth-child(even) {
+    background: var(--surface-alt);
+}
+.model-row:nth-child(odd) {
+    background: var(--surface);
+}
+.model-row:hover {
+    background: var(--accent-light);
+    border-color: var(--border);
 }
 .model-name-bar {
     display: flex;
     align-items: center;
+    gap: 7px;
+    overflow: hidden;
+    padding: 4px 0;
 }
-.model-row:hover { background: var(--surface-alt); }
-.model-row .model-config-panel { display: none; border-top: 1px solid var(--border); padding: 8px; margin-top: 4px; }
-.model-row.expanded .model-config-panel { display: block; }
-
-/* ── Edit Form ─────────────────────────────────────────────── */
-.edit-form-grid {
-    display: grid;
-    gap: 8px;
-}
-.edit-field label {
-    display: block;
-    font-size: 10.5px;
-    font-weight: 600;
-    color: var(--text-dim);
-    text-transform: uppercase;
-    letter-spacing: 0.4px;
-    margin-bottom: 3px;
-}
-.edit-field input[type="text"],
-.edit-field select,
-.edit-field textarea {
-    width: 100%;
-    padding: 5px 8px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    font-size: 12px;
-    font-family: var(--font);
+.model-row.expanded .model-name-bar {
     background: var(--surface-alt);
-    color: var(--text);
-    outline: none;
+    border-bottom: 1px solid var(--border);
+    margin: -6px -8px 6px -8px;
+    padding: 6px 8px;
 }
-.edit-field input:focus,
-.edit-field select:focus,
-.edit-field textarea:focus {
-    border-color: var(--accent);
+.model-name-bar::after {
+    content: '▸';
+    font-size: 10px;
+    color: var(--text-dim);
+    margin-left: auto;
+    flex-shrink: 0;
+    transition: transform 0.15s;
 }
-.edit-field textarea { resize: vertical; min-height: 50px; max-height: 120px; }
+.model-row.expanded .model-name-bar::after { content: '▾'; }
+.model-row:hover { background: var(--surface-alt); }
+.model-row .config-panel { display: none; margin-top: 4px; }
+.model-row.expanded .config-panel { display: block; }
 
 .capabilities-list {
     display: flex;
@@ -608,6 +602,40 @@ body {
     padding: 6px 8px;
     max-height: calc(100vh * 0.4);
     overflow-y: auto;
+}
+.config-panel {
+    padding: 6px 8px;
+}
+.field-wrapper {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 12px;
+    align-items: center;
+    margin-bottom: 4px;
+}
+.field-wrapper > .field-label {
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--text-dim);
+    grid-column: 1;
+}
+.field-wrapper > .field-value {
+    grid-column: 2;
+}
+.field-wrapper > .field-value input,
+.field-wrapper > .field-value select {
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    font-family: var(--font);
+    background: var(--surface-alt);
+    color: var(--text);
+    outline: none;
+}
+.field-wrapper > .field-value input:focus,
+.field-wrapper > .field-value select:focus {
+    border-color: var(--accent);
 }
 .model-actions {
     display: flex;

@@ -35,6 +35,12 @@
                 if (!el) continue;
                 const name = el.id.match(/f-[^-]+-(.+)$/)?.[1]?.replace(/_/g,'-');
                 if (!name) continue;
+                if (name === 'repo') { body.repo = el.value; continue; }
+                if (name === 'model') {
+                    const repo = body.repo || '';
+                    body.checkpoint = repo ? repo + '/' + el.value : el.value;
+                    continue;
+                }
                 const isArg = window._argSchema?.hasOwnProperty(name);
                 if (isArg) {
                     body.args[name] = el.type === 'number' ? Number(el.value) : el.value;
@@ -86,8 +92,6 @@
             localStorage.setItem(key, JSON.stringify(params));
         } catch {}
     });
-
-    window.wireEvents(actions);
 
     // ── Load model data and populate tree ────────────────────────
     try {
