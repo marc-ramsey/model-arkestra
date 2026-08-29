@@ -12,28 +12,80 @@
     const actions = {
         async start(id)   { await window.adminPost('/admin/start/'+encodeURIComponent(id), {}); },
         async stop(id)    { await window.adminPost('/admin/stop/'+encodeURIComponent(id), {}); },
-        reset(id)         { location.reload(); },
+        reset()           { location.reload(); },
         async eject(id)       { try { await window.adminPost('/admin/eject/'+encodeURIComponent(id), {}); } catch(e) { console.error('[app] eject:',e.message); } },
+
+        sendChat() {
+            const modelId = document.getElementById('chat-model-select')?.value;
+            const textEl = document.getElementById('f-chat-input');
+            if (!modelId || !textEl?.value.trim()) return;
+            window.sendChat(modelId);
+        },
+
+        toggleChatParams() {
+            document.getElementById('chat-params-panel')?.classList.toggle('open');
+        },
 
         async save(id) {
             const panel = document.getElementById('config-' + sanitizeId(id));
             if (!panel) return;
-            const snap = window._configSnapshots?.[id];
-            const body = {};
-            // Read fields from DOM
+            const body = { args: {} };
             for (const w of panel.querySelectorAll('.field-wrapper')) {
                 const el = w.querySelector('input, select');
                 if (!el) continue;
                 const name = el.id.match(/f-[^-]+-(.+)$/)?.[1]?.replace(/_/g,'-');
-                if (name && name !== 'args') body[name] = el.value;
+                if (!name) continue;
+                const isArg = window._argSchema?.hasOwnProperty(name);
+                if (isArg) {
+                    body.args[name] = el.type === 'number' ? Number(el.value) : el.value;
+                } else {
+                    body[name] = el.value;
+                }
             }
-            const ta = panel.querySelector('textarea');
-            if (ta) { try { body.args = JSON.parse(ta.value); } catch(e) { body.args = ta.value; } }
-
             await window.adminPost('/admin/config/'+encodeURIComponent(id), body);
-            window._configSnapshots[id] = {...body};
+            if (window._configSnapshots?.[id]) window._configSnapshots[id] = {...body};
         },
     };
+
+    // Wire Enter key on chat input to sendChat action
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && e.target.id === 'f-chat-input' && !e.shiftKey) {
+            e.preventDefault();
+            actions.sendChat();
+        }
+    });
+
+    // Clear chat history when model changes
+    document.addEventListener('change', (e) => {
+        if (e.target.id === 'chat-model-select') {
+            chatHistory = [];
+            const modelId = e.target.value;
+            EventBus.emit('model.select', { modelId });
+        }
+    });
+
+    window.wireEvents(actions);
+
+    // Save chat params to localStorage on change
+    document.addEventListener('input', (e) => {
+        if (!e.target.id?.startsWith('f-chat-')) return;
+        const name = e.target.id.replace('f-chat-', '');
+        const key = 'arkestra-chat-params';
+        try {
+            const params = JSON.parse(localStorage.getItem(key)||'{}');
+            const chatModelSel = document.getElementById('chat-model-select');
+            const modelName = chatModelSel?.value;
+            if (!modelName) return;
+            if (!params[modelName]) params[modelName] = {};
+            // Map widget names to API field names
+            const apiName = name === 'temp' ? 'temperature' :
+                            name === 'max-tokens' ? 'max_tokens' :
+                            name === 'top-p' ? 'top_p' :
+                            name === 'top-k' ? 'top_k' : name;
+            params[modelName][apiName] = e.target.type === 'number' ? Number(e.target.value) : e.target.value;
+            localStorage.setItem(key, JSON.stringify(params));
+        } catch {}
+    });
 
     window.wireEvents(actions);
 

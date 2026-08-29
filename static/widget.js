@@ -15,6 +15,11 @@ function esc(s)  { return (s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').r
 function sanitizeId(n) { return (n||'').replace(/[^a-zA-Z0-9_-]/g, '_'); }
 function normalizeStatus(s) { return (s?.value || s || '').replace('runnerstate.','').toLowerCase(); }
 
+// Convert snake_case/hyphenated key to Title-Case label: "top-p" → "Top-P"
+function keyToLabel(key) {
+    return key.replace(/[-_](.)/g, (_, c) => c.toUpperCase());
+}
+
 // render() - walks JSON tree -> DOM. Returns element.
 function render(node) {
     if (!node?.widget) return null;
@@ -32,6 +37,7 @@ renderers.SplitPane = function({ axis, ratio, children }) {
     const el = document.createElement('div');
     el.style.display = 'flex';
     el.style.overflow = 'hidden';
+    if (axis === 'v') el.style.flexDirection = 'column';
 
     for (let i = 0; i < children.length; i++) {
         const c = render(children[i]);
@@ -136,7 +142,7 @@ renderers.ChatPane = function() {
     const header = document.createElement('div');
     header.className = 'pane-header';
     header.innerHTML = '<label>Select Model:</label><select id="chat-model-select"></select>' +
-        '<span class="chat-params-toggle" id="right-chat-params-toggle">Params</span>';
+        '<span class="chat-params-toggle" id="btn-toggle-chat-params">Params</span>';
     el.appendChild(header);
 
     const messages = document.createElement('div');
@@ -148,43 +154,26 @@ renderers.ChatPane = function() {
     paramsPanel.className = 'chat-params-panel';
     paramsPanel.id = 'chat-params-panel';
     paramsPanel.innerHTML = '<div class="chat-params-grid">' +
-        '<div class="chat-param"><label>Temp</label><input type="number" id="rcp-temp" min="0" max="2" step="0.05" value="0.7"></div>' +
-        '<div class="chat-param"><label>Max Tokens</label><input type="number" id="rcp-max-tokens" min="1" max="8192" step="1" value="512"></div>' +
-        '<div class="chat-param"><label>Top-P</label><input type="number" id="rcp-top-p" min="0" max="1" step="0.05" value="0.95"></div>' +
-        '<div class="chat-param"><label>Top-K</label><input type="number" id="rcp-top-k" min="1" max="256" step="1" value="40"></div>' +
+        '<div class="chat-param"><label>Temp</label><input type="number" id="f-chat-temp" min="0" max="2" step="0.05" value="0.7"></div>' +
+        '<div class="chat-param"><label>Max Tokens</label><input type="number" id="f-chat-max-tokens" min="1" max="8192" step="1" value="512"></div>' +
+        '<div class="chat-param"><label>Top-P</label><input type="number" id="f-chat-top-p" min="0" max="1" step="0.05" value="0.95"></div>' +
+        '<div class="chat-param"><label>Top-K</label><input type="number" id="f-chat-top-k" min="1" max="256" step="1" value="40"></div>' +
         '</div>';
-
-    // Toggle params panel visibility
-    if (header) {
-        header.addEventListener('click', (e) => {
-            if (e.target.id === 'right-chat-params-toggle') {
-                paramsPanel.classList.toggle('open');
-            }
-        });
-    }
     el.appendChild(paramsPanel);
 
     const inputBar = document.createElement('div');
     inputBar.className = 'chat-input-bar';
-    inputBar.innerHTML = '<input type="text" id="chat-input" placeholder="Type a message...">' +
-        '<button id="chat-send-btn">Send</button>' +
+    inputBar.innerHTML = '<input type="text" id="f-chat-input" placeholder="Type a message...">' +
+        '<button id="btn-send-chat" title="Send">Send</button>' +
         '<span class="chat-status" id="chat-status"></span>';
     el.appendChild(inputBar);
 
-    // Chat send handlers
-    const sendBtn = document.getElementById('chat-send-btn');
-    const chatInput = document.getElementById('chat-input');
-    if (sendBtn) {
-        sendBtn.addEventListener('click', () => {
-            const modelId = document.getElementById('chat-model-select')?.value;
-            if (modelId) sendChat(modelId);
-        });
-    }
-    if (chatInput) {
-        chatInput.addEventListener('keydown', (e) => {
-            if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); sendBtn?.click(); }
-        });
-    }
+    // Toggle params panel on click of toggle button
+    document.addEventListener('click', (e) => {
+        if (e.target.id === 'btn-toggle-chat-params') {
+            document.getElementById('chat-params-panel')?.classList.toggle('open');
+        }
+    });
 
     return el;
 };
@@ -200,26 +189,44 @@ renderers.ConfigPanel = function({ id, fields }) {
 
     (fields||[]).forEach(f => {
         const wrapper = document.createElement('div');
-        wrapper.className = 'field-wrapper field-' + f.widget;
+        wrapper.className = 'field-wrapper field-' + (f.schema?.type || 'string');
 
         const label = document.createElement('label');
-        label.textContent = f.label || f.name;
+        label.textContent = f.label || keyToLabel(f.name);
         wrapper.appendChild(label);
 
         let input;
-        if (f.widget === 'TextInput') { input = document.createElement('input'); input.type = 'text'; }
-        else if (f.widget === 'TextArea') { input = document.createElement('textarea'); input.rows = 2; }
-        else if (f.widget === 'SelectInput') {
+        if (f.options) {
+            // SelectInput — schema.type is ignored, explicit options provided
             input = document.createElement('select');
-            for (const opt of f.options||[]) {
+            for (const opt of f.options) {
                 const o = document.createElement('option');
-                o.value = opt.value; o.textContent = opt.label || opt.value;
+                o.value = String(opt.value); o.textContent = opt.label || opt.value;
                 input.appendChild(o);
             }
+        } else if (f.schema?.type === 'integer') {
+            input = document.createElement('input'); input.type = 'number'; input.step = '1';
+            f.minimum != null && (input.min = f.minimum);
+            f.maximum != null && (input.max = f.maximum);
+        } else if (f.schema?.type === 'float') {
+            input = document.createElement('input'); input.type = 'number'; input.step = f.step ?? 1;
+            f.minimum != null && (input.min = f.minimum);
+            f.maximum != null && (input.max = f.maximum);
+        } else if (f.schema?.type === 'bool') {
+            input = document.createElement('select');
+            input.innerHTML = '<option value="false">false</option><option value="true">true</option>';
+        } else if (f.widget === 'TextArea') {
+            // Explicit TextArea — multi-line
+            const ta = document.createElement('textarea');
+            ta.rows = 2;
+            input = ta;
+        } else {
+            input = document.createElement('input'); input.type = 'text';
         }
 
         if (input) {
             input.id = 'f-' + sanitizeId(id) + '-' + f.name;
+            input.value = f.value ?? '';
             wrapper.appendChild(input);
         }
 
@@ -265,28 +272,34 @@ function renderModelRow(model) {
         try {
             const data = await adminGet('/admin/config/' + encodeURIComponent(model.id));
             if (!data?.config) return;
+            window._argSchema = data.args_schema || {};
 
             const fields = [
-                { widget:'TextInput', name:'checkpoint', label:'Checkpoint' },
+                { name:'checkpoint', value:data.config.checkpoint, label:'Checkpoint' },
             ];
 
             // Backend selector
             const bkOpts = Object.entries(data.backends||{}).map(([k,v]) => ({
                 value: k, label: (typeof v==='object')?(v.host||k):k
             }));
-            if (bkOpts.length) fields.push({ widget:'SelectInput', name:'backend', label:'Backend', options:bkOpts });
+            if (bkOpts.length) fields.push({ name:'backend', value:data.config.backend,
+                options:bkOpts, widget:'SelectInput' });
 
             // Runner selector
             const rnOpts = data.runner_types?.map(t => ({value:t})) || [];
             if (rnOpts.length) {
                 const all = [{value:''}]; for (const r of rnOpts) all.push(r);
-                fields.push({ widget:'SelectInput', name:'runner', label:'Runner', options:all });
+                fields.push({ name:'runner', value:data.config.runner, options:all,
+                    widget:'SelectInput' });
             }
 
-            // Args textarea + capabilities
-            fields.push({ widget:'TextArea', name:'args', label:'Args' });
+            // Individual args from backend-provided schema
+            for (const [k, schema] of Object.entries(data.args_schema || {})) {
+                fields.push({ name:k, value:String(data.config.args?.[k] ?? ''),
+                    label:keyToLabel(k), schema:schema });
+            }
 
-            const panel = renderers.ConfigPanel({ id: model.id, fields });
+    const panel = renderers.ConfigPanel({ id: model.id, fields });
 
             // Snapshot for dirty detection
             _configSnapshots[model.id] = JSON.parse(JSON.stringify(data.config));
@@ -312,14 +325,17 @@ function checkDirty(modelId, panel) {
 
     const val = (name) => {
         const el = panel.querySelector('#f-' + sanitizeId(modelId) + '-' + name);
-        return el ? el.value : '';
+        return el ? (el.type === 'number' ? Number(el.value) : el.value) : '';
     };
 
     let isDirty = false;
-    if (val('checkpoint') !== (snap.checkpoint||'')) isDirty = true;
-    else if (val('backend') !== (snap.backend||'')) isDirty = true;
-    else if (val('runner') !== (snap.runner||'')) isDirty = true;
-    else if (snap.args !== undefined && JSON.stringify(snap.args) !== val('args')) isDirty = true;
+    const argKeys = Object.keys(window._argSchema || {});
+    for (const key of argKeys) {
+        if (val(key) !== (snap.args?.[key] ?? '')) { isDirty = true; break; }
+    }
+    if (!isDirty && val('checkpoint') !== (snap.checkpoint||'')) isDirty = true;
+    else if (!isDirty && val('backend') !== snap.backend) isDirty = true;
+    else if (!isDirty && val('runner') !== snap.runner) isDirty = true;
 
     const btn = panel.querySelector('#btn-save-' + sanitizeId(modelId));
     if (btn) btn.disabled = !isDirty;
