@@ -88,6 +88,8 @@ renderers.SplitPane = function({ axis, ratio, children }) {
         }
     }, 0);
 
+    el.style.flex = '1';
+    el.style.minHeight = '0';
     return el;
 };
 
