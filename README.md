@@ -148,7 +148,8 @@ Run inference on a GPU worker from a CPU-only master host. No model downloads, n
 # config.yaml (on your laptop / CPU server)
 models:
   gpu-lab-1/gemma-4b:       # worker-name / model-id convention
-    checkpoint: unsloth/gemma-4-E2B-it-GGUF:Q4_K_M
+    repo: hugging-face
+    model: unsloth/gemma-4-E2B-it-GGUF:Q4_K_M
     backend: gpu-lab-1
 backends:
   default: gpu-lab-1

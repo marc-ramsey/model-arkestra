@@ -523,8 +523,7 @@ def build_model_args(
     if backend is None:
         raise RuntimeError(f"Backend '{backend_id}' not found in backends config")
 
-    # 3. Resolve CHECKPOINT and PORT
-    checkpoint = model.get("checkpoint", "")
+    # 3. Resolve PORT
     port = env_vars.get("PORT") if env_vars is not None else None
     if port is None:
         port = str(cm.data.get("models-start-port", 18000))
@@ -540,8 +539,6 @@ def build_model_args(
     # Expand macros section (individual entries become resolvers).
     for k, v in (cm.data.get("macros") or {}).items():
         resolve_macros[k] = v
-    # Built-in overrides take precedence over config keys.
-    resolve_macros["CHECKPOINT"] = checkpoint
     resolve_macros["PORT"] = port
     resolve_macros["NPROC"] = str(os.cpu_count())
 

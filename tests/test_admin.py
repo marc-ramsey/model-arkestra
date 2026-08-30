@@ -134,11 +134,11 @@ class TestConfigCollection:
         assert set(body["models"]) == {"gemma-4-e2b", "qwen3.5-4b", "voxtral-mini"}
 
     def test_create_basic_model(self, live_server):
-        """POST /admin/config creates a new model with checkpoint."""
+        """POST /admin/config creates a new model."""
         client = live_server["client"]
         r = client.post(
             "/admin/config",
-            json={"checkpoint": "test/new-model:Q4", "args": "--temp 0.7"},
+            json={"repo": "hugging-face", "model": "test/new-model:Q4", "args": "--temp 0.7"},
         )
         assert r.status_code == 201
         body = r.json()
@@ -151,7 +151,8 @@ class TestConfigCollection:
         r = client.post(
             "/admin/config",
             json={
-                "checkpoint": "test/full-model:Q5",
+                "repo": "hugging-face",
+                "model": "test/full-model:Q5",
                 "backend": "rocm",
                 "args": "--ctx 8192",
                 "tags": ["chat", "reasoning"],
@@ -184,7 +185,7 @@ class TestConfigCollection:
         client = live_server["client"]
         r = client.post(
             "/admin/config",
-            json={"checkpoint": "existing/checkpoint:Q4", "name": "qwen3.5-4b"},
+            json={"repo": "hugging-face", "model": "existing/model:Q4", "name": "qwen3.5-4b"},
         )
         assert r.status_code == 409
 
@@ -317,7 +318,8 @@ class TestBackendResolutionFallback:
             "env:\n  ADMIN_KEY: test-key\n"
             "models:\n"
             "  no-default-test:\n"
-            "    checkpoint: foo.gguf\n"
+            "    repo: hugging-face\n"
+            "    model: foo.gguf\n"
         )
         fd, path = tempfile.mkstemp(suffix=".yaml")
         os.write(fd, cfg.encode()); os.close(fd)

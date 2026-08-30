@@ -66,7 +66,8 @@ def worker_server():
           default: ProcessModelRunner
         models:
           gemma:
-            checkpoint: unsloth/gemma-4-E2B-it-GGUF:Q4_K_M
+            repo: hugging-face
+            model: unsloth/gemma-4-E2B-it-GGUF:Q4_K_M
     """)
     proxy, client = _start_server(WORKER_PORT, cfg)
     yield {"server": proxy, "client": client}
@@ -84,7 +85,8 @@ def master_server(worker_server):
             base-url: "http://127.0.0.1:{WORKER_PORT}"
         models:
           gpu-server/gemma:
-            checkpoint: unsloth/gemma-4-E2B-it-GGUF:Q4_K_M
+            repo: hugging-face
+            model: unsloth/gemma-4-E2B-it-GGUF:Q4_K_M
     """)
     proxy, client = _start_server(MASTER_PORT, cfg)
     yield {"server": proxy, "client": client}

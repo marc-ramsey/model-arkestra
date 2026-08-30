@@ -61,7 +61,8 @@ runners:
 
 models:
   test-model:
-    checkpoint: dummy/dummy:Q4_K_M
+    repo: hugging-face
+    model: dummy/dummy:Q4_K_M
     args: --temp 0.7
 """
     with open(cfg_path, "w") as f:

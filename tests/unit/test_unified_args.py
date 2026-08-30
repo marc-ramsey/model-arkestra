@@ -36,12 +36,13 @@ backends:
   default: vulkan
   vulkan:
     args:
-      model: ${CHECKPOINT}
+      model: ${ctx-size}
       port: "${PORT}"
 
 models:
   small-model:
-    checkpoint: fake/model:Q4
+    repo: hugging-face
+    model: fake/model:Q4
     args:
       temp: 0.7
       top-p: 0.95
@@ -72,12 +73,12 @@ class TestConfigDefaultsCascade:
 
 
 class TestBackendMacroResolution:
-    """Backend args with ${CHECKPOINT} and ${PORT} macros must resolve."""
+    """Backend args with macro vars must resolve."""
 
-    def test_checkpoint_macro_resolved(self, cm):
+    def test_ctx_size_macro_resolved(self, cm):
         result = build_model_args(cm, "small-model", env_vars={"PORT": "18000"})
         idx = result[0].index("--model")
-        assert result[0][idx + 1] == "fake/model:Q4"
+        assert result[0][idx + 1] == "8192"
 
     def test_port_macro_resolved(self, cm):
         result = build_model_args(cm, "small-model", env_vars={"PORT": "18000"})
@@ -131,10 +132,10 @@ class TestInferenceKwargsMerge:
         assert "--no-mmap" not in result[0]
 
     def test_infra_keys_skipped(self, cm):
-        # backend and checkpoint keys should NOT become CLI flags.
+        # backend key should NOT become CLI flag.
         result = build_model_args(
             cm, "small-model", env_vars={"PORT": "18000"},
-            inference_kwargs={"backend": "rocm", "checkpoint": "other:Q4"},
+            inference_kwargs={"backend": "rocm", "model": "other:Q4"},
         )
         assert "--backend" not in result[0]
 

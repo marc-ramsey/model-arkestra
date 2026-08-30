@@ -61,7 +61,8 @@ Returns a list of all configured models with their full runtime context. Models 
       "runner_type": "process",
       "backend_id": "rocm",
       "args": ["temp", 0.7, "top-k", 20, "ctx-size", 131072],
-      "checkpoint": "unsloth/Qwen3-4B-GGUF:Q4_K_M",
+      "repo": "hugging-face",
+      "model": "unsloth/Qwen3-4B-GGUF:Q4_K_M",
       "capabilities": ["chat"]
     },
     {
@@ -71,7 +72,8 @@ Returns a list of all configured models with their full runtime context. Models 
       "runner_type": null,
       "backend_id": "vulkan-radv",
       "args": ["temp", 0.7, "top-p", 0.95, "ctx-size", 131072],
-      "checkpoint": "unsloth/gemma-4-E2B-it-GGUF:Q4_K_M",
+      "repo": "hugging-face",
+      "model": "unsloth/gemma-4-E2B-it-GGUF:Q4_K_M",
       "capabilities": []
     }
   ],
@@ -88,13 +90,14 @@ Returns a list of all configured models with their full runtime context. Models 
 | `runner_type` | Runner type string (null if not running) |
 | `backend_id` | Resolved backend (from context or config fallback) |
 | `args` | Model args from config |
-| `checkpoint` | Model checkpoint reference |
+| `repo` | Model repo identifier |
+| `model` | Model path within repo |
 | `capabilities` | Capability tags (default `["chat"]` if none specified) |
 | `available_capabilities` | Resolved capability pool for the admin UI chips — follows the chain: per-model `capabilities` → backend-declared `backends.<id>.capabilities` → hardcoded fallback `["chat"]` |
 
 **Status values:**
 - `running`, `loading`, `error`, `stopping` — real states from active runner contexts
-- `stopped` — model was previously started but is now stopped; its checkpoint **is** in the HF cache
+- `stopped` — model was previously started but is now stopped; its weights **are** in the HF cache
 - `uncached` — model exists in config but is not currently downloaded
 
 Top-level metadata (`backends`, `runner_types`) is static for the lifetime of the server.
@@ -109,7 +112,8 @@ curl -X POST 'http://localhost:8080/admin/config' \
      -H 'X-Admin-Key: your-secret-key' \
      -d '{
        "name": "my-new-model",
-       "checkpoint": "unsloth/my-model-GGUF:Q4_K_M",
+       "repo": "hugging-face",
+       "model": "unsloth/my-model-GGUF:Q4_K_M",
        "backend": "vulkan-radv",
        "args": {"temp": 0.7, "ctx-size": 131072}
      }'
@@ -117,14 +121,15 @@ curl -X POST 'http://localhost:8080/admin/config' \
 
 | Field | Required | Description |
 |---|---|---|
-| `name` | No | Model name in config. Defaults to the last segment of checkpoint (before `:` and `/`). |
-| `checkpoint` | **Yes** | HuggingFace checkpoint reference. |
+| `name` | No | Model name in config. Defaults to the last segment of `model` (before `:` and `/`). |
+| `repo` | **Yes** | HuggingFace repo identifier. |
+| `model` | **Yes** | HF model path within repo. |
 | `args` | No | Command-line arguments for the model. |
 | `backend` | No | Backend ID from config (e.g., `vulkan-radv`, `rocm`). |
 | `capabilities` | No | Capability tags (default `["chat"]` if empty). |
 | `tags` | No | Free-form tags. |
 
-Returns `400 Bad Request` if `checkpoint` is missing. Returns `409 Conflict` if the model name already exists.
+Returns `400 Bad Request` if `repo` or `model` is missing. Returns `409 Conflict` if the model name already exists.
 
 ### GET /admin/config/{model}
 
@@ -142,7 +147,8 @@ Returns:
   "model": "qwen3.5-4b",
   "status": "running",
   "config": {
-    "checkpoint": "unsloth/Qwen3-4B-GGUF:Q4_K_M",
+    "repo": "hugging-face",
+    "model": "unsloth/Qwen3-4B-GGUF:Q4_K_M",
     "args": {"temp": 0.7, "top-k": 20, "ctx-size": 131072},
     "backend": "rocm"
   },
@@ -163,7 +169,7 @@ curl -X PUT 'http://localhost:8080/admin/config/qwen3.5-4b' \
      -d '{"args": {"temp": 1.0, "ctx-size": 32768}, "capabilities": ["chat"]}'
 ```
 
-Valid fields: `args`, `checkpoint`, `backend`, `capabilities`, `runner`, `tags`.
+Valid fields: `args`, `repo`, `model`, `backend`, `capabilities`, `runner`, `tags`.
 
 Returns `404` if the model does not exist. Returns `500` on write failure (config is rolled back).
 
@@ -182,14 +188,15 @@ curl -X POST 'http://localhost:8080/admin/start/qwen3.5-4b' \
 curl -X POST 'http://localhost:8080/admin/start/qwen3.5-4b' \
      -H 'Content-Type: application/json' \
      -H 'X-Admin-Key: your-secret-key' \
-     -d '{"backend": "docker", "checkpoint": "unsloth/Qwen3.5-4B-GGUF:Q5_K_M"}'
+     -d '{"backend": "docker", "repo": "hugging-face", "model": "unsloth/Qwen3.5-4B-GGUF:Q5_K_M"}'
 ```
 
 Transient overrides are **not** persisted to disk. They apply only to this invocation:
 
 Infra keys (resolved before inference filtering):
 - `args` — command-line arguments override
-- `checkpoint` — model checkpoint reference override
+- `repo` — model repo override
+- `model` — model path within repo override
 - `backend` — backend ID override (runner resolves from config chain)
 - `runner` — explicit runner type (`process`, `podman`, `docker`, or `remote` (legacy))
 - `max_log_lines` — per-invocation log buffer size
@@ -258,9 +265,9 @@ This endpoint always returns `200 OK`. The response is sent before shutdown begi
 
 ### POST /admin/eject/{model}
 
-Removes a model from cache without modifying config. Stops the model first (if running), deletes its checkpoint files from the HF cache directory, and clears all runner context entries.
+Removes a model from cache without modifying config. Stops the model first (if running), deletes its cached files from the HF cache directory, and clears all runner context entries.
 
-**Safety check:** before deleting, if another *running* model shares the same underlying cache directory (same resolved checkpoint path under `HF_HUB_CACHE`), the eject is rejected:
+**Safety check:** before deleting, if another *running* model shares the same underlying cache directory (same resolved model path under `HF_HUB_CACHE`), the eject is rejected:
 ```json
 {"detail": "Model 'qwen3.5-4b' is in use by other running runners: gemma-v2, llama-rdma"}
 ```
@@ -275,7 +282,7 @@ Returns `200 OK` with a detail report on success:
   "contexts_cleared": 1
 }
 ```
-If the model has no checkpoint configured, or the cache directory doesn't exist, `cache_deleted` is `false`. Returns `404` if the model doesn't exist in config. Returns `409 Conflict` when a shared-cache conflict prevents eject.
+If the model has no model configured, or the cache directory doesn't exist, `cache_deleted` is `false`. Returns `404` if the model doesn't exist in config. Returns `409 Conflict` when a shared-cache conflict prevents eject.
 
 ### GET /admin/log/{model}?since=N&lines=M
 
@@ -553,10 +560,10 @@ arkestra-admin --server http://localhost:8080 --api-key SECRET <command>
 | `arkestra-admin config list` | List model names in config |
 | `arkestra-admin config get <name>` | Show one model's full config + runtime status |
 | `arkestra-admin config set <name> key=value` | Update a model field (e.g., `backend=rocm`) |
-| `arkestra-admin config create --checkpoint PATH` | Add a new model to config |
+| `arkestra-admin config create --model PATH` | Add a new model to config |
 | `arkestra-admin config rm <name>` | Remove a model from config |
 | `arkestra-admin logs <name\|all> [--lines 100]` | Tail model or global server logs |
-| `arkestra-admin eject <name>` | Stop model and delete checkpoint cache |
+| `arkestra-admin eject <name>` | Stop model and delete its cached files |
 | `arkestra-admin images list` | Show OCI image availability per backend |
 | `arkestra-admin images build <backend> [--tag TAG]` | Build an OCI container image |
 | `arkestra-admin images rm <image_tag>` | Remove a container image |

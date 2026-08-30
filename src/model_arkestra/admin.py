@@ -363,30 +363,18 @@ class ArkestraAdmin:
 
         @self._app.post("/admin/config")
         async def admin_config_create(body: Dict[str, Any]):
-            """Create a new model entry in config. Requires 'repo'+'model' (preferred) or legacy 'checkpoint'."""
+            """Create a new model entry in config."""
             cfg = self._models_cfg
 
-            # Support legacy checkpoint-based creation for backward compat
-            if not body.get("repo") and not body.get("checkpoint"):
+            if not body.get("repo") or not body.get("model"):
                 raise HTTPException(
-                    status_code=400, detail="Need 'repo'+'model' or legacy 'checkpoint' to create a model"
+                    status_code=400, detail="Need 'repo' and 'model' to create a model"
                 )
 
-            # Build repo/model from checkpoint if needed (backward compat)
-            if body.get("repo") and body.get("model"):
-                repo = str(body["repo"])
-                model = str(body["model"])
-            elif body.get("checkpoint"):
-                chk = str(body["checkpoint"])
-                # Parse legacy compound string: "unsloth/Model-GGUF:Q4_K_XL"
-                parts = chk.split(":", 1)
-                repo = "hugging-face"
-                model_path = parts[0] if parts else chk  # part before colon for name
-                model = chk  # keep full string including quantizer tag
-            else:
-                raise HTTPException(status_code=400, detail="Need 'repo'+'model' or legacy 'checkpoint'")
+            repo = str(body["repo"])
+            model = str(body["model"])
 
-            name = body.get("name") or (model_path.rsplit("/", 1)[-1] if model_path else model.split(":")[0].rsplit("/", 1)[-1])
+            name = body.get("name") or model.split(":")[0].rsplit("/", 1)[-1]
             if not name:
                 raise HTTPException(
                     status_code=400, detail="Could not determine model name from model field"

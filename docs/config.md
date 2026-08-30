@@ -59,7 +59,8 @@ backends:
 
 models:
   qwen3.8-27b:
-    checkpoint: unsloth/Qwen3.8-27B-GGUF:Q4_K_M
+    repo: hugging-face
+    model: unsloth/Qwen3.8-27B-GGUF:Q4_K_M
     args:
       temp: 0.7
       top-p: 0.80
@@ -77,7 +78,8 @@ models:
     port: 8090   # separate from LLM port range
 
   qwen3.6-27b-mtp:
-    checkpoint: unsloth/Qwen3.6-27B-MTP-GGUF:UD-Q4_K_XL
+    repo: hugging-face
+    model: unsloth/Qwen3.6-27B-MTP-GGUF:UD-Q4_K_XL
     args:
       temp: 0.6
       top-p: 0.95
@@ -125,7 +127,7 @@ backends:
 
 ### `models:` Section — Model Definitions
 
-Each model uses `checkpoint` for the HF reference, `args:` for CLI flags, and optionally a `backend` override.
+Each model uses `repo:` + `model:` for the HF reference, `args:` for CLI flags, and optionally a `backend` override.
 
 #### `args:` Field Format
 
@@ -143,7 +145,8 @@ The `args:` key is a **flat YAML dict** where each key is a CLI flag name (kebab
 ```yaml
 models:
   qwen3-4b:
-    checkpoint: unsloth/Qwen3-4B-GGUF:Q4_K_M
+    repo: hugging-face
+    model: unsloth/Qwen3-4B-GGUF:Q4_K_M
     backend: rocm            # optional override (defaults to backends.default)
 
     args:
@@ -308,10 +311,12 @@ clusters:
 
 models:
   gpu-server/gemma-4b:
-    checkpoint: unsloth/gemma-4-E2B-it-GGUF:Q4_K_M
+    repo: hugging-face
+    model: unsloth/gemma-4-E2B-it-GGUF:Q4_K_M
     backend: rocm
   cpu-worker/whisper-large:
-    checkpoint: distil-whisper/distil-small.en
+    repo: hugging-face
+    model: distil-whisper/distil-small.en
     backend: cpu
 ```
 

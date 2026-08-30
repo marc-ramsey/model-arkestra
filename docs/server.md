@@ -240,7 +240,8 @@ clusters:
 
 models:
   gpu-server/qwen3-4b:
-    checkpoint: unsloth/Qwen3-4B-GGUF:Q4_K_M
+    repo: hugging-face
+    model: unsloth/Qwen3-4B-GGUF:Q4_K_M
     backend: rocm
 ```
 

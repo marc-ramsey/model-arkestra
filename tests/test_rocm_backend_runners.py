@@ -55,7 +55,8 @@ def cfg_rocm_process() -> str:
               flash-attn: "on"
         models:
           test-rocm-process:
-            checkpoint: test/model:Q4_K_M
+            repo: hugging-face
+            model: test/model:Q4_K_M
             backend: rocm
             args:
               temp: 0.7
@@ -77,7 +78,8 @@ def cfg_rocm_podman() -> str:
               flash-attn: "on"
         models:
           test-rocm-podman:
-            checkpoint: test/model:Q4_K_M
+            repo: hugging-face
+            model: test/model:Q4_K_M
             backend: rocm
     """))
 
@@ -97,7 +99,8 @@ def cfg_rocm_docker() -> str:
               flash-attn: "on"
         models:
           test-rocm-docker:
-            checkpoint: test/model:Q4_K_M
+            repo: hugging-face
+            model: test/model:Q4_K_M
             backend: rocm
     """))
 
@@ -126,15 +129,15 @@ class TestRunnerClassRegistry:
     """All three runner types are registered by default."""
 
     def test_process_registered(self):
-        mr = ModelArkestra(_write_config("models:\n  m1:\n    checkpoint: x\n"))
+        mr = ModelArkestra(_write_config("models:\n  m1:\n    repo: hugging-face\n    model: test/x:Q4\n"))
         assert "process" in mr._runner_classes
 
     def test_podman_registered(self):
-        mr = ModelArkestra(_write_config("models:\n  m1:\n    checkpoint: x\n"))
+        mr = ModelArkestra(_write_config("models:\n  m1:\n    repo: hugging-face\n    model: test/x:Q4\n"))
         assert "podman" in mr._runner_classes
 
     def test_docker_registered(self):
-        mr = ModelArkestra(_write_config("models:\n  m1:\n    checkpoint: x\n"))
+        mr = ModelArkestra(_write_config("models:\n  m1:\n    repo: hugging-face\n    model: test/x:Q4\n"))
         assert "docker" in mr._runner_classes
 
 
@@ -151,7 +154,8 @@ class TestUnknownRunnerRejected:
                 runner: nonexistent-runner
             models:
               m1:
-                checkpoint: test/x:Q4
+                repo: hugging-face
+                model: test/x:Q4
                 backend: unknown-backend
         """))
         mr = ModelArkestra(cfg)
@@ -168,7 +172,7 @@ class TestUnknownRunnerRejected:
 class TestBackendResolution:
     """Edge cases in backend resolution that need a full ModelArkestra instance."""
     def test_no_backend_falls_back(self):
-        cfg = _write_config("models:\n  m1:\n    checkpoint: x\n")
+        cfg = _write_config("models:\n  m1:\n    repo: hugging-face\n    model: test/x:Q4\n")
         mr = ModelArkestra(cfg)
         # Falls back to BaseModelRunner._DEFAULT_BACKEND when no backend set
         assert mr._resolve_backend_id("m1", {}, None) == "cpu"
@@ -177,7 +181,7 @@ class TestBackendResolution:
         """backend-default at top level is respected."""
         cfg = _write_config(
             "backend-default: my-custom-backend\n"
-            "models:\n  m1:\n    checkpoint: x\n"
+            "models:\n  m1:\n    repo: hugging-face\n    model: test/x:Q4\n"
         )
         mr = ModelArkestra(cfg)
         assert mr._resolve_backend_id("m1", {}, None) == "my-custom-backend"
@@ -231,10 +235,12 @@ class TestMixedBackendsInConfig:
                 image: rocm:v1
             models:
               fast-model:
-                checkpoint: test/fast:Q4
+                repo: hugging-face
+                model: test/fast:Q4
                 backend: vulkan
               gpu-model:
-                checkpoint: test/gpu:Q4
+                repo: hugging-face
+                model: test/gpu:Q4
                 backend: rocm-podman
         """))
         mr = ModelArkestra(cfg)
@@ -255,13 +261,16 @@ class TestMixedBackendsInConfig:
                 image: rocm-v2:1
             models:
               m-proc:
-                checkpoint: test/m1:Q4
+                repo: hugging-face
+                model: test/m1:Q4
                 backend: fast
               m-pod:
-                checkpoint: test/m2:Q4
+                repo: hugging-face
+                model: test/m2:Q4
                 backend: gpu-podman
               m-docker:
-                checkpoint: test/m3:Q4
+                repo: hugging-face
+                model: test/m3:Q4
                 backend: gpu-docker
         """))
         mr = ModelArkestra(cfg)
@@ -282,7 +291,8 @@ class TestConfigEnvResolution:
               MY_VAR: hello
             models:
               m1:
-                checkpoint: test/m1:Q4
+                repo: hugging-face
+                model: test/m1:Q4
         """))
         mr = ModelArkestra(cfg)
         env = mr.cm.data.get("env", {})
