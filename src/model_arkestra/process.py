@@ -31,7 +31,7 @@ class ProcessModelRunner(BaseModelRunner):
         backend = self.cm[f"backends/{be_id}"] if be_id else {}
 
         # Resolve engine and merge its defaults into the backend config.
-        engine_name = (backend or {}).get("engine", "llama_cpp")
+        engine_name = (backend or {}).get("engine", "llama-cpp")
         engine_cfg = _resolve_engine(self.cm, engine_name)
         merged = _merge_engine_defaults(engine_cfg, backend or {})
 
@@ -45,7 +45,7 @@ class ProcessModelRunner(BaseModelRunner):
 
         # Filter inference kwargs through engine — drop anything not valid for llama.cpp.
         raw_inference = self._inference_kwargs.get(ctx.name, {})
-        if engine_name == "llama_cpp":
+        if engine_name == "llama-cpp":
             from model_arkestra.llama_cpp import LlamaCppEngine
             engine = LlamaCppEngine()
         else:

@@ -182,12 +182,10 @@ class TestDownloadOnnxModel:
 class TestSynthesize:
     async def test_synthesizes_nonzero_wav(self):
         """Verify synthesize() produces valid non-zero WAV bytes."""
-        pytest.importorskip("kokoro_onnx")
-        import kokoro_onnx as ko
+        from unittest.mock import MagicMock
         import numpy as np
 
         # Mock config manager returning a TTS model
-        from unittest.mock import MagicMock
         cm = MagicMock()
         cm.get_model.return_value = {
             "type": "tts",
@@ -201,18 +199,17 @@ class TestSynthesize:
         # Create a mock context with kokero model and session loaded
         from model_arkestra.types import _ModelContext
         ctx = _ModelContext("test-tts", 0)
-        ctx.g2p_lang = "a"
+        ctx.g2p_lang = "en-us"
 
-        # Use real kokero_model instance (loads G2P during __init__)
-        ctx.kokero_model = ko.Model()
+        # Mock Kokoro.create() to return synthetic waveform (1 sec @ 24kHz)
+        mock_kokero = MagicMock()
+        mock_samples = np.random.randn(24000).astype("float32") * 0.5
+        mock_kokero.create.return_value = (mock_samples, 24000)
+        ctx.kokero_model = mock_kokero
 
-        # Mock ONNX session returning a short waveform (1 sec of audio)
-        mock_session = MagicMock()
-        mock_session.run.return_value = [np.random.randn(24000).astype("float32") * 0.5]
-        ctx.onnx_session = mock_session
         runner._models["test-tts"] = ctx
 
-        result = await runner.synthesize("test-tts", "hello world", voice="a")
+        result = await runner.synthesize("test-tts", "hello world", voice="af_bella")
         assert len(result) > 100, f"Expected WAV data (got {len(result)} bytes)"
 
         # Verify it's a valid WAV file

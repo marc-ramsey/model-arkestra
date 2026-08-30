@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import io
 import os
+import wave
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -79,6 +80,26 @@ class OnnxRunner(BaseModelRunner):  # type: ignore[name-defined]
         resolved_path = self._resolve_model_path(model_path, ctx)
 
         inference_type = str(model_data.get("type", "embedding"))
+
+        # ── TTS models: use Kokoro class (manages its own ONNX session) ─
+        if inference_type == "tts":
+            voices_path = model_data.get("voices") or model_data.get("checkpoint", "")
+            resolved_voices = self._resolve_model_path(voices_path, ctx, file_pattern="*.bin")
+
+            try:
+                from kokoro_onnx import Kokoro as KokoroTTS
+                ctx.kokero_model = KokoroTTS(str(resolved_path), str(resolved_voices))
+                ctx.g2p_lang = model_data.get("g2p_lang", "en-us")
+                if self.arkestra:
+                    self.arkestra.log(f"[start] tts '{ctx.name}' loaded voice={ctx.g2p_lang}")
+            except ImportError:
+                if self.arkestra:
+                    self.arkestra.error(
+                        f"TTS model '{ctx.name}' requires the `onnx` extra. "
+                        f"Install with: pip install model-arkestra[onnx]")
+                raise RuntimeError(f"kokero-onnx not installed — TTS unavailable for '{ctx.name}'")
+            return  # Kokoro manages its own session below
+
         device_name = model_data.get("device", "CPUExecutionProvider")
         providers_cfg = model_data.get("providers", None)
 
@@ -107,30 +128,17 @@ class OnnxRunner(BaseModelRunner):  # type: ignore[name-defined]
         if self.arkestra:
             self.arkestra.log(f"[start] model={ctx.name} onnx providers={provider_list}")
 
-        # Load tokenizer for whisper/embedding models if configured
-        tokenizer_path = model_data.get("tokenizer") or str(model_data.get("path", ""))
-        if tokenizer_path:
-            try:
-                from transformers import AutoTokenizer
-                ctx.onnx_tokenizer = AutoTokenizer.from_pretrained(
-                    tokenizer_path, trust_remote_code=True)
-            except Exception as e:
-                if hasattr(self, 'cm'):
-                    logger.warning("Could not load tokenizer for '%s': %s", ctx.name, e)  # noqa: F821
-
-        # Load TTS G2P model + voice embeddings for type=tts models
-        if inference_type == "tts":
-            try:
-                import kokoro_onnx as ko
-                ctx.kokero_model = ko.Model()
-                ctx.g2p_lang = model_data.get("g2p_lang", "a")  # 'a' = en-us default voice set
-                self.arkestra.log(f"[start] tts G2P loaded for '{ctx.name}' (lang={ctx.g2p_lang})")
-            except ImportError:
-                if self.arkestra:
-                    self.arkestra.error(
-                        f"TTS model '{ctx.name}' requires the `onnx` extra. "
-                        f"Install with: pip install model-arkestra[onnx]")
-                raise RuntimeError(f"kokero-onnx not installed — TTS unavailable for '{ctx.name}'")
+        # Load tokenizer for whisper/embedding models (TTS handled above)
+        if inference_type != "tts":
+            tokenizer_path = model_data.get("tokenizer") or str(model_data.get("path", ""))
+            if tokenizer_path:
+                try:
+                    from transformers import AutoTokenizer
+                    ctx.onnx_tokenizer = AutoTokenizer.from_pretrained(
+                        tokenizer_path, trust_remote_code=True)
+                except Exception as e:
+                    if hasattr(self, 'cm'):
+                        logger.warning("Could not load tokenizer for '%s': %s", ctx.name, e)  # noqa: F821
 
     async def _stop_model_process(self, ctx: "model_arkestra.types._ModelContext") -> None:
         """Unload ONNX session from memory."""
@@ -273,41 +281,26 @@ class OnnxRunner(BaseModelRunner):  # type: ignore[name-defined]
 
     async def synthesize(self, model_name: str, text: str,
                          voice: Optional[str] = None, speed: float = 1.0) -> bytes:
-        """Generate speech from text using Kokero ONNX TTS model."""
+        """Generate speech from text using Kokoro ONNX TTS model."""
         ctx = self._models.get(model_name)
         if not ctx:
             from model_arkestra.types import ModelNotStarted
             raise ModelNotStarted(model_name)
 
         def _do_synthesize():
-            import kokoro_onnx as ko
-            import wave
-            import numpy as np
-
-            # Text → phonemes → tokens via G2P
-            phoneme_ids = ctx.kokero_model.g2p(text)
-
-            # Select voice embedding (default: 'a' = default US English set)
-            voice_id = voice or ctx.g2p_lang  # 'a', 'b', 'j', etc.
-            style = ko.Model.load_voice(voice_id)  # [1×256]
-
-            # Run ONNX model → waveform (float32, samples)
-            session = ctx.onnx_session
-            outputs = session.run(None, {
-                "input_ids": phoneme_ids.reshape(1, -1).astype("int64"),
-                "style": style.reshape(1, -1).astype("float32"),
-                "speed": np.array([speed], dtype="float32"),
-            })
-
-            # Convert float32 [-1,1] → int16 WAV
-            audio = outputs[0][0]
-            audio_int16 = (audio * 32767).astype("int16")
-
+            # Text → phonemes → waveform (Kokoro handles G2P + ONNX internally)
+            samples, sr = ctx.kokero_model.create(
+                text,
+                voice=voice or ctx.g2p_lang,
+                speed=speed,
+            )
+            # Convert numpy float32 [-1,1] → int16 WAV
+            audio_int16 = (samples * 32767).astype("int16")
             buf = io.BytesIO()
             with wave.open(buf, "wb") as wf:
                 wf.setnchannels(1)
                 wf.setsampwidth(2)
-                wf.setframerate(24000)
+                wf.setframerate(sr)
                 wf.writeframes(audio_int16.tobytes())
             return buf.getvalue()
 
@@ -316,7 +309,8 @@ class OnnxRunner(BaseModelRunner):  # type: ignore[name-defined]
     # ── Internal helpers ───────────────────────────────────────────
     # NOTE: logger is set at import time by arkestra.py after importing OnnxRunner.
 
-    def _resolve_model_path(self, model_path: str, ctx: "model_arkestra.types._ModelContext") -> Path:
+    def _resolve_model_path(self, model_path: str, ctx: "model_arkestra.types._ModelContext",
+                            file_pattern: str = "*.onnx") -> Path:
         """Resolve a model path — accept absolute paths or resolve from HF cache."""
         p = Path(model_path)
         if p.exists():
@@ -333,12 +327,12 @@ class OnnxRunner(BaseModelRunner):  # type: ignore[name-defined]
         ]
         for sp in search_paths:
             if sp.exists():
-                onnx_files = list(sp.rglob("*.onnx"))
-                if onnx_files:
-                    return onnx_files[0].resolve()
+                matches = list(sp.rglob(file_pattern))
+                if matches:
+                    return matches[0].resolve()
 
         raise FileNotFoundError(
-            f"ONNX model not found at '{model_path}'. "
+            f"Model not found at '{model_path}'. "
             f"Verify the path exists or is a valid HF repo ID."
         )
 
