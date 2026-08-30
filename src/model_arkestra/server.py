@@ -192,33 +192,9 @@ class ArkestraServer:
 
     # ── ONNX auxiliary model management ───────────────────────────
 
-    def _is_onnx_model(self, model_name: str) -> bool:
-        """Check if a model is an ONNX auxiliary model (embedding/whisper/tts)."""
-        cfg = self._get_aux_model_cfg(model_name)
-        if not cfg:
-            return False
-        return bool(cfg.get("type") in ("embedding", "whisper", "tts"))
 
-    def _get_aux_model_cfg(self, model_name: str) -> Optional[Dict]:
-        """Get config for a model by name."""
-        if not model_name:
-            return None
-        cfg = self._arkestra.cm.data.get("models") or {}
-        model = cfg.get(model_name)
-        if isinstance(model, dict):
-            return model
-        # Check all keys for partial match (e.g. "default-whisper" → first key containing it)
-        if model_name in cfg:
-            return cfg[model_name]
-        return None
 
-    def _get_remote_base_url(self, model_name: str) -> Optional[str]:
-        """Return the base-url for a remote cluster proxy, or None."""
-        try:
-            cluster_name, base_url, _local_id = self._arkestra.resolve_model_cluster_addr(model_name)
-        except ValueError:
-            return None
-        return str(base_url).rstrip("/") if base_url else None
+
 
     async def _proxy_stream(self, model_name: str, payload: Dict[str, Any], base_url: str) -> AsyncIterator[str]:
         """Proxy a streaming request to a remote worker and yield SSE lines."""
@@ -283,6 +259,23 @@ class ArkestraServer:
                     data = await resp.json()
             except Exception as e:
                 raise HTTPException(status_code=503, detail=f"Remote server error: {e}")
+
+    # ── ONNX auxiliary model management ───────────────────────────
+
+    def _find_model_by_tag(self, tag: str) -> Optional[str]:
+        """Find first model with the given tag in its tags list."""
+        for name, cfg in self._arkestra.cm.data.get("models", {}).items():
+            if tag in (cfg.get("tags") or []):
+                return name
+        return None
+
+    def _get_remote_base_url(self, model_name: str) -> Optional[str]:
+        """Return the base-url for a remote cluster proxy, or None."""
+        try:
+            cluster_name, base_url, _local_id = self._arkestra.resolve_model_cluster_addr(model_name)
+        except ValueError:
+            return None
+        return str(base_url).rstrip("/") if base_url else None
 
     # ── FastAPI app factory ───────────────────────────────────────
 
@@ -394,18 +387,13 @@ class ArkestraServer:
         async def health_v1():
             return await health()
 
-        # ── Route: POST /v1/embeddings (ONNX auxiliary models) ───────
+        # ── Route: POST /v1/embeddings (tag-based routing) ───────
 
         @app.post("/v1/embeddings")
         async def embeddings_endpoint(
             req_body: Dict[str, Any],
         ) -> Any:
-            """Embedding endpoint — routes to ONNX auxiliary model.
-
-            Expects {\'model\': \'<name>\', \'input\': \'text\'} where \<name>
-            is an ONNX model configured with type: embedding.
-            Falls through to chat if no matching aux model found.
-            """
+            """Embedding endpoint — routes to model with 'embed' tag."""
             model_name = req_body.get("model", "")
 
             # Check for remote model first — proxy directly
@@ -424,19 +412,20 @@ class ArkestraServer:
                             raise HTTPException(status_code=503, detail=f"Remote embed failed ({resp.status})")
                         return Response(content=await resp.text(), media_type="application/json")
 
-            cfg = self._get_aux_model_cfg(model_name)
+            # Look up model by name or fallback to a model with 'embed' tag
+            cfg = self._arkestra.cm.data.get("models", {}).get(model_name)
             if not cfg:
+                model_name = self._find_model_by_tag("embed")
+            if not model_name:
                 raise HTTPException(
                     status_code=404,
-                    detail=(f"Model '{model_name}' not found. "
-                            "Use a model configured with type: embedding."),
+                    detail="No embedding model available. Configure a model with tags: [embed]",
                 )
 
             input_text = req_body.get("input", "")
             try:
                 result = await self._arkestra.embed(model_name, input_text)
             except Exception as e:
-                # Auto-start ONNX model on first access if not yet loaded
                 if "not started" in str(e).lower() or "not found in config" not in str(e).lower():
                     await self._arkestra.start(model_name)
                     result = await self._arkestra.embed(model_name, input_text)
@@ -444,27 +433,26 @@ class ArkestraServer:
                     raise HTTPException(status_code=500, detail=str(e))
             return Response(content=json.dumps(result), media_type="application/json")
 
-        # ── Route: POST /v1/audio/transcriptions (ONNX auxiliary models) ───
+        # ── Route: POST /v1/audio/transcriptions (tag-based routing) ───
 
         @app.post("/v1/audio/transcriptions")
         async def transcriptions_endpoint(
             request: Request,
         ) -> Any:
-            """Audio transcription endpoint — routes to ONNX Whisper model.
-
-            Expects multipart form (file) or JSON with {\'model\': \'<name>\', 'audio_b64': ...}
-            where \<name> is configured with type: whisper.
-            """
+            """Audio transcription endpoint — routes to model with 'asr' tag."""
+            # Get default STT model from root config
+            defaults = self._arkestra.cm.data
+            stt_default = defaults.get("default-stt-model", "default-whisper")
             if request.headers.get("Content-Type", "").startswith("multipart"):
                 data = await request.form()
-                model_name = str(data.get("model", "default-whisper"))
+                model_name = str(data.get("model", stt_default))
                 audio_file = data.get("file")
                 if not audio_file:
                     raise HTTPException(status_code=400, detail="No file provided")
                 audio_bytes = await audio_file.read()
             else:
                 req_body = await request.json()
-                model_name = str(req_body.get("model", "default-whisper"))
+                model_name = str(req_body.get("model", stt_default))
                 b64_audio = req_body.get("audio_b64", req_body.get("audio", ""))
                 if isinstance(b64_audio, str):
                     import base64
@@ -477,14 +465,16 @@ class ArkestraServer:
                 else:
                     audio_bytes = b""
 
-            cfg = self._get_aux_model_cfg(model_name)
+            # Validate model exists (or fall back to tag lookup)
+            cfg = self._arkestra.cm.data.get("models", {}).get(model_name)
             if not cfg:
-                # Try "default-whisper" key
-                cfg = self._get_aux_model_cfg("default-whisper")
+                model_name = stt_default
+            cfg = self._arkestra.cm.data.get("models", {}).get(model_name)
             if not cfg:
                 raise HTTPException(
                     status_code=404,
-                    detail=f"Whisper model '{model_name}' not found.")
+                    detail="No STT model available. Configure default-stt-model in config.",
+                )
 
             lang = None
             if request.headers.get("Content-Type", "").startswith("multipart"):
@@ -502,34 +492,37 @@ class ArkestraServer:
                     raise HTTPException(status_code=500, detail=str(e))
             return Response(content=json.dumps(result), media_type="application/json")
 
-        # ── Route: POST /v1/audio/speech (ONNX auxiliary models) ───────
+        # ── Route: POST /v1/audio/speech (tag-based routing) ───────
 
         @app.post("/v1/audio/speech")
         async def speech_endpoint(
             req_body: Dict[str, Any],
         ) -> Any:
-            """Text-to-speech endpoint — routes to ONNX TTS model.
+            """Text-to-speech endpoint — routes to model with 'tts' tag."""
+            defaults = self._arkestra.cm.data
+            tts_default = defaults.get("default-tts-model", "default-kokoro")
+            model_name = req_body.get("model", tts_default)
+            voice = req_body.get("voice", "af_bella")
+            speed = float(req_body.get("speed", 1.0))
 
-            Expects {\'model\': \'<name>\', \'input\': \'text\'} where \<name>
-            is configured with type: tts.
-            Returns WAV audio bytes.
-            """
-            model_name = req_body.get("model", "default-tts")
-            cfg = self._get_aux_model_cfg(model_name)
+            # Validate model exists (or fall back to default from config)
+            cfg = self._arkestra.cm.data.get("models", {}).get(model_name)
             if not cfg:
-                cfg = self._get_aux_model_cfg("default-tts")
+                model_name = tts_default
+            cfg = self._arkestra.cm.data.get("models", {}).get(model_name)
             if not cfg:
                 raise HTTPException(
                     status_code=404,
-                    detail=f"TTS model '{model_name}' not found.")
+                    detail="No TTS model available. Configure default-tts-model in config.",
+                )
 
             text_input = req_body.get("input", "")
             try:
-                wav_bytes = await self._arkestra.synthesize(model_name, text_input)
+                wav_bytes = await self._arkestra.synthesize(model_name, text_input, voice=voice, speed=speed)
             except Exception as e:
                 if "not started" in str(e).lower() or "not found in config" not in str(e).lower():
                     await self._arkestra.start(model_name)
-                    wav_bytes = await self._arkestra.synthesize(model_name, text_input)
+                    wav_bytes = await self._arkestra.synthesize(model_name, text_input, voice=voice, speed=speed)
                 else:
                     raise HTTPException(status_code=500, detail=str(e))
             return Response(content=wav_bytes, media_type="audio/wav")

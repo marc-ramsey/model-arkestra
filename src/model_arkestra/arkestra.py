@@ -15,6 +15,7 @@ from model_arkestra.gpu_detect import detect_all, has_rocm, has_vulkan, has_nvid
 from model_arkestra.base import BaseModelRunner
 from model_arkestra.common import (
     _resolve_backend, default_cache_root, resolve_config_path,
+    resolve_tags as _resolve_model_tags, image_and_runner_for_backend,
 )
 from model_arkestra.docker import DockerModelRunner
 from model_arkestra.onnx_runner import OnnxRunner
@@ -465,9 +466,9 @@ class ModelArkestra:
             return Path(val).expanduser()
         return default_cache_root()
 
-    def _cache_dir_for_checkpoint(self, checkpoint: str) -> Path:
-        """Return the cache directory path for a given checkpoint string."""
-        return self._cache_root() / f"models--{checkpoint.replace('/', '--')}"
+    def _cache_dir_for_checkpoint(self, repo: str) -> Path:
+        """Return the cache directory path for a given HuggingFace repo string."""
+        return self._cache_root() / f"models--{repo.replace('/', '--')}"
 
     # ── context manager ────────────────────────────────────────
 
@@ -533,11 +534,18 @@ class ModelArkestra:
                 f"Unknown backend '{backend}'. Available: {list(backends_cfg.keys())}"
             )
 
-        # Detect ONNX models — they don't need ports or HTTP health checks
-        resolved_backend = backend or self._resolve_backend_id(local_name, {})
-        is_onnx = str(resolved_backend) == "onnx"
+        # Resolve runner type from model config — tag-driven routing
+        be_id = self._resolve_backend_id(local_name, {}, backend)
+        resolved_runner = str(be_cfg.get("runner", "process")) if (be_cfg := backends_cfg.get(be_id, {})) else "process"
+        if resolved_runner == "container":
+            resolved_runner = self._cm.data.get("container_type", "process") or "process"
 
-        if is_onnx:
+        model_cfg = self.get_model(local_name) or {}
+        tags = _resolve_model_tags(model_cfg, self._cm.data, backend_id=be_id)
+        is_onnx = (resolved_runner == "onnx" or
+                   any(t in tags for t in ("asr", "tts", "embed")))
+
+        if is_onnx and resolved_runner == "onnx":
             return await self._start_onnx_model(local_name, inference_kwargs)
 
         # Allocate port if not explicitly provided.
@@ -574,6 +582,17 @@ class ModelArkestra:
         ctx._runner = runner
         self.log(f"[action=start model={model_name} port={port}]")
 
+    async def execute(self, model_name: str, capability: str, **kwargs) -> Any:
+        """Dispatch any capability to the appropriate runner handler."""
+        runner = self._get_runner(model_name, {}, None)
+        handler = getattr(runner, capability, None)
+        if not handler:
+            raise RuntimeError(
+                f"Runner for '{model_name}' does not implement capability '{capability}'. "
+                f"Available: {', '.join(m for m in dir(runner) if not m.startswith('_') and callable(getattr(runner, m)))}"
+            )
+        return await handler(model_name, **kwargs)
+
     async def _start_onnx_model(
         self, model_name: str, inference_kwargs: Dict[str, Any],
     ) -> None:
@@ -593,8 +612,11 @@ class ModelArkestra:
             model_data = self.get_model(model_name, env_vars={})
             model_path_str = str((model_data or {}).get("model_path", ""))
             if not model_path_str:
-                checkpoint = (model_data or {}).get("checkpoint", "")
-                model_path_str = checkpoint  # fall back to checkpoint field
+                # Resolve from repo + model fields
+                repo = (model_data or {}).get("repo", "")
+                model_file = (model_data or {}).get("model", "")
+                if repo and model_file:
+                    model_path_str = f"{repo}:{model_file}"
 
             from model_arkestra.types import _ModelContext
             ctx = _ModelContext(model_name, eff_port, max_log_lines=log_size)
@@ -652,20 +674,14 @@ class ModelArkestra:
 
     async def transcribe(self, model_name: str, audio_bytes: bytes,
                          language: Optional[str] = None) -> Dict[str, Any]:
-        """Transcribe audio → text via Whisper ONNX model.
+        """Transcribe audio → text via ONNX model."""
+        return await self.execute(model_name, "transcribe", audio_bytes=audio_bytes, language=language)
 
-        Expects raw WAV audio bytes. Returns {"text": "...", "language": "..."}.
-        """
-        runner = self._get_runner(model_name, {}, None)
-        return await runner.transcribe(model_name, audio_bytes, language)  # type: ignore[attr-defined]
-
-    async def synthesize(self, model_name: str, text: str) -> bytes:
-        """Generate speech from text via TTS ONNX model.
-
-        Returns raw WAV audio bytes.
-        """
-        runner = self._get_runner(model_name, {}, None)
-        return await runner.synthesize(model_name, text)  # type: ignore[attr-defined]
+    async def synthesize(self, model_name: str, text: str,
+                         voice: Optional[str] = None,
+                         speed: float = 1.0) -> bytes:
+        """Generate speech from text via TTS ONNX model."""
+        return await self.execute(model_name, "synthesize", text=text, voice=voice, speed=speed)
 
     async def stop(self, model_name: str) -> None:
         """Stop the named model."""
@@ -689,7 +705,17 @@ class ModelArkestra:
         if model_name not in cfg:
             raise ValueError(f"Model '{model_name}' not in config")
 
-        checkpoint = cfg[model_name].get("checkpoint", "")
+        model_cfg = cfg[model_name]
+        # Resolve cache path from new schema (repo+model) or legacy (checkpoint)
+        repo_field = model_cfg.get("repo", "")
+        model_field = model_cfg.get("model", "")
+        chk = model_cfg.get("checkpoint", "")
+        if repo_field and model_field:
+            repo = model_field.split(":", 1)[0]  # strip quantizer tag
+        elif chk:
+            repo = chk.split(":", 1)[0]
+        else:
+            repo = ""
         result: Dict[str, Any] = {
             "ok": True,
             "model": model_name,
@@ -700,7 +726,7 @@ class ModelArkestra:
         # Stop the model first (always)
         await self.stop(model_name)
 
-        if not checkpoint:
+        if not repo:
             # No cache to clear — just record context cleanup and return
             for r in self._runners.values():
                 if model_name in r._models:
@@ -709,21 +735,21 @@ class ModelArkestra:
             return result
 
         cache_root = self._cache_root()
-        cache_dir = cache_root / f"models--{checkpoint.replace('/', '--')}"
+        cache_dir = self._cache_dir_for_checkpoint(repo)
 
         # Safety check: other running contexts sharing this cache?
         if cache_dir.exists():
-            targets = [
-                ctx.name
-                for ctx in self._get_model_contexts()
-                if ctx.name != model_name
-                and ctx.state == RunnerState.RUNNING
-                and (
-                    cfg.get(ctx.name, {}).get("checkpoint", "")
-                    and self._cache_dir_for_checkpoint(cfg[ctx.name]["checkpoint"]).resolve()
-                    == cache_dir.resolve()
-                )
-            ]
+            targets = []
+            for ctx in self._get_model_contexts():
+                if ctx.name == model_name or ctx.state != RunnerState.RUNNING:
+                    continue
+                other_cfg = cfg.get(ctx.name, {})
+                other_repo = other_cfg.get("model", "") or other_cfg.get("checkpoint", "")
+                if not other_repo:
+                    continue
+                other_path = other_repo.split(":", 1)[0].replace("/", "--")
+                if self._cache_dir_for_checkpoint(other_path) == cache_dir:
+                    targets.append(ctx.name)
             if targets:
                 raise ValueError(
                     f"Model '{model_name}' is in use by other running runners: "

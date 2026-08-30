@@ -648,6 +648,38 @@ def _resolve_backend(
     # Ultimate fallback — matches BaseModelRunner._DEFAULT_BACKEND
     return "cpu"
 
+# ── Capability resolution helpers ───────────────────────
+def resolve_tags(model_cfg: Dict | None, global_cfg: Dict,
+                 backend_id: str | None = None) -> list[str]:
+    """Resolve available capability tags using the normal chain:
+
+    1. Per-model ``tags`` (explicit override)
+    2. Backend-declared ``backends.<id>.capabilities``
+    3. Engine-declared ``engines.<name>.capabilities``
+    4. Hardcoded fallback ``["chat"]``
+    """
+    if model_cfg and model_cfg.get("tags"):
+        return list(model_cfg["tags"])
+
+    b = (global_cfg or {}).get("backends") or {}
+    if isinstance(b, dict):
+        bid = backend_id or (model_cfg or {}).get("backend") or b.get("default")
+        if bid:
+            caps = (b.get(str(bid)) or {}).get("capabilities")
+            if isinstance(caps, list) and caps:
+                return list(caps)
+
+    be_id = backend_id or (model_cfg or {}).get("backend", "")
+    bcfg = (global_cfg.get("backends") or {}).get(str(be_id), {})
+    engine_name = (bcfg if isinstance(bcfg, dict) else {}).get("engine")
+    if engine_name:
+        engines = (global_cfg or {}).get("engines") or {}
+        eng_caps = (engines.get(engine_name) or {}).get("capabilities")
+        if isinstance(eng_caps, list) and eng_caps:
+            return list(eng_caps)
+
+    return ["chat"]
+
 # ── Engine resolution helpers ───────────────────────────────────
 def _resolve_engine(cm: Any, engine_name: Optional[str] = None) -> Dict[str, Any]:
     """Resolve an engine config dict by name from the ``engines:`` section.

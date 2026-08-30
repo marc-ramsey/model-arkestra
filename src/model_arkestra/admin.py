@@ -29,47 +29,15 @@ from model_arkestra.common import (
     image_and_runner_for_backend,
     image_exists as _image_exists,
     remove_image,
+    resolve_tags as _resolve_tags,
 )
 from model_arkestra.types import RunnerState
 from model_arkestra.http_proxy import model_status_for_ctx
 
 # ── Model config field definitions (single source of truth) ─────────────
-MODEL_CONFIG_FIELDS = frozenset({"args", "checkpoint", "backend", "capabilities", "runner", "tags", "max_log_lines"})
-INFRA_KEYS = frozenset({"args", "checkpoint", "backend", "runner", "max_log_lines"})
+MODEL_CONFIG_FIELDS = frozenset({"args", "backend", "runner", "tags", "max_log_lines"})
+INFRA_KEYS = frozenset({"args", "backend", "runner", "max_log_lines"})
 
-# ── Capability resolution helpers ────────────────────────────────
-def _resolve_capabilities(model_cfg: dict | None, global_cfg: dict | None,
-                          backend_id: str | None = None,
-                          backend_cfg: dict | None = None) -> list[str]:
-    """Resolve available capability types using the normal chain:
-
-    1. Per-model ``capabilities`` (explicit override)
-    2. Backend-declared ``backends.<id>.capabilities``
-    3. Engine-declared ``engines.<name>.capabilities``
-    4. Hardcoded fallback ``["chat"]``
-    """
-    if model_cfg and model_cfg.get("capabilities"):
-        return list(model_cfg["capabilities"])
-
-    # Backend-declared capabilities (falls back to backend resolution chain: explicit > per-model > default)
-    b = (global_cfg or {}).get("backends") or {}
-    if isinstance(b, dict):
-        bid = backend_id or model_cfg.get("backend") or b.get("default")
-        if bid:
-            caps = (b.get(str(bid)) or {}).get("capabilities")
-            if isinstance(caps, list) and caps:
-                return list(caps)
-
-    # Engine-declared capabilities (via backend's engine field)
-    bcfg = backend_cfg or b.get(str(bid or ""), {}) if bid else {}
-    engine_name = (bcfg or {}).get("engine")
-    if engine_name:
-        engines = (global_cfg or {}).get("engines") or {}
-        eng_caps = (engines.get(engine_name) or {}).get("capabilities")
-        if isinstance(eng_caps, list) and eng_caps:
-            return list(eng_caps)
-
-    return ["chat"]
 
 
 class ArkestraAdmin:
@@ -257,13 +225,24 @@ class ArkestraAdmin:
                             "runner_type": ctx.runner_type,
                             "backend_id": ctx.backend_id or self._resolve_model_backend(ctx.name, model_cfg),
                             "args": model_cfg.get("args", ""),
-                            "checkpoint": model_cfg.get("checkpoint", ""),
-                            "capabilities": model_cfg.get("capabilities", []),
+                            "repo": model_cfg.get("repo", ""),
+                            "model": model_cfg.get("model", ""),
+                            "tags": model_cfg.get("tags", []),
                         }
                     else:
-                        checkpoint = model_cfg.get("checkpoint", "")
-                        base_checkpoint = checkpoint.split(":")[0] if ":" in checkpoint else checkpoint
-                        cache_path = Path(hf_cache).expanduser() / f"models--{base_checkpoint.replace('/', '--')}" if base_checkpoint else None
+                        repo = model_cfg.get("repo", "")
+                        model_field = model_cfg.get("model", "")
+                        chk = model_cfg.get("checkpoint", "")
+                        if repo and model_field:
+                            # New schema: use model path (strip quantizer tag)
+                            hf_path = model_field.split(":", 1)[0]
+                            cache_path = Path(hf_cache).expanduser() / f"models--{hf_path.replace('/', '--')}"
+                        elif chk:
+                            # Legacy compat: use checkpoint path (strip quantizer tag)
+                            hf_path = chk.split(":", 1)[0]
+                            cache_path = Path(hf_cache).expanduser() / f"models--{hf_path.replace('/', '--')}"
+                        else:
+                            cache_path = None
                         is_cached = cache_path.exists() if cache_path else False
                         resolved_backend = self._resolve_model_backend(model_name, model_cfg)
                         _, runner_type = image_and_runner_for_backend(self.server._arkestra.cm.data, resolved_backend)
@@ -274,17 +253,17 @@ class ArkestraAdmin:
                             "runner_type": runner_type,
                             "backend_id": resolved_backend,
                             "args": model_cfg.get("args", ""),
-                            "checkpoint": checkpoint,
-                            "capabilities": model_cfg.get("capabilities", []),
+                            "repo": repo,
+                            "model": model_field,
+                            "tags": model_cfg.get("tags", []),
                         }
 
                     # Resolve available capabilities per-model (normal chain)
                     global_cfg = self.server._arkestra.cm.data or {}
                     bcfg = (global_cfg.get("backends") or {}).get(str(entry.get("backend_id") or ""))
-                    entry["available_capabilities"] = _resolve_capabilities(
+                    entry["available_tags"] = _resolve_tags(
                         model_cfg, global_cfg,
                         backend_id=str(entry.get("backend_id") or "") or None,
-                        backend_cfg=bcfg if isinstance(bcfg, dict) else {},
                     )
                     data.append(entry)
 
@@ -384,19 +363,33 @@ class ArkestraAdmin:
 
         @self._app.post("/admin/config")
         async def admin_config_create(body: Dict[str, Any]):
-            """Create a new model entry in config. Requires at least 'checkpoint'."""
+            """Create a new model entry in config. Requires 'repo'+'model' (preferred) or legacy 'checkpoint'."""
             cfg = self._models_cfg
 
-            # Validate required fields
-            if not body.get("checkpoint"):
+            # Support legacy checkpoint-based creation for backward compat
+            if not body.get("repo") and not body.get("checkpoint"):
                 raise HTTPException(
-                    status_code=400, detail="'checkpoint' is required to create a model"
+                    status_code=400, detail="Need 'repo'+'model' or legacy 'checkpoint' to create a model"
                 )
 
-            name = body.get("name") or (body.get("checkpoint", "").split(":")[0].rsplit("/", 1)[-1] if body.get("checkpoint") else "")
+            # Build repo/model from checkpoint if needed (backward compat)
+            if body.get("repo") and body.get("model"):
+                repo = str(body["repo"])
+                model = str(body["model"])
+            elif body.get("checkpoint"):
+                chk = str(body["checkpoint"])
+                # Parse legacy compound string: "unsloth/Model-GGUF:Q4_K_XL"
+                parts = chk.split(":", 1)
+                repo = "hugging-face"
+                model_path = parts[0] if parts else chk  # part before colon for name
+                model = chk  # keep full string including quantizer tag
+            else:
+                raise HTTPException(status_code=400, detail="Need 'repo'+'model' or legacy 'checkpoint'")
+
+            name = body.get("name") or (model_path.rsplit("/", 1)[-1] if model_path else model.split(":")[0].rsplit("/", 1)[-1])
             if not name:
                 raise HTTPException(
-                    status_code=400, detail="Could not determine model name from checkpoint"
+                    status_code=400, detail="Could not determine model name from model field"
                 )
 
             if name in cfg:
@@ -406,7 +399,8 @@ class ArkestraAdmin:
 
             # Build new model entry from body fields (with safe defaults)
             new_model: Dict[str, Any] = {
-                "checkpoint": str(body["checkpoint"]),
+                "repo": repo,
+                "model": model,
             }
             for key in MODEL_CONFIG_FIELDS:
                 if key in body and body[key] is not None:
@@ -436,10 +430,9 @@ class ArkestraAdmin:
             global_cfg = self.server._arkestra.cm.data or {}
             bid = cfg[model].get("backend")
             bcfg = (global_cfg.get("backends") or {}).get(str(bid) if bid else "")
-            available_caps = _resolve_capabilities(
+            available_caps = _resolve_tags(
                 cfg[model], global_cfg,
                 backend_id=str(bid) if bid else None,
-                backend_cfg=bcfg if isinstance(bcfg, dict) else {},
             )
 
             return {
@@ -447,7 +440,7 @@ class ArkestraAdmin:
                 "config": copy.deepcopy(cfg[model]),
                 "args_schema": self._args_schema(model),
                 "status": status,
-                "available_capabilities": available_caps,
+                "available_tags": available_caps,
             }
 
         @self._app.put("/admin/config/{model:path}")

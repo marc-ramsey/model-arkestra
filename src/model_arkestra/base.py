@@ -82,6 +82,23 @@ class BaseModelRunner(ABC):
         self._inference_kwargs: Dict[str, Dict[str, Any]] = {}
         self._models: Dict[str, _ModelContext] = {}
 
+    # ── Capability interface (implemented by subclasses) ─────────────
+    async def chat(self, model_name: str, messages: List, **kwargs) -> Dict:
+        """Handle chat completion. ProcessRunner implements via llama-server HTTP."""
+        raise NotImplementedError(f"{type(self).__name__} does not implement 'chat'")
+
+    async def embed(self, model_name: str, text: str) -> List[float]:
+        """Encode text → embedding vector. OnnxRunner implements via ONNX session."""
+        raise NotImplementedError(f"{type(self).__name__} does not implement 'embed'")
+
+    async def transcribe(self, model_name: str, audio_bytes: bytes, language: str = "") -> Dict:
+        """Transcribe audio → text. OnnxRunner implements via Whisper ONNX."""
+        raise NotImplementedError(f"{type(self).__name__} does not implement 'transcribe'")
+
+    async def synthesize(self, model_name: str, text: str, voice: str = "", speed: float = 1.0) -> bytes:
+        """Generate speech from text. OnnxRunner implements via Kokoro ONNX."""
+        raise NotImplementedError(f"{type(self).__name__} does not implement 'synthesize'")
+
 
 
     async def _ensure_port_available(self, port: int) -> None:
@@ -400,10 +417,17 @@ class BaseModelRunner(ABC):
             ctx.backend_id = effective_backend
             ctx.broadcast_addr = self.broadcast_addr
             # Resolve cache directory — private attr, never serialized
-            chk = model_data.get("checkpoint")
-            if chk:
+            repo = model_data.get("repo", "")
+            chk = model_data.get("checkpoint", "")
+            if repo:
+                hf_path = repo.split(":", 1)[0] if ":" in repo else repo
+            elif chk:
+                hf_path = chk.split(":", 1)[0]
+            else:
+                hf_path = None
+            if hf_path:
                 cache_root = default_cache_root()
-                ctx._cache_dir = cache_root / f"models--{chk.replace('/', '--')}"
+                ctx._cache_dir = cache_root / f"models--{hf_path.replace('/', '--')}"
                 os.makedirs(ctx._cache_dir, exist_ok=True)
             self._models[model_name] = ctx
             ctx.state = RunnerState.LOADING

@@ -133,8 +133,8 @@ class TestEjectMethod:
             runner._models["qwen3.5-4b"] = ctx
             ma._runners["process"] = runner
 
-            # Create the physical cache dir (simulates downloaded checkpoint)
-            cache_dir = ma._cache_dir_for_checkpoint("unsloth/Qwen3.5-4B-GGUF:Q4_K_M")
+            # Create the physical cache dir (cache paths strip quantizer tag)
+            cache_dir = ma._cache_dir_for_checkpoint("unsloth/Qwen3.5-4B-GGUF")
             cache_dir.mkdir(parents=True, exist_ok=True)
 
             result = asyncio.run(ma.eject("qwen3.5-4b"))
@@ -201,13 +201,17 @@ class TestEjectMethod:
         monkeypatch.delenv("HF_HUB_CACHE", raising=False)
         ma = self._make_arkestra()
         with tempfile.TemporaryDirectory() as tmpdir:
-            shared_checkpoint = "shared/same-model:Q4_K_M"
-            shared_cache = Path(tmpdir) / "models--shared--same-model:Q4_K_M"
-            shared_cache.mkdir(parents=True)
-
+            # Set cache root first so all paths resolve correctly
             ma._cm.data["env"] = {"HF_HUB_CACHE": tmpdir}
-            ma._cm.data["models"]["model-a"] = {"checkpoint": shared_checkpoint}
-            ma._cm.data["models"]["model-b"] = {"checkpoint": shared_checkpoint}
+
+            shared_checkpoint = "shared/same-model:Q4_K_M"
+            # Cache path strips quantizer tag
+            shared_cache_path = "shared/same-model"
+            shared_cache = ma._cache_dir_for_checkpoint(shared_cache_path)
+            shared_cache.mkdir(parents=True, exist_ok=True)
+
+            ma._cm.data["models"]["model-a"] = {"repo": "hugging-face", "model": shared_checkpoint}
+            ma._cm.data["models"]["model-b"] = {"repo": "hugging-face", "model": shared_checkpoint}
 
             runner_a = MockRunner()
             ctx_a = make_ctx("model-a", 18000, RunnerState.RUNNING)
@@ -232,13 +236,15 @@ class TestEjectMethod:
         monkeypatch.delenv("HF_HUB_CACHE", raising=False)
         ma = self._make_arkestra()
         with tempfile.TemporaryDirectory() as tmpdir:
-            shared_checkpoint = "shared/same-model:Q4_K_M"
-            shared_cache = Path(tmpdir) / "models--shared--same-model:Q4_K_M"
-            shared_cache.mkdir(parents=True)
-
+            # Set cache root first so all paths resolve correctly
             ma._cm.data["env"] = {"HF_HUB_CACHE": tmpdir}
-            ma._cm.data["models"]["model-a"] = {"checkpoint": shared_checkpoint}
-            ma._cm.data["models"]["model-b"] = {"checkpoint": shared_checkpoint}
+
+            shared_checkpoint = "shared/same-model:Q4_K_M"
+            shared_cache_path = "shared/same-model"
+            shared_cache = ma._cache_dir_for_checkpoint(shared_cache_path)
+            shared_cache.mkdir(parents=True, exist_ok=True)
+            ma._cm.data["models"]["model-a"] = {"repo": "hugging-face", "model": shared_checkpoint}
+            ma._cm.data["models"]["model-b"] = {"repo": "hugging-face", "model": shared_checkpoint}
 
             runner_a = MockRunner()
             ctx_a = make_ctx("model-a", 18000, RunnerState.RUNNING)

@@ -68,8 +68,8 @@ class TestAdminModels:
             assert "runner_type" in model
             assert "backend_id" in model
             assert "args" in model
-            assert "checkpoint" in model
-            assert "capabilities" in model
+            assert "repo" in model
+            assert "tags" in model
 
     def test_uncached_status_for_downloaded_checkpoints(self, live_server):
         """Models with a checkpoint field but no HF cache should be UNCACHED.
@@ -164,7 +164,8 @@ class TestConfigCollection:
         # Verify the model was persisted in config
         cfg = live_server["server"]._arkestra.cm.data.get("models")
         assert "full-model" in cfg
-        assert cfg["full-model"]["checkpoint"] == "test/full-model:Q5"
+        assert cfg["full-model"]["repo"] == "hugging-face"
+        assert cfg["full-model"]["model"] == "test/full-model:Q5"
         assert cfg["full-model"]["backend"] == "rocm"
         assert cfg["full-model"]["args"] == "--ctx 8192"
         assert cfg["full-model"]["tags"] == ["chat", "reasoning"]
@@ -202,9 +203,11 @@ class TestConfigModel:
         assert body["ok"] is True
         assert body["model"] == "qwen3.5-4b"
         cfg = body["config"]
-        assert "checkpoint" in cfg
+        assert "repo" in cfg
+        assert "model" in cfg
         assert "args" in cfg
-        assert cfg["checkpoint"] == "unsloth/Qwen3.5-4B-GGUF:Q4_K_M"
+        assert cfg["repo"] == "hugging-face"
+        assert cfg["model"] == "unsloth/Qwen3.5-4B-GGUF:Q4_K_M"
 
     def test_get_nonexistent_returns_404(self, live_server):
         """GET for missing model returns 404."""

@@ -73,17 +73,32 @@ class OnnxRunner(BaseModelRunner):  # type: ignore[name-defined]
         import onnxruntime as ort
 
         # Resolve model path from config or context
-        model_path = getattr(ctx, '_model_path', None) or str(model_data.get("checkpoint", ""))
+        model_path = getattr(ctx, '_model_path', None)
         if not model_path:
-            raise RuntimeError(f"Model '{ctx.name}' missing 'model_path' in config")
+            repo = model_data.get("repo", "")
+            model_file = model_data.get("model", "")
+            chk = model_data.get("checkpoint", "")
+            if repo and model_file:
+                model_path = f"{repo}:{model_file}"
+            elif chk:
+                model_path = chk  # backward compat with legacy checkpoint field
+        if not model_path:
+            raise RuntimeError(f"Model '{ctx.name}' missing 'repo'+'model', 'checkpoint', or '_model_path'")
 
         resolved_path = self._resolve_model_path(model_path, ctx)
 
-        inference_type = str(model_data.get("type", "embedding"))
+        inference_type = "embed"
+        tags = model_data.get("tags", [])
+        if isinstance(tags, str):
+            tags = [tags]
+        if "tts" in tags:
+            inference_type = "tts"
+        elif "asr" in tags or "whisper" in tags:
+            inference_type = "whisper"
 
         # ── TTS models: use Kokoro class (manages its own ONNX session) ─
         if inference_type == "tts":
-            voices_path = model_data.get("voices") or model_data.get("checkpoint", "")
+            voices_path = model_data.get("args", {}).get("voices_path", "")
             resolved_voices = self._resolve_model_path(voices_path, ctx, file_pattern="*.bin")
 
             try:
@@ -176,22 +191,27 @@ class OnnxRunner(BaseModelRunner):  # type: ignore[name-defined]
                 raise ModelNotStarted(model_name)
 
             log_size = inference_kwargs.get("max_log_lines", self.log_buffer_size)
-            chk = model_data.get("checkpoint")
+
+            # Resolve cache directory: new 'repo' format or legacy 'checkpoint'
+            repo = model_data.get("repo")
+            chk = model_data.get("checkpoint", "")
 
             from model_arkestra.types import _ModelContext
             ctx = _ModelContext(model_name, eff_port, max_log_lines=log_size)
             ctx.backend_id = backend or model_data.get("backend")
 
-            if chk:
+            if repo or chk:
                 cache_root = default_cache_root()
-                ctx._cache_dir = cache_root / f"models--{chk.replace('/', '--')}"
+                # Use the original HF path (without quantizer tag) for legacy compat
+                hf_path = repo.split(":", 1)[0] if (repo and ":" in repo) else chk.split(":", 1)[0]
+                ctx._cache_dir = cache_root / f"models--{hf_path.replace('/', '--')}"
                 os.makedirs(ctx._cache_dir, exist_ok=True)
 
             self._models[model_name] = ctx
             ctx.state = RunnerState.LOADING
 
         # Apply transient overrides
-        for key in ('args', 'checkpoint'):
+        for key in ('args',):
             if key in inference_kwargs and inference_kwargs[key] is not None:
                 model_data[key] = inference_kwargs[key]
         self._inference_kwargs[model_name] = inference_kwargs  # type: ignore[assignment]

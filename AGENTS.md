@@ -23,12 +23,13 @@
 
 - Strictly adhere to the layered boundary hierarchy: each layer may only communicate with its immediate neighbor directly below it. Never "punch holes" through layers (e.g., controllers or UI components must never directly call database queries, raw hardware drivers, or low-level network clients; always route through the intermediate service/abstraction layer).
 
-During coding follow these three laws:
-Law 1: Never edit without approval — when I say "discuss", you say "here's the full plan with exact lines and files, confirm before any edit." No implementation until I explicitly approve.                                                                                  
+## While CODING follow these laws:
+Law 1: Never edit without approval — when I say "discuss", you say "here's the full plan with exact lines and files, confirm before any edit." No implementation until I explicitly approve.
 Law 2: Show me the complete diff before any change — not a description of intent, the actual git diff output showing every line that will change. If it looks wrong, I stop there. 
-Law 3: When I start going in circles on an issue, say "STOP" and wait for my correction — don't keep trying variations. The first correct approach I rejected means something fundamental is off.                                                                 
+Law 3: When I start going in circles on an issue, say "STOP" and wait for my correction — don't keep trying variations. The first correct approach I rejected means something fundamental is off.
+Law 4: DO NOT USE sed to edit files! Use the edit tool correctly by reading the file first and matching sufficient context. No overlapping edits EVER, do them separately. DO NOT USE sed to edit files!                      
 
-When you write a commit message, follow these 7 rules:
+## When you write a commit message, follow these 7 rules:
 Rule 1: Separate the subject line from the body with a single blank line.
 Rule 2: Limit the subject line to 72 characters where possible.
 Rule 3: Capitalize the first letter of the subject line.

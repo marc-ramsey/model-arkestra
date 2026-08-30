@@ -134,8 +134,8 @@ class TestProxyRouting:
 
     def test_onnx_lifecycle_methods_exist(self):
         from model_arkestra.server import ArkestraServer
-        assert hasattr(ArkestraServer, "_get_aux_model_cfg")
-        assert hasattr(ArkestraServer, "_is_onnx_model")
+        assert hasattr(ArkestraServer, "_find_model_by_tag")
+        assert hasattr(ArkestraServer, "_get_remote_base_url")
 
 
 # ── Aux model config resolution ───────────────────────────────────
@@ -151,7 +151,7 @@ class TestAuxModelConfig:
             server = ArkestraServer(cfg)
 
             # No aux models in test-admin-config.yaml — should return None for unknown
-            result = server._get_aux_model_cfg("nonexistent")
+            result = server._find_model_by_tag("nonexistent")
             assert result is None
 
 
@@ -188,8 +188,9 @@ class TestSynthesize:
         # Mock config manager returning a TTS model
         cm = MagicMock()
         cm.get_model.return_value = {
-            "type": "tts",
-            "checkpoint": "onnx-community/Kokoro-82M-v1.0-ONNX",
+            "tags": ["tts"],
+            "repo": "hugging-face",
+            "model": "onnx-community/Kokoro-82M-v1.0-ONNX",
         }
 
         from model_arkestra.onnx_runner import OnnxRunner
