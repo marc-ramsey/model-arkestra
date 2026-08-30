@@ -440,19 +440,16 @@ class ArkestraServer:
             request: Request,
         ) -> Any:
             """Audio transcription endpoint — routes to model with 'asr' tag."""
-            # Get default STT model from root config
-            defaults = self._arkestra.cm.data
-            stt_default = defaults.get("default-stt-model", "default-whisper")
             if request.headers.get("Content-Type", "").startswith("multipart"):
                 data = await request.form()
-                model_name = str(data.get("model", stt_default))
+                model_name = str(data.get("model", ""))
                 audio_file = data.get("file")
                 if not audio_file:
                     raise HTTPException(status_code=400, detail="No file provided")
                 audio_bytes = await audio_file.read()
             else:
                 req_body = await request.json()
-                model_name = str(req_body.get("model", stt_default))
+                model_name = str(req_body.get("model", ""))
                 b64_audio = req_body.get("audio_b64", req_body.get("audio", ""))
                 if isinstance(b64_audio, str):
                     import base64
@@ -465,15 +462,19 @@ class ArkestraServer:
                 else:
                     audio_bytes = b""
 
-            # Validate model exists (or fall back to tag lookup)
+            # Validate model exists — resolve via config lookup or tag fallback
             cfg = self._arkestra.cm.data.get("models", {}).get(model_name)
             if not cfg:
-                model_name = stt_default
-            cfg = self._arkestra.cm.data.get("models", {}).get(model_name)
-            if not cfg:
+                model_name = self._find_model_by_tag("asr")
+            # Legacy fallback (for configs still using default-stt-model key)
+            if not cfg or (model_name and not self._arkestra.cm.data.get("models", {}).get(model_name)):
+                legacy = self._arkestra.cm.data.get("default-stt-model")
+                if legacy and self._arkestra.cm.data.get("models", {}).get(legacy):
+                    model_name = legacy
+            if not model_name or not self._arkestra.cm.data.get("models", {}).get(model_name):
                 raise HTTPException(
                     status_code=404,
-                    detail="No STT model available. Configure default-stt-model in config.",
+                    detail="No STT model available. Configure a model with tags: [asr]",
                 )
 
             lang = None
@@ -499,21 +500,23 @@ class ArkestraServer:
             req_body: Dict[str, Any],
         ) -> Any:
             """Text-to-speech endpoint — routes to model with 'tts' tag."""
-            defaults = self._arkestra.cm.data
-            tts_default = defaults.get("default-tts-model", "default-kokoro")
-            model_name = req_body.get("model", tts_default)
+            model_name = req_body.get("model", "")
             voice = req_body.get("voice", "af_bella")
             speed = float(req_body.get("speed", 1.0))
 
-            # Validate model exists (or fall back to default from config)
+            # Validate model exists — resolve via config lookup or tag fallback
             cfg = self._arkestra.cm.data.get("models", {}).get(model_name)
             if not cfg:
-                model_name = tts_default
-            cfg = self._arkestra.cm.data.get("models", {}).get(model_name)
-            if not cfg:
+                model_name = self._find_model_by_tag("tts")
+            # Legacy fallback (for configs still using default-tts-model key)
+            if not cfg or (model_name and not self._arkestra.cm.data.get("models", {}).get(model_name)):
+                legacy = self._arkestra.cm.data.get("default-tts-model")
+                if legacy and self._arkestra.cm.data.get("models", {}).get(legacy):
+                    model_name = legacy
+            if not model_name or not self._arkestra.cm.data.get("models", {}).get(model_name):
                 raise HTTPException(
                     status_code=404,
-                    detail="No TTS model available. Configure default-tts-model in config.",
+                    detail="No TTS model available. Configure a model with tags: [tts]",
                 )
 
             text_input = req_body.get("input", "")
