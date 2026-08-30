@@ -157,7 +157,88 @@ body {
     flex-shrink: 0;
 }
 
+/* TTS toggle */
+.chat-tts-toggle {
+    font-size: 11px;
+    color: var(--text-dim);
+    cursor: pointer;
+    margin-top: 4px;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+}
+.chat-tts-toggle span { color: var(--green); font-weight: 600; }
+
+/* Audio playback bar */
+.audio-playback-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    background: var(--accent-light);
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+}
+.audio-playback-bar.hidden { display: none; }
+.audio-label { flex-shrink: 0; }
+.audio-time { color: var(--text-dim); min-width: 36px; }
+.audio-playback-bar input[type="range"] {
+    flex: 1; height: 4px; -webkit-appearance: none;
+    background: var(--border); border-radius: 2px; outline: none;
+}
+.audio-playback-bar input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 12px; height: 12px;
+    border-radius: 50%; background: var(--accent); cursor: pointer;
+}
+.audio-playback-bar button {
+    padding: 3px 8px; border: 1px solid var(--border);
+    border-radius: var(--radius-sm); background: var(--surface);
+    font-size: 12px; cursor: pointer; flex-shrink: 0;
+}
+.audio-playback-bar button:hover { border-color: var(--accent); }
+
+/* ── ASR / Audio Transcriber ───────────────────── */
+.pane-audio { display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
+.asr-upload-area {
+    padding: 8px;
+    background: var(--surface-alt);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.asr-btn, .asr-upload-hint {
+    padding: 5px 10px; border-radius: var(--radius-sm);
+    font-size: 12px; cursor: pointer;
+}
+.asr-btn {
+    border: 1px solid var(--border); background: var(--surface);
+    color: var(--text); transition: all 0.15s;
+}
+.asr-btn:hover { border-color: var(--accent); background: var(--accent-light); }
+.asr-hint {
+    font-size: 11px; color: var(--text-dim);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.asr-result {
+    flex: 1; min-height: 0;
+    padding: 10px 8px;
+    overflow-y: auto;
+    font-size: 12.5px;
+    line-height: 1.5;
+}
+.asr-status { color: var(--text-dim); font-style: italic; }
+.asr-text {
+    padding: 8px; background: var(--surface-alt);
+    border-radius: var(--radius-sm);
+    white-space: pre-wrap; word-break: break-word;
+}
+.asr-lang { font-size: 10.5px; color: var(--text-dim); margin-top: 4px; }
+
+/* ── Drag dividers ───────────────────────────── */
 .divider-v, .divider {
+    width: 5px;
+    cursor: col-resize;/* ── Chat params panel (slide-out above input) ────────────── */
     width: 5px;
     cursor: col-resize;
     background: var(--border);

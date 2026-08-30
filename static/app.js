@@ -74,6 +74,97 @@ function showToast(msg) {
             if (!confirm('Reset the whole page?')) return;
             location.reload();
         },
+
+        // ── TTS: send text to TTS model and play audio ───
+        async sendTTS() {
+            const textEl = document.getElementById('f-chat-input');
+            if (!textEl?.value.trim()) return;
+            const statusEl = document.getElementById('chat-status');
+            statusEl.textContent = 'Synthesizing...';
+
+            try {
+                // Determine TTS model — use the chat model or fall back to a known TTS type
+                const chatModelSel = document.getElementById('chat-model-select');
+                const modelName = chatModelSel?.value || 'default-tts';
+                
+                // Call speech endpoint with text input
+                const resp = await fetch(window.location.origin + '/v1/audio/speech', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model: modelName, input: textEl.value.trim() }),
+                });
+
+                if (!resp.ok) throw new Error('TTS API ' + resp.status);
+
+                const blob = await resp.blob();
+                const audioUrl = URL.createObjectURL(blob);
+                playAudioFromUrl(audioUrl);
+            } catch(e) {
+                statusEl.textContent = 'TTS error: ' + e.message;
+                setTimeout(() => { statusEl.textContent = ''; }, 3000);
+            }
+        },
+
+        // ── ASR: upload audio file and get transcription ───
+        async sendASR(file) {
+            const modelSel = document.getElementById('asr-model-select');
+            const modelName = modelSel?.value || 'default-whisper';
+            const resultDiv = document.getElementById('asr-result-display');
+
+            if (!file) { showToast('No audio file selected'); return; }
+            if (!resultDiv) return;
+
+            resultDiv.innerHTML = '<div class="asr-status">Transcribing...</div>';
+
+            try {
+                const formData = new FormData();
+                formData.append('model', modelName);
+                formData.append('file', file);
+
+                const resp = await fetch(window.location.origin + '/v1/audio/transcriptions', {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                if (!resp.ok) throw new Error('ASR API ' + resp.status);
+
+                const data = await resp.json();
+                resultDiv.innerHTML = '<div class="asr-text">' + escapeHtml(data.text || '') + '</div>' +
+                    (data.language ? '<div class="asr-lang">Language: ' + data.language + '</div>' : '');
+            } catch(e) {
+                resultDiv.innerHTML = '<div class="asr-status" style="color:var(--red)">Error: ' + e.message + '</div>';
+            }
+        },
+
+        // ── ASR: record from microphone and transcribe ───
+        async startMicRecording() {
+            const btn = document.getElementById('btn-record-audio');
+            if (!btn) return;
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                const recorder = new MediaRecorder(stream);
+                const chunks = [];
+
+                btn.textContent = '⏹ Stop';
+                btn.classList.add('recording');
+
+                recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+
+                recorder.onstop = async () => {
+                    stream.getTracks().forEach(t => t.stop());
+                    btn.textContent = '⏺ Mic';
+                    btn.classList.remove('recording');
+
+                    const blob = new Blob(chunks, { type: 'audio/webm' });
+                    await sendASR(blob);
+                };
+
+                recorder.start();
+            } catch(e) {
+                showToast('Mic access denied');
+            }
+        },
     };
 
     // Wire Enter key on chat input to sendChat action
@@ -94,6 +185,7 @@ function showToast(msg) {
     }
 
     window.wireEvents(actions);
+    window._actions = actions;  // expose for audio wiring
 
     // Toggle chat params panel (one-time registration, not per-render)
     document.addEventListener('click', (e) => {
@@ -133,6 +225,7 @@ function showToast(msg) {
         // Populate dropdowns
         window.populateSelect('log-model-select', window._modelsCache, '');
         window.populateSelect('chat-model-select', window._modelsCache, '');
+        window.populateSelect('asr-model-select', window._modelsCache, '');
 
         // Insert model rows into accordion body
         const accBody = document.getElementById('model-accordion-items');
@@ -162,4 +255,155 @@ function showToast(msg) {
         } catch {}
     }, POLL_INTERVAL);
 
+})(); // end IIFE
+
+// ── Audio playback helpers (called from within IIFE via window.*) ──
+let audioEl = null;
+window._audioState = { playing: false, currentSec: 0, durationSec: 0 };
+
+function escapeHtml(s) {
+    return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function formatTime(sec) {
+    if (!sec || isNaN(sec)) return '0:00';
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return m + ':' + String(s).padStart(2, '0');
+}
+
+function playAudioFromUrl(url) {
+    // Stop any existing playback
+    if (audioEl) { audioEl.pause(); URL.revokeObjectURL(audioEl.src); }
+
+    audioEl = new Audio(url);
+    const bar = document.getElementById('audio-playback-bar');
+    const progress = document.getElementById('audio-progress');
+    const durEl = document.getElementById('audio-duration');
+    const currEl = document.getElementById('audio-current');
+
+    if (!bar || !progress) return;
+    bar.classList.remove('hidden');
+
+    audioEl.addEventListener('loadedmetadata', () => {
+        durEl.textContent = formatTime(audioEl.duration);
+        progress.max = 100;
+    });
+
+    audioEl.addEventListener('timeupdate', () => {
+        if (!audioEl?.duration) return;
+        const pct = (audioEl.currentTime / audioEl.duration) * 100;
+        progress.value = pct;
+        currEl.textContent = formatTime(audioEl.currentTime);
+    });
+
+    audioEl.addEventListener('ended', () => {
+        audioEl = null;
+        bar.classList.add('hidden');
+    });
+
+    // Progress seek
+    setTimeout(() => {
+        progress.addEventListener('input', (e) => {
+            if (!audioEl?.duration) return;
+            audioEl.currentTime = (e.target.value / 100) * audioEl.duration;
+        });
+        document.getElementById('btn-pause-audio')?.addEventListener('click', () => {
+            audioEl?.paused ? audioEl.play() : audioEl.pause();
+        });
+        document.getElementById('btn-stop-audio')?.addEventListener('click', () => {
+            if (audioEl) { audioEl.pause(); audioEl = null; bar.classList.add('hidden'); }
+        });
+    }, 0);
+
+    audioEl.play();
+}
+
+// Wire TTS toggle and model selectors
+(function wireAudioUI() {
+    // TTS on/off toggle (class-based: .tts-active)
+    const ttsToggle = document.querySelector('.chat-tts-toggle');
+    if (ttsToggle) {
+        let ttsActive = false;
+        ttsToggle.addEventListener('click', () => {
+            ttsActive = !ttsActive;
+            const statusEl = document.getElementById('tts-status');
+            if (statusEl) statusEl.textContent = ttsActive ? 'On' : 'Off';
+            ttsToggle.style.color = ttsActive ? 'var(--green)' : '';
+        });
+    }
+
+    // TTS speak button
+    const ttsBtn = document.getElementById('btn-send-tts');
+    if (ttsBtn) {
+        ttsBtn.addEventListener('click', () => window._actions.sendTTS());
+    }
+
+    // ASR file upload
+    const fileInput = document.getElementById('asr-file-input');
+    const uploadBtn = document.getElementById('btn-upload-audio');
+    if (uploadBtn && fileInput) {
+        uploadBtn.addEventListener('click', () => fileInput.click());
+    }
+    if (fileInput) {
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) window._actions.sendASR(file);
+        });
+    }
+
+    // Drag-and-drop on upload area
+    const dropArea = document.querySelector('.asr-upload-area');
+    if (dropArea) {
+        ['dragenter','dragover'].forEach(evt => {
+            dropArea.addEventListener(evt, (e) => { e.preventDefault(); dropArea.style.borderColor = 'var(--accent)'; });
+        });
+        ['dragleave','dragend'].forEach(evt => {
+            dropArea.addEventListener(evt, () => { dropArea.style.borderColor = ''; });
+        });
+        dropArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropArea.style.borderColor = '';
+            const file = e.dataTransfer.files[0];
+            if (file?.type.startsWith('audio/')) window._actions.sendASR(file);
+            else showToast('Please drop an audio file');
+        });
+    }
+
+    // Mic recording button
+    const micBtn = document.getElementById('btn-record-audio');
+    if (micBtn) {
+        let isRecording = false;
+        micBtn.addEventListener('click', async () => {
+            if (!isRecording) {
+                // Start: find active recorder or create new one
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    const recorder = new MediaRecorder(stream);
+                    const chunks = [];
+                    isRecording = true;
+                    micBtn.textContent = '⏹ Stop';
+                    micBtn.classList.add('recording');
+
+                    recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+
+                    recorder.onstop = async () => {
+                        stream.getTracks().forEach(t => t.stop());
+                        isRecording = false;
+                        micBtn.textContent = '⏺ Mic';
+                        micBtn.classList.remove('recording');
+                        const blob = new Blob(chunks, { type: 'audio/webm' });
+                        await window._actions.sendASR(blob);
+                    };
+
+                    recorder.start();
+                    window._micRecorder = recorder; // store for stop
+                } catch {
+                    showToast('Mic access denied');
+                }
+            } else {
+                window._micRecorder?.stop();
+            }
+        });
+    }
 })();

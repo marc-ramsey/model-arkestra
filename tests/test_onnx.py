@@ -175,3 +175,61 @@ class TestDownloadOnnxModel:
         from model_arkestra.common import resolve_onnx_model_path
         path = resolve_onnx_model_path("Xenova/bge-small-en-v1.5")
         assert path.exists() and str(path).endswith(".onnx")
+
+
+# ── TTS Synthesis ────────────────────────────────────────────────
+
+class TestSynthesize:
+    async def test_synthesizes_nonzero_wav(self):
+        """Verify synthesize() produces valid non-zero WAV bytes."""
+        pytest.importorskip("kokoro_onnx")
+        import kokoro_onnx as ko
+        import numpy as np
+
+        # Mock config manager returning a TTS model
+        from unittest.mock import MagicMock
+        cm = MagicMock()
+        cm.get_model.return_value = {
+            "type": "tts",
+            "checkpoint": "onnx-community/Kokoro-82M-v1.0-ONNX",
+        }
+
+        from model_arkestra.onnx_runner import OnnxRunner
+        runner = OnnxRunner(cm)
+        runner.arkestra = MagicMock()
+
+        # Create a mock context with kokero model and session loaded
+        from model_arkestra.types import _ModelContext
+        ctx = _ModelContext("test-tts", 0)
+        ctx.g2p_lang = "a"
+
+        # Use real kokero_model instance (loads G2P during __init__)
+        ctx.kokero_model = ko.Model()
+
+        # Mock ONNX session returning a short waveform (1 sec of audio)
+        mock_session = MagicMock()
+        mock_session.run.return_value = [np.random.randn(24000).astype("float32") * 0.5]
+        ctx.onnx_session = mock_session
+        runner._models["test-tts"] = ctx
+
+        result = await runner.synthesize("test-tts", "hello world", voice="a")
+        assert len(result) > 100, f"Expected WAV data (got {len(result)} bytes)"
+
+        # Verify it's a valid WAV file
+        buf = io.BytesIO(result)
+        with wave.open(buf, "rb") as wf:
+            assert wf.getnchannels() == 1
+            assert wf.getsampwidth() == 2
+            assert wf.getframerate() == 24000
+            assert wf.getnframes() > 0
+
+    async def test_synthesize_raises_for_unknown_model(self):
+        from model_arkestra.onnx_runner import OnnxRunner
+        from model_arkestra.types import ModelNotStarted
+        from unittest.mock import MagicMock
+
+        cm = MagicMock()
+        runner = OnnxRunner(cm)
+
+        with pytest.raises(ModelNotStarted):
+            await runner.synthesize("nonexistent", "text")

@@ -151,7 +151,8 @@ renderers.ChatPane = function() {
     const header = document.createElement('div');
     header.className = 'pane-header';
     header.innerHTML = '<span class="pane-title">Chat</span><label>Select Model:</label><select id="chat-model-select"></select>' +
-        '<span class="chat-params-toggle" id="btn-toggle-chat-params">Params</span>';
+        '<span class="chat-params-toggle" id="btn-toggle-chat-params">Params</span>' +
+        '<span class="chat-tts-toggle" title="Text-to-Speech on/off">TTS: <span id="tts-status">Off</span></span>';
     el.appendChild(header);
 
     const messages = document.createElement('div');
@@ -159,6 +160,19 @@ renderers.ChatPane = function() {
     messages.id = 'chat-display';
     el.appendChild(messages);
 
+    // Audio playback bar (hidden by default)
+    const audioBar = document.createElement('div');
+    audioBar.className = 'audio-playback-bar hidden';
+    audioBar.id = 'audio-playback-bar';
+    audioBar.innerHTML = '<span class="audio-label">🔊</span>' +
+        '<input type="range" id="audio-progress" min="0" max="100" value="0" step="0.1">' +
+        '<span class="audio-time" id="audio-current">0:00</span> / ' +
+        '<span class="audio-time" id="audio-duration">0:00</span>' +
+        '<button id="btn-pause-audio" title="Pause/Resume">⏸</button>' +
+        '<button id="btn-stop-audio" title="Stop">⏹</button>';
+    el.appendChild(audioBar);
+
+    // TTS Speak button in input bar (added below)
     const paramsPanel = document.createElement('div');
     paramsPanel.className = 'chat-params-panel';
     paramsPanel.id = 'chat-params-panel';
@@ -173,9 +187,44 @@ renderers.ChatPane = function() {
     const inputBar = document.createElement('div');
     inputBar.className = 'chat-input-bar';
     inputBar.innerHTML = '<input type="text" id="f-chat-input" placeholder="Type a message...">' +
+        '<button id="btn-send-tts" title="Speak (TTS)">🔊</button>' +
         '<button id="btn-send-chat" title="Send">Send</button>' +
         '<span class="chat-status" id="chat-status"></span>';
     el.appendChild(inputBar);
+
+    return el;
+};
+
+// ═══════════════════════════════════════════
+// AudioTranscriber — ASR widget
+// ══════════════════════════════════════════════
+
+renderers.AudioTranscriber = function() {
+    const el = document.createElement('div');
+    el.className = 'pane pane-audio';
+
+    // Header with model selector
+    const header = document.createElement('div');
+    header.className = 'pane-header';
+    header.innerHTML = '<span class="pane-title">ASR</span>' +
+        '<label>Model:</label><select id="asr-model-select"></select>' +
+        '<button id="btn-record-audio" title="Record from mic">⏺ Mic</button>';
+    el.appendChild(header);
+
+    // Upload area
+    const uploadArea = document.createElement('div');
+    uploadArea.className = 'asr-upload-area';
+    uploadArea.innerHTML = '<input type="file" id="asr-file-input" accept="audio/*" style="display:none">' +
+        '<button id="btn-upload-audio" class="asr-btn">📁 Upload audio</button>' +
+        '<div id="asr-upload-hint" class="asr-hint">Drag & drop or click to upload WAV/MP3/M4A/WebM</div>';
+    el.appendChild(uploadArea);
+
+    // Transcription result
+    const resultDiv = document.createElement('div');
+    resultDiv.className = 'asr-result';
+    resultDiv.id = 'asr-result-display';
+    resultDiv.innerHTML = '<div class="asr-status">Select an ASR model and upload audio to transcribe</div>';
+    el.appendChild(resultDiv);
 
     return el;
 };

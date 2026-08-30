@@ -1,6 +1,7 @@
 """Single entry point for all model operations — wraps ConfigManager + lazy runners."""
 from __future__ import annotations
 import asyncio
+import logging
 import os
 import shutil
 import subprocess
@@ -23,6 +24,8 @@ from model_arkestra.remote import RemoteModelRunner
 from model_arkestra.types import RunnerState, _ModelContext
 from model_arkestra.unicode_ringbuffer import UnicodeRingBuffer
 from model_arkestra.http_proxy import model_status_for_ctx
+
+logger = logging.getLogger(__name__)
 
 
 class ModelArkestra:
@@ -350,6 +353,9 @@ class ModelArkestra:
             key = _cls.__name__.lower().replace("modelrunner", "")
             self._runner_classes[key] = _cls
 
+        # Aliases for common runner names.
+        self._runner_classes["onnx"] = OnnxRunner  # maps to OnnxRunner
+
         # Config can override built-ins or add entirely new ones.
         runner_cfg = self._cm.data.get("runners") or {}
         for key, class_name in runner_cfg.items():
@@ -641,7 +647,7 @@ class ModelArkestra:
 
         Returns OpenAI-compatible response with ``data[].embedding`` list.
         """
-        runner = self._get_runner("onnx", {}, None)
+        runner = self._get_runner(model_name, {}, None)
         return await runner.embed(model_name, text)  # type: ignore[attr-defined]
 
     async def transcribe(self, model_name: str, audio_bytes: bytes,
@@ -650,7 +656,7 @@ class ModelArkestra:
 
         Expects raw WAV audio bytes. Returns {"text": "...", "language": "..."}.
         """
-        runner = self._get_runner("onnx", {}, None)
+        runner = self._get_runner(model_name, {}, None)
         return await runner.transcribe(model_name, audio_bytes, language)  # type: ignore[attr-defined]
 
     async def synthesize(self, model_name: str, text: str) -> bytes:
@@ -658,7 +664,7 @@ class ModelArkestra:
 
         Returns raw WAV audio bytes.
         """
-        runner = self._get_runner("onnx", {}, None)
+        runner = self._get_runner(model_name, {}, None)
         return await runner.synthesize(model_name, text)  # type: ignore[attr-defined]
 
     async def stop(self, model_name: str) -> None:

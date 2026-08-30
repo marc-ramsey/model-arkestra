@@ -140,6 +140,267 @@ def _extract_mel_spectrogram(waveform: np.ndarray, sr: int) -> np.ndarray:
     return spec_db.T.astype(np.float32)[np.newaxis, ...]
 
 
+def _load_whisper_tokenizer(model_path: str) -> Dict[int, str]:
+    """Load Whisper token ID → text mapping from model directory or fallback.
+
+    Tries tokenizer.json in the model's parent dir and grandparent,
+    then tiktoken, then returns empty dict as ultimate fallback.
+    """
+    # Try loading from model directory and its parents
+    for search_dir in [os.path.dirname(str(model_path)), os.path.dirname(os.path.dirname(str(model_path)))]:
+        if not search_dir:
+            continue
+        try:
+            token_map_path = os.path.join(search_dir, 'tokenizer.json')
+            with open(token_map_path) as f:
+                raw = json.load(f)
+                # SentencePiece format: vocab maps token_str -> int_id, invert it
+                vocab = (raw.get("model", {}) or {}).get("vocab", {})
+                if isinstance(vocab, dict):
+                    return {int(v): k for k, v in vocab.items()}
+        except Exception:
+            pass
+
+    # Fallback: tiktoken
+    try:
+        import tiktoken
+        enc = tiktoken.get_encoding("gpt2")
+        tokens = {i: enc.decode([i]) for i in range(enc.n_vocab)}
+        return {k: v for k, v in tokens.items()
+                if not (k >= 50257 and k < 51864) or k == 50257}
+    except ImportError:
+        return {}
+
+
+def _greedy_decode(
+    session: Any,
+    model_path: str,
+    token_map: Dict[int, str],
+    mel: np.ndarray,
+    encoder_outputs: np.ndarray,
+) -> str:
+    """Greedy autoregressive decoding for Whisper decoder.
+
+    Args:
+        session: ONNX inference session (encoder model).
+        model_path: Path to the encoder ONNX model.
+        token_map: Token ID → text mapping.
+        mel: Mel spectrogram [1, 80, 3000].
+        encoder_outputs: Encoder hidden states [1, seq_len, d_model].
+
+    Returns:
+        Decoded transcription string.
+    """
+    import onnxruntime as ort
+
+    # Find the decoder model — try multiple paths
+    base = os.path.dirname(str(model_path))
+    candidates = [base]
+    
+    # If we're in blobs/, also check snapshots/*/onnx/
+    if 'blobs' in base:
+        for root, dirs, files in os.walk(os.path.dirname(base)):
+            onnx_dir = os.path.join(root, 'onnx')
+            if os.path.isdir(onnx_dir) and 'blobs' not in onnx_dir:
+                candidates.append(onnx_dir)
+                break
+
+    decoder_merged = None
+    decoder_past = None
+    for candidate in candidates:
+        merged = os.path.join(candidate, 'decoder_model_merged_bnb4.onnx')
+        past = os.path.join(candidate, 'decoder_with_past_model_bnb4.onnx')
+        if not decoder_merged and os.path.isfile(merged):
+            decoder_merged = merged
+        if not decoder_past and os.path.isfile(past):
+            decoder_past = past
+
+    if os.path.isfile(decoder_merged):
+        return _decode_autoregressive(
+            session, model_path, token_map, mel, encoder_outputs,
+            decoder_merged=decoder_merged,
+        )
+    elif os.path.isfile(decoder_past):
+        return _decode_with_cache(
+            session, model_path, token_map, mel, encoder_outputs,
+            decoder_past=decoder_past,
+        )
+    else:
+        raise RuntimeError(f"Whisper decoder model not found. Tried: {decoder_merged}, {decoder_past}")
+
+
+def _decode_autoregressive(
+    session: Any,
+    model_path: str,
+    token_map: Dict[int, str],
+    mel: np.ndarray,
+    encoder_outputs: np.ndarray,
+    decoder_merged: str,
+) -> str:
+    """Decode using the merged decoder (encoder_hidden_states + input_ids)."""
+    import onnxruntime as ort
+
+    sess_opts = ort.SessionOptions()
+    dec_sess = ort.InferenceSession(decoder_merged, sess_options=sess_opts)
+    inp_names = {i.name for i in dec_sess.get_inputs()}
+    out_names = [o.name for o in dec_sess.get_outputs()]
+
+    hidden_states = encoder_outputs.astype(np.float32)
+    initial_token: np.ndarray = np.array([[50258]], dtype=np.int64)  # start_of_transcript
+
+    # Count decoder layers from output names (present.{i}.decoder.key)
+    present_keys = [int(n.split('.')[1]) for n in out_names if 'present.' in n and '.decoder.key' in n]
+    num_layers = max(present_keys) + 1 if present_keys else 8
+    zero_cache: List[np.ndarray] = [
+        np.zeros((1, 6, 0, 64), dtype=np.float32) for _ in range(num_layers)
+    ]
+
+    enc_cache: List[np.ndarray] = [
+        np.zeros((1, 6, 0, 64), dtype=np.float32) for _ in range(num_layers)
+    ]
+
+    tokens: List[int] = [50258]
+
+    # Output layout (per layer i):
+    #   outputs[1+4*i] = present.{i}.decoder.key
+    #   outputs[2+4*i] = present.{i}.decoder.value
+    #   outputs[3+4*i] = present.{i}.encoder.key
+    #   outputs[4+4*i] = present.{i}.encoder.value
+    def _dec_key(idx: int) -> int: return 1 + idx * 4
+    has_enc_outputs = any('encoder.key' in o for o in out_names)
+
+    for step in range(128):
+        inputs: Dict[str, Any] = {
+            "input_ids": initial_token,
+            "encoder_hidden_states": hidden_states,
+        }
+        # Add past key/values to cache
+        for i in range(num_layers):
+            dec_key_name = f"past_key_values.{i}.decoder.key"
+            dec_val_name = f"past_key_values.{i}.decoder.value"
+            enc_key_name = f"past_key_values.{i}.encoder.key"
+            enc_val_name = f"past_key_values.{i}.encoder.value"
+            if dec_key_name in inp_names:
+                inputs[dec_key_name] = zero_cache[i]
+            if dec_val_name in inp_names:
+                inputs[dec_val_name] = zero_cache[i]
+            if enc_key_name in inp_names:
+                inputs[enc_key_name] = enc_cache[i]
+            if enc_val_name in inp_names:
+                inputs[enc_val_name] = enc_cache[i]
+        # First step: compute KV from encoder_hidden_states. Subsequent steps: reuse cached KV
+        if "use_cache_branch" in inp_names:
+            inputs["use_cache_branch"] = np.array([step > 0], dtype=np.bool_)
+
+        outputs = dec_sess.run(out_names, inputs)
+        logits = outputs[0].astype(np.float32)
+        next_id = int(np.argmax(logits[0, -1]))
+        tokens.append(next_id)
+        if next_id == 50257:  # EOS
+            break
+
+        # Update caches from outputs (decoder KV at 1+4*i, encoder KV at 3+4*i)
+        for i in range(num_layers):
+            zero_cache[i] = outputs[_dec_key(i)].astype(np.float32)
+            if has_enc_outputs:
+                enc_cache[i] = outputs[_dec_key(i) + 2].astype(np.float32)
+
+        initial_token = np.array([[next_id]], dtype=np.int64)
+
+    return _tokens_to_text(tokens, token_map)
+
+
+def _decode_with_cache(
+    session: Any,
+    model_path: str,
+    token_map: Dict[int, str],
+    mel: np.ndarray,
+    encoder_outputs: np.ndarray,
+    decoder_past: str,
+) -> str:
+    """Decode using the KV-cache decoder (encoder outputs injected as first-step cache)."""
+    import onnxruntime as ort
+
+    sess_opts = ort.SessionOptions()
+    dec_sess = ort.InferenceSession(decoder_past, sess_options=sess_opts)
+    inp_names = [i.name for i in dec_sess.get_inputs()]
+    out_names = [o.name for o in dec_sess.get_outputs()]
+
+    # Build initial key/values from encoder hidden states
+    hs = encoder_outputs.astype(np.float32)  # [1, seq_len, d_model]
+    zero_cache: List[np.ndarray] = [
+        np.zeros((1, 0, hs.shape[-1]), dtype=np.float32) for _ in range(8)
+    ]
+
+    initial_token = np.array([[50258]], dtype=np.int32)
+    tokens: List[int] = [50258]
+
+    # First step: pass encoder hidden states as "past key/values"
+    inputs: Dict[str, Any] = {"input_ids": initial_token}
+    for i in range(8):
+        enc_key_name = f"past_key_values.{i}.encoder.key"
+        enc_val_name = f"past_key_values.{i}.encoder.value"
+        dec_key_name = f"past_key_values.{i}.decoder.key"
+        dec_val_name = f"past_key_values.{i}.decoder.value"
+        if enc_key_name in inp_names and enc_val_name in inp_names:
+            inputs[enc_key_name] = hs
+            inputs[enc_val_name] = hs
+        if dec_key_name in inp_names and dec_val_name in inp_names:
+            inputs[dec_key_name] = zero_cache[i]
+            inputs[dec_val_name] = zero_cache[i]
+
+    outputs = dec_sess.run(out_names, inputs)
+    logits = outputs[0].astype(np.float32)
+    next_id = int(np.argmax(logits[0, -1]))
+    tokens.append(next_id)
+
+    # Subsequent steps: reuse decoder key/values from output
+    past_cache = [np.zeros((1, 0, hs.shape[-1]), dtype=np.float32) for _ in range(8)]
+    cur_token = np.array([[next_id]], dtype=np.int32)
+
+    for _ in range(127):
+        if next_id == 50257:  # EOS
+            break
+        inputs = {"input_ids": cur_token}
+        outputs_names = [o.name for o in dec_sess.get_outputs()]
+        # Map output past keys to input keys
+        for i in range(8):
+            inp_key = f"past_key_values.{i}.decoder.key"
+            inp_val = f"past_key_values.{i}.decoder.value"
+            out_key = f"present.{i}.decoder.key"
+            out_val = f"present.{i}.decoder.value"
+            if inp_key in inp_names and out_key in outputs_names:
+                inputs[inp_key] = past_cache[i]
+                inputs[inp_val] = past_cache[i]
+        
+        raw_outputs = dec_sess.run(outputs_names, inputs)
+        # First output is logits, rest are present key/values
+        next_id = int(np.argmax(raw_outputs[0].astype(np.float32)[0, -1]))
+        tokens.append(next_id)
+        if next_id == 50257:
+            break
+        # Update cache from outputs (skip logits at index 0)
+        for i in range(8):
+            out_key = f"present.{i}.decoder.key"
+            if i < len(raw_outputs) - 1:
+                past_cache[i] = raw_outputs[2 + i * 2]
+        cur_token = np.array([[next_id]], dtype=np.int32)
+
+    return _tokens_to_text(tokens, token_map)
+
+
+def _tokens_to_text(tokens: List[int], token_map: Dict[int, str]) -> str:
+    """Convert token IDs to text, filtering Whisper special tokens."""
+    result = []
+    for tid in tokens:
+        # Skip EOS (50257), startoftranscript (50258), task/lang tokens (50259-50358)
+        # and timestamps (50360-51864)
+        if 50257 <= tid < 51864:
+            continue
+        result.append(token_map.get(tid, ''))
+    return "".join(result).strip()
+
+
 class OnnxServer:
     """Runs an ONNX model and exposes inference via HTTP."""
 

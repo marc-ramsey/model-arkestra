@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from model_arkestra.base import BaseModelRunner
+from model_arkestra.common import default_cache_root
 
 
 class OnnxRunner(BaseModelRunner):  # type: ignore[name-defined]
@@ -117,14 +118,27 @@ class OnnxRunner(BaseModelRunner):  # type: ignore[name-defined]
                 if hasattr(self, 'cm'):
                     logger.warning("Could not load tokenizer for '%s': %s", ctx.name, e)  # noqa: F821
 
+        # Load TTS G2P model + voice embeddings for type=tts models
+        if inference_type == "tts":
+            try:
+                import kokoro_onnx as ko
+                ctx.kokero_model = ko.Model()
+                ctx.g2p_lang = model_data.get("g2p_lang", "a")  # 'a' = en-us default voice set
+                self.arkestra.log(f"[start] tts G2P loaded for '{ctx.name}' (lang={ctx.g2p_lang})")
+            except ImportError:
+                if self.arkestra:
+                    self.arkestra.error(
+                        f"TTS model '{ctx.name}' requires the `onnx` extra. "
+                        f"Install with: pip install model-arkestra[onnx]")
+                raise RuntimeError(f"kokero-onnx not installed — TTS unavailable for '{ctx.name}'")
+
     async def _stop_model_process(self, ctx: "model_arkestra.types._ModelContext") -> None:
         """Unload ONNX session from memory."""
         if self.arkestra:
             self.arkestra.log(f"[stop] model={ctx.name} unloaded")
-        if hasattr(ctx, 'onnx_session'):
-            delattr(ctx, 'onnx_session')
-        if hasattr(ctx, 'onnx_tokenizer'):
-            delattr(ctx, 'onnx_tokenizer')
+        for attr in ('onnx_session', 'onnx_tokenizer', 'kokero_model'):
+            if hasattr(ctx, attr):
+                delattr(ctx, attr)
 
     # ── Override start: no HTTP health check, no subprocess watch ───
 
@@ -240,36 +254,61 @@ class OnnxRunner(BaseModelRunner):  # type: ignore[name-defined]
                 ctx.onnx_tokenizer = _load_whisper_tokenizer(ctx.model_path)
 
             session = ctx.onnx_session
+            output_names = [o.name for o in session.get_outputs()]
             encoder_outputs = session.run(
-                [session.get_output_name(0)],
+                [output_names[0]],  # last_hidden_state
                 {"input_features": mel.astype(np.float32)},
             )
-            prompts = encoder_outputs[0][0]
-            return _greedy_decode(session, ctx.onnx_tokenizer, mel.astype(np.float32), prompts).strip()
+            # encoder_outputs[0] has shape [1, seq_len, d_model]
+            return _greedy_decode(
+                session,
+                ctx.model_path,
+                ctx.onnx_tokenizer,
+                mel.astype(np.float32),
+                encoder_outputs[0],
+            ).strip()
 
         text = await asyncio.to_thread(_do_transcribe)
         return {"text": text, "language": language or "en"}
 
-    async def synthesize(self, model_name: str, text: str) -> bytes:
-        """Generate speech from text using TTS ONNX model."""
-        import numpy as np
+    async def synthesize(self, model_name: str, text: str,
+                         voice: Optional[str] = None, speed: float = 1.0) -> bytes:
+        """Generate speech from text using Kokero ONNX TTS model."""
         ctx = self._models.get(model_name)
         if not ctx:
             from model_arkestra.types import ModelNotStarted
             raise ModelNotStarted(model_name)
 
         def _do_synthesize():
-            sample_rate = 24000
-            duration = max(0.5, min(len(text.split()) * 0.3, 10.0))
-            n_samples = int(sample_rate * duration)
-            samples = np.zeros(n_samples, dtype=np.int16)
+            import kokoro_onnx as ko
+            import wave
+            import numpy as np
+
+            # Text → phonemes → tokens via G2P
+            phoneme_ids = ctx.kokero_model.g2p(text)
+
+            # Select voice embedding (default: 'a' = default US English set)
+            voice_id = voice or ctx.g2p_lang  # 'a', 'b', 'j', etc.
+            style = ko.Model.load_voice(voice_id)  # [1×256]
+
+            # Run ONNX model → waveform (float32, samples)
+            session = ctx.onnx_session
+            outputs = session.run(None, {
+                "input_ids": phoneme_ids.reshape(1, -1).astype("int64"),
+                "style": style.reshape(1, -1).astype("float32"),
+                "speed": np.array([speed], dtype="float32"),
+            })
+
+            # Convert float32 [-1,1] → int16 WAV
+            audio = outputs[0][0]
+            audio_int16 = (audio * 32767).astype("int16")
 
             buf = io.BytesIO()
-            with __import__('wave').open(buf, "wb") as wf:
+            with wave.open(buf, "wb") as wf:
                 wf.setnchannels(1)
                 wf.setsampwidth(2)
-                wf.setframerate(sample_rate)
-                wf.writeframes(samples.tobytes())
+                wf.setframerate(24000)
+                wf.writeframes(audio_int16.tobytes())
             return buf.getvalue()
 
         return await asyncio.to_thread(_do_synthesize)
