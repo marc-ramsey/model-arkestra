@@ -210,7 +210,7 @@ def _build_e2e_config(combos: List[Tuple[str, str]], bin_paths: Dict[str, str]) 
                 "runner": "process",
                 "binary_dir": vulkan_dir,
                 "binary": "llama-server",
-                "args": {"hf": "${CHECKPOINT}", "port": "${PORT}"},
+                "args": {"hf": "${CHECKPOINT}"},
             })
 
         elif "roc-m" in combo_id:
@@ -223,7 +223,7 @@ def _build_e2e_config(combos: List[Tuple[str, str]], bin_paths: Dict[str, str]) 
                         "binary_dir": bdir,
                         "binary": str(Path(bdir).name),
                         "env_container": {"LD_LIBRARY_PATH": bdir},
-                        "args": {"ngl": 999, "hf": "${CHECKPOINT}", "port": "${PORT}"},
+                        "args": {"ngl": 999, "hf": "${CHECKPOINT}"},
                     })
                     break
             if not be:
@@ -239,7 +239,7 @@ def _build_e2e_config(combos: List[Tuple[str, str]], bin_paths: Dict[str, str]) 
                         "binary_dir": bdir,
                         "binary": str(Path(bdir).name),
                         "env_container": {"LD_LIBRARY_PATH": bdir},
-                        "args": {"ngl": 999, "hf": "${CHECKPOINT}", "port": "${PORT}"},
+                        "args": {"ngl": 999, "hf": "${CHECKPOINT}"},
                     })
                     break
             if not be:

@@ -122,8 +122,8 @@ class TestBuildDockerCmdNewArch:
     @pytest.mark.asyncio
     async def test_container_name_and_host_flag(self):
         """Container gets a named identifier and host binding is applied once."""
-        assembled = ["/bin/foo", "--port", "18003", "-fa", "on"]
-        with patch("model_arkestra.container_runner.build_model_args", return_value=(assembled, "")):
+        assembled = {"fa": "on", "ngl": "99"}
+        with patch("model_arkestra.container_runner.build_model_args", return_value=assembled):
             cfg = {"image": "ark-llama:vulkan-radv", "devices": [], "env_container": {}}
             runner = _make_docker_runner()
             cmd_parts = _build_container_cmd(

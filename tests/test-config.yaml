@@ -27,7 +27,6 @@ backends:
       GGML_CUDA_ENABLE_UNIFIED_MEMORY: "ON"
     args:
       flash-attn: "on"
-      port: "${PORT}"
       ngl: 999
       no-mmap: true
       np: 1

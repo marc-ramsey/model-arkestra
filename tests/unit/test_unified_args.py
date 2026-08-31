@@ -1,7 +1,7 @@
-"""Tests for unified argument merging: config args + inference kwargs → single CLI list.
+"""Tests for unified argument merging: config args + inference kwargs → flat dict.
 
-Every assertion checks the end-to-end output of build_model_args() — one function,
-one conversion path, no _build_cmd_line detour.
+``build_model_args()`` now returns only the merged data dict — no CLI conversion,
+no defaults cascade, no backend args.  The engine layer handles all CLI generation.
 """
 from __future__ import annotations
 import pytest
@@ -25,19 +25,9 @@ def _make_cm(yaml_content: str) -> ConfigManager:
 
 
 SAMPLE_CONFIG = """\
-macros:
-  ctx-size: 8192
-
 defaults:
   jinja: on
   n-gpu-layers: 99
-
-backends:
-  default: vulkan
-  vulkan:
-    args:
-      model: ${ctx-size}
-      port: "${PORT}"
 
 models:
   small-model:
@@ -46,6 +36,7 @@ models:
     args:
       temp: 0.7
       top-p: 0.95
+      flash-attn: true
 """
 
 
@@ -58,132 +49,135 @@ def cm():
 
 # ── tests ─────────────────────────────────────────────────────────────
 
-class TestConfigDefaultsCascade:
-    """Default → backend → model args cascade (last-wins)."""
+class TestConfigDefaultsNotMerged:
+    """build_model_args returns ONLY model args + inference kwargs.
+    Defaults and backend args are resolved by the engine layer.
+    """
 
-    def test_defaults_are_present(self, cm):
-        result = build_model_args(cm, "small-model", env_vars={"PORT": "18000"})
-        assert "--jinja" in result[0]
-        assert "--n-gpu-layers" in result[0]
+    def test_no_defaults_in_merged_dict(self, cm):
+        """Default section keys must NOT appear in merged dict."""
+        result = build_model_args(cm, "small-model")
+        assert result is not None
+        assert "jinja" not in result
+        assert "n-gpu-layers" not in result
 
-    def test_model_args_override_defaults(self, cm):
-        result = build_model_args(cm, "small-model", env_vars={"PORT": "18000"})
-        idx = result[0].index("--temp")
-        assert result[0][idx + 1] == "0.7"
-
-
-class TestBackendMacroResolution:
-    """Backend args with macro vars must resolve."""
-
-    def test_ctx_size_macro_resolved(self, cm):
-        result = build_model_args(cm, "small-model", env_vars={"PORT": "18000"})
-        idx = result[0].index("--model")
-        assert result[0][idx + 1] == "8192"
-
-    def test_port_macro_resolved(self, cm):
-        result = build_model_args(cm, "small-model", env_vars={"PORT": "18000"})
-        idx = result[0].index("--port")
-        assert result[0][idx + 1] == "18000"
+    def test_model_args_present(self, cm):
+        """Model args from config must appear in merged dict."""
+        result = build_model_args(cm, "small-model")
+        assert result is not None
+        assert result["temp"] == 0.7
+        assert result["top-p"] == 0.95
 
 
 class TestInferenceKwargsMerge:
-    """Inference kwargs are merged into model args (last-wins) and converted to CLI."""
+    """Inference kwargs merge into model args with last-wins semantics."""
 
-    def test_single_kwarg_converted(self, cm):
+    def test_single_kwarg_overrides_config(self, cm):
         result = build_model_args(
-            cm, "small-model", env_vars={"PORT": "18000"},
+            cm, "small-model",
             inference_kwargs={"temp": 1.0},
         )
-        idx = result[0].index("--temp")
-        assert result[0][idx + 1] == "1.0"
+        assert result["temp"] == 1.0
 
-    def test_kwarg_overrides_model_default(self, cm):
-        # Model args: temp: 0.7. Inference kwarg overrides to 1.0.
+    def test_new_kwarg_appears(self, cm):
+        """Inference kwarg not in config should still appear."""
         result = build_model_args(
-            cm, "small-model", env_vars={"PORT": "18000"},
-            inference_kwargs={"temp": 1.0},
-        )
-        idx = result[0].index("--temp")
-        assert result[0][idx + 1] == "1.0"
-
-    def test_kwarg_missing_from_config_appears(self, cm):
-        result = build_model_args(
-            cm, "small-model", env_vars={"PORT": "18000"},
+            cm, "small-model",
             inference_kwargs={"presence-penalty": 1.5},
         )
-        idx = result[0].index("--presence-penalty")
-        assert result[0][idx + 1] == "1.5"
+        assert result["presence-penalty"] == 1.5
 
-    def test_bool_kwarg_true_is_presence_only(self, cm):
+    def test_kwarg_overrides_bool_config(self, cm):
+        """Inference kwarg overrides config value including booleans."""
         result = build_model_args(
-            cm, "small-model", env_vars={"PORT": "18000"},
-            inference_kwargs={"flash-attn": True},
+            cm, "small-model",
+            inference_kwargs={"flash-attn": False},
         )
-        assert "--flash-attn" in result[0]
-        idx = result[0].index("--flash-attn")
-        if idx + 1 < len(result[0]):
-            assert result[0][idx + 1] != "True"
+        assert result["flash-attn"] is False
 
-    def test_bool_kwarg_false_is_omitted(self, cm):
+    def test_infra_keys_dropped(self, cm):
+        """Infra metadata keys must NOT appear in merged dict."""
         result = build_model_args(
-            cm, "small-model", env_vars={"PORT": "18000"},
-            inference_kwargs={"no-mmap": False},
-        )
-        assert "--no-mmap" not in result[0]
-
-    def test_infra_keys_skipped(self, cm):
-        # backend key should NOT become CLI flag.
-        result = build_model_args(
-            cm, "small-model", env_vars={"PORT": "18000"},
+            cm, "small-model",
             inference_kwargs={"backend": "rocm", "model": "other:Q4"},
         )
-        assert "--backend" not in result[0]
-
-    def test_kwarg_string_with_macro_resolved(self, cm):
-        """String values in inference kwargs containing ${...} must be macro-resolved."""
-        result = build_model_args(
-            cm, "small-model", env_vars={"PORT": "18000"},
-            inference_kwargs={"ctx-size": "${ctx-size}"},
-        )
-        idx = result[0].index("--ctx-size")
-        assert result[0][idx + 1] == "8192"
+        assert "backend" not in result
 
 
 class TestBoolInConfigDict:
-    """Boolean values in YAML config dicts must become presence-only flags."""
+    """Boolean values from config must be preserved as Python bools."""
 
-    def test_jinja_on_becomes_presence_flag(self, cm):
-        result = build_model_args(cm, "small-model", env_vars={"PORT": "18000"})
-        assert "--jinja" in result[0]
-        idx = result[0].index("--jinja")
-        # Next element (if any) must not be "True" — True → --flag only
-        if idx + 1 < len(result[0]):
-            assert result[idx + 1] != "True"
+    def test_bool_true_preserved(self, cm):
+        result = build_model_args(cm, "small-model")
+        assert result is not None
+        assert result["flash-attn"] is True  # Python True, not string
 
-    def test_n_gpu_layers_scalar_keeps_value(self, cm):
-        """Non-boolean values still get their scalar value."""
-        result = build_model_args(cm, "small-model", env_vars={"PORT": "18000"})
-        idx = result[0].index("--n-gpu-layers")
-        assert result[0][idx + 1] == "99"
+    def test_non_bool_values_kept(self, cm):
+        """Non-boolean values retain their type."""
+        result = build_model_args(cm, "small-model")
+        assert result is not None
+        assert result["temp"] == 0.7
+        assert isinstance(result["temp"], float)
 
 
-class TestSinglePath:
-    """Verify there is only ONE conversion path through build_model_args()."""
+class TestUnknownModelReturnsNone:
+    """Unknown model names must return None."""
 
-    def test_all_args_in_single_list(self, cm):
-        """Config defaults, backend args, model args, and inference kwargs all appear in one list."""
-        result = build_model_args(
-            cm, "small-model", env_vars={"PORT": "18000"},
-            inference_kwargs={"top-p": 0.99, "presence-penalty": -0.5},
-        )
-        # Defaults: jinja (True → --jinja), n-gpu-layers (99 → --n-gpu-layers 99)
-        assert "--jinja" in result[0]
-        assert "--n-gpu-layers" in result[0]
-        # Backend: model, port
-        assert "--model" in result[0]
-        assert "--port" in result[0]
-        # Model + kwarg: temp (from model), top-p (kwarg overrides 0.95)
-        idx = result[0].index("--top-p")
-        assert result[0][idx + 1] == "0.99"
-        # Kwarg only: presence-penalty
-        assert "--presence-penalty" in result[0]
+    def test_nonexistent_model(self, cm):
+        assert build_model_args(cm, "ghost-model") is None
+
+
+class TestMissingModelsSection:
+    """Config without models section should be handled gracefully."""
+
+    def test_no_models_section_returns_none(self):
+        empty_cm = _make_cm("defaults:\n  jinja: on\n")
+        result = build_model_args(empty_cm, "small-model")
+        assert result is None
+
+
+class TestEngineCLIConversion:
+    """Verify LlamaCppEngine.build_cli_args() converts the dict properly."""
+
+    def test_dict_converts_to_cli(self):
+        from model_arkestra.llama_cpp import LlamaCppEngine
+        merged = {"temp": 0.7, "top-p": 0.95, "jinja": True, "ngl": "33"}
+        cli = LlamaCppEngine.build_cli_args(merged, port=18000)
+
+        assert "--temp" in cli
+        assert "0.7" in cli
+        assert "--top-p" in cli
+        assert "0.95" in cli
+        assert "--jinja" in cli
+        assert "-ngl" in cli  # ngl is a short-flag key
+        assert "33" in cli
+        assert "--port" in cli
+        assert "18000" in cli
+
+    def test_bool_true_is_presence_only(self):
+        from model_arkestra.llama_cpp import LlamaCppEngine
+        merged = {"flash-attn": True, "jinja": True}
+        cli = LlamaCppEngine.build_cli_args(merged, port=18000)
+
+        assert "--flash-attn" in cli
+        idx = cli.index("--flash-attn")
+        # Next element should not be "True" — presence-only flag.
+        if idx + 1 < len(cli):
+            assert cli[idx + 1] != "True"
+
+    def test_bool_false_is_omitted(self):
+        from model_arkestra.llama_cpp import LlamaCppEngine
+        merged = {"flash-attn": False}
+        cli = LlamaCppEngine.build_cli_args(merged, port=18000)
+
+        assert "--flash-attn" not in cli
+
+    def test_metadata_keys_skipped(self):
+        from model_arkestra.llama_cpp import LlamaCppEngine
+        merged = {"hf": "my-org/my-model", "model": "other:Q4", "port": 9999, "temp": 0.7}
+        cli = LlamaCppEngine.build_cli_args(merged, port=18000)
+
+        assert "--hf" not in cli
+        assert "--model" not in cli
+        assert "--port" in cli  # Port is injected by build_cli_args, not from merged
+        assert "18000" in cli  # But always uses the passed port arg

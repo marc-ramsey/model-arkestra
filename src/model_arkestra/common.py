@@ -1,17 +1,14 @@
 """Shared constants and utilities for container-based runners."""
 from __future__ import annotations
+import os
 import re
 import subprocess as _subprocess
-from typing import Any, Dict, List, Optional, Tuple
-
-from model_arkestra.gpu_detect import detect_all
-
-
-import os
 from dataclasses import dataclass, field
+from model_arkestra.gpu_detect import detect_all
 from pathlib import Path
 import yaml
 from typing import Any, Dict, List, Optional, Tuple
+
 
 # ── Model resolution ────────────────────────────────────────────────────────
 
@@ -609,32 +606,22 @@ def _dict_to_cli(args_dict: Dict[str, Any]) -> List[str]:
 def build_model_args(
     cm: Any,
     model_name: str,
-    env_vars: Optional[Dict[str, Any]] = None,
-    override_backend: Optional[str] = None,
     inference_kwargs: Optional[Dict[str, Any]] = None,
-) -> Optional[Tuple[List[str], str]]:
-    """Build command arguments for a model using its backend config.
+) -> Optional[Dict[str, Any]]:
+    """Merge model args with runtime inference kwargs into a flat dict.
 
-    Resolves the effective backend, fills template placeholders
-    (CHECKPOINT, PORT), and concatenates backend arguments with
-    model-specific arguments.  The ConfigManager is used only for data
-    access — no method delegation required.
+    Merges config-level model ``args:`` with runtime overrides passed as
+    *inference_kwargs* (last-wins).  Infra keys (``backend``, ``checkpoint``)
+    are silently dropped.
 
     Args:
         cm:               ConfigManager instance.
         model_name:       Model name as defined in the config file.
-        env_vars:         Runtime environment variables for resolving
-                          PORT and other placeholders.
-        override_backend: Optional backend ID that overrides whichever
-                          backend the model would normally use.
         inference_kwargs: Optional dict of runtime inference parameters
                           to merge into model args (last-wins).
-                          String values containing ``${...}`` are macro-resolved.
 
     Returns:
-        A tuple of (arg_list, cmd_str) where arg_list is a list of
-        individual arguments ready for subprocess_exec,
-        and cmd_str is the space-joined string representation.
+        A flat dict of merged key→value pairs, or None if model not found.
     """
     models = cm.data.get("models")
     if not models:
@@ -643,117 +630,16 @@ def build_model_args(
     if model is None:
         return None
 
-    # 1. Resolve which backend to use
-    backend_id = _resolve_backend(cm, model, model_name, override_backend)
-
-    # 2. Get backend definition
-    backend = cm.data.get("backends", {}).get(backend_id)
-    if backend is None:
-        raise RuntimeError(f"Backend '{backend_id}' not found in backends config")
-
-    # Resolve model ref — replaces legacy checkpoint/repo+model fields
-    default_section = cm.data.get("default", {}) or {}
-    model_repos = cm.data.get("model-repos")
-    resolved_model = resolve_model_ref(
-        raw=model.get("model"),
-        default_section=default_section,
-        model_repos=model_repos,
-        backend_repo=(backend or {}).get("repo"),
-    )
-
-    # 3. Resolve PORT
-    port = env_vars.get("PORT") if env_vars is not None else None
-    if port is None:
-        default_section = cm.data.get("default", {}) or {}
-        port = str(default_section.get("model-start-port", 18000))
-
-    # Build macro map: top-level scalar keys + expanded macros section.
-    # Structural dict keys (models, env, backends, runners) are excluded,
-    # but macros is special-cased: its individual key-value pairs become resolvers.
-    _STRUCTURAL_KEYS = {"models", "env", "backends", "runners"}
-    resolve_macros: Dict[str, Any] = {
-        k: v for k, v in cm.data.items()
-        if k not in _STRUCTURAL_KEYS and not isinstance(v, dict)
-    }
-    # Expand macros section (individual entries become resolvers).
-    for k, v in (cm.data.get("macros") or {}).items():
-        resolve_macros[k] = v
-    resolve_macros["PORT"] = port
-    resolve_macros["NPROC"] = str(os.cpu_count())
-    resolve_macros["CHECKPOINT"] = resolved_model.ref
-
-    # 4. Resolve backend args — flat dict only
-    backend_args_raw = backend.get("args")
-    if isinstance(backend_args_raw, dict):
-        resolved_backend: Dict[str, Any] = {}
-        for key, val in backend_args_raw.items():
-            if isinstance(val, str) and "${" in val:
-                resolved_backend[key] = cm._resolve_string(val, resolve_macros, strict=False)  # noqa: SLF001
-            else:
-                resolved_backend[key] = val
-
-        # Merge device-profile args (GPU-specific defaults like ngl, flash-attn)
-        profile_args = _merge_device_profile_args(cm, backend)
-        for k, v in profile_args.items():
-            if k not in resolved_backend:
-                resolved_backend[k] = v
-
-        backend_arg_list = _dict_to_cli(resolved_backend)
-    else:
-        backend_arg_list = []
-
-    # 5. Resolve defaults — flat dict only
-    defaults_raw = cm.data.get("defaults")
-    if isinstance(defaults_raw, dict):
-        resolved_defaults: Dict[str, Any] = {}
-        for key, val in defaults_raw.items():
-            if isinstance(val, str) and "${" in val:
-                resolved_defaults[key] = cm._resolve_string(val, resolve_macros, strict=False)  # noqa: SLF001
-            else:
-                resolved_defaults[key] = val
-        default_arg_list = _dict_to_cli(resolved_defaults)
-    else:
-        default_arg_list = []
-
-    # 6. Get model args — flat dict only
-    #    Merge inference_kwargs into model args (last-wins).
+    # Merge model args with runtime kwargs (last-wins).
+    result: Dict[str, Any] = {}
     model_args_raw = model.get("args")
     if isinstance(model_args_raw, dict):
-        merged_model = dict(model_args_raw)
-        if inference_kwargs:
-            for k, v in inference_kwargs.items():
-                if k not in ("backend", "checkpoint"):
-                    merged_model[k] = v
-        resolved_dict: Dict[str, Any] = {}
-        for key, val in merged_model.items():
-            if isinstance(val, str) and "${" in val:
-                resolved_dict[key] = cm._resolve_string(val, resolve_macros, strict=False)  # noqa: SLF001
-            else:
-                resolved_dict[key] = val
-        model_arg_list = _dict_to_cli(resolved_dict)
-    else:
-        model_arg_list = []
-
-    # Return merged list: defaults → backend → model
-    combined = default_arg_list + backend_arg_list + model_arg_list
-
-    # Always inject port — overrides any configured value, ensures subprocess uses allocated port
-    if env_vars and "PORT" in env_vars:
-        combined.extend(["--port", str(env_vars["PORT"])])
-
-    # Apply per-backend hf_flag override (e.g. "--hf" for some container images)
-    hf_flag = (backend or {}).get("hf_flag")
-    if hf_flag:
-        result: List[str] = []
-        it = iter(combined)
-        for item in it:
-            if item == "-hf" and (next_val := next(it, None)):
-                result.extend([hf_flag, next_val])
-            else:
-                result.append(item)
-        combined = result
-
-    return (combined, " ".join(combined))
+        result.update(model_args_raw)
+    if inference_kwargs:
+        for k, v in inference_kwargs.items():
+            if k not in ("backend", "checkpoint"):
+                result[k] = v
+    return result
 
 
 def _resolve_backend(
@@ -824,94 +710,6 @@ def resolve_tags(model_cfg: Dict | None, global_cfg: Dict,
     return ["chat"]
 
 # ── Engine resolution helpers ───────────────────────────────────
-def _resolve_engine(cm: Any, engine_name: Optional[str] = None) -> Dict[str, Any]:
-    """Resolve an engine config dict by name from the ``engines:`` section.
-
-    Falls back to the first (and typically only) engine registered when
-    *engine_name* is not provided.
-    """
-    engines = (cm.data or {}).get("engines") or {}
-    if isinstance(engines, dict):
-        if engine_name and engine_name in engines:
-            eng = engines[engine_name]
-            return eng if isinstance(eng, dict) else {}
-        # No name specified — fall back to the first registered engine
-        for eid, ecfg in engines.items():
-            if isinstance(ecfg, dict):
-                return ecfg
-    return {}
-
-def _merge_engine_defaults(engine_cfg: Dict[str, Any], backend_cfg: Dict[str, Any]) -> Dict[str, Any]:
-    """Merge engine-level defaults into backend config.
-
-    Backend values override engine values at the top level.  The ``args``
-    sub-dict is deep-merged so that nested keys from the engine provide
-    fallbacks while backend-specific args take precedence.
-    """
-    merged: Dict[str, Any] = {}
-    # Top-level scalar/string fields — engine fallback → backend override
-    for key in (engine_cfg or {}):
-        merged[key] = engine_cfg.get(key)  # start with engine value
-    for key in (backend_cfg or {}):
-        if key == "args" and isinstance(merged.get("args"), dict):
-            # Deep-merge args dicts: engine values are fallbacks
-            deep_args = {**merged["args"], **backend_cfg["args"]}
-            merged[key] = deep_args
-        else:
-            merged[key] = backend_cfg[key]
-    return merged
-
-
-def _merge_device_profile_args(
-    cm: Any, backend: Dict[str, Any]
-) -> Dict[str, Any]:
-    """Detect GPU and merge matching device-profile args.
-
-    Detects the primary GPU, finds the best-matching key in engine
-device-profiles (exact match → family fallback), and returns the
-    matched profile's args dict.  Returns {} if no profiles defined.
-    """
-    result = detect_all()
-    primary = result.get("primary_gpu")
-    if not primary:
-        return {}
-
-    # Collect device-profiles from all engines that have them
-    profiles: Dict[str, Any] = {}
-    for engine_cfg in (cm.data.get("engines") or {}).values():
-        if isinstance(engine_cfg, dict) and "device-profiles" in engine_cfg:
-            profiles.update(engine_cfg["device-profiles"])
-    if not profiles:
-        return {}
-
-    vendor = primary.get("vendor", "")
-    matched_key: Optional[str] = None
-
-    if vendor == "amd":
-        gfx = result.get("gfx_family")
-        if gfx and gfx in profiles:
-            matched_key = gfx
-        elif "rocm" in profiles:
-            matched_key = "rocm"
-    elif vendor == "nvidia":
-        gpu_name = primary.get("name", "").lower()
-        for key in profiles:
-            if any(part in gpu_name for part in key.replace('-', ' ').split()):
-                matched_key = key
-                break
-        if not matched_key and "cuda" in profiles:
-            matched_key = "cuda"
-    elif vendor == "intel":
-        if "vulkan" in profiles:
-            matched_key = "vulkan"
-
-    if matched_key is None:
-        return {}
-
-    prof = profiles.get(matched_key, {})
-    return prof.get("args") or {}
-
-
 def _get_device_profile_env(
     cm: Any,
 ) -> Dict[str, Any]:

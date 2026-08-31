@@ -15,7 +15,8 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 from model_arkestra.base import BaseModelRunner
 from model_arkestra.common import (
-    INSPECT_RE, SUBPROCESS_ENV, build_model_args, default_cache_root,
+    INSPECT_RE, SUBPROCESS_ENV, _dict_to_cli,
+    build_model_args, default_cache_root,
     resolve_binary_from_backend, safe_container_name,
 )
 from model_arkestra.types import RunnerState, _ModelContext
@@ -107,13 +108,11 @@ def _build_container_cmd(
     if cache_path and os.path.isdir(str(cache_path)):
         parts.extend(["-v", f"{cache_path}:{_inside_cache}:rw"])
         parts.extend(["-e", f"HF_HUB_CACHE={_inside_cache}"])
-    result = build_model_args(
+    merged = build_model_args(
         runner.cm, model_name,
-        env_vars={"PORT": str(port)},
-        override_backend=backend_id,
         inference_kwargs=runner._inference_kwargs.get(model_name, {}),
     )
-    arg_list: List[str] = list(result[0]) if result else []
+    arg_list: List[str] = _dict_to_cli(merged) if merged else []
 
     # Replace --port value with inside_port; ensure --host is present.
     fixed: List[str] = []

@@ -83,8 +83,8 @@ class TestBuildContainerCmdPodman:
     @pytest.mark.asyncio
     async def test_container_name_and_host_flag(self):
         """Container gets a name and host binding is applied once."""
-        assembled = "/tmp/test-wrappers/vulkan-radv --port 9090 -fa on"
-        with patch("model_arkestra.container_runner.build_model_args", return_value=(assembled, "")):
+        assembled = {"fa": "on", "ngl": "99"}
+        with patch("model_arkestra.container_runner.build_model_args", return_value=assembled):
             cfg = {"image": "ark-llama:v1", "devices": [], "env_container": {}}
             runner = _make_runner()
             cmd_parts = _build_container_cmd(
@@ -147,7 +147,7 @@ class TestBuildContainerCmdDocker:
             "image": "ark-llama:v1",
             "env_container": {"GGML_VK_VISIBLE_DEVICES": "0", "LLAMA_CACHE": "/data/llama"},
         }
-        with patch("model_arkestra.container_runner.build_model_args", return_value=(["/bin/server", "--port", "8080"], "")):
+        with patch("model_arkestra.container_runner.build_model_args", return_value={"ngl": "99", "jinja": True}):
             cmd_parts = _build_container_cmd(
                 "docker", runner, "test-model", 18003,
                 runner.broadcast_addr, 8080,

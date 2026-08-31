@@ -12,7 +12,6 @@ backends:
   rocm:
     args:
       flash-attn: 'on'
-      port: ${PORT}
     binary_dir: /home/marc/local/llama.cpp/build-rocm/bin
     container: Containerfile.rocm
     devices:
@@ -27,7 +26,6 @@ backends:
   vulkan-radv:
     args:
       flash-attn: 'on'
-      port: ${PORT}
     binary_dir: /home/marc/local/llama.cpp/build-vulkan-radv/bin
     container: Containerfile.vulkan-radv
     devices:

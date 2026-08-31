@@ -4,7 +4,7 @@ import os
 import signal
 from typing import Any, Dict, List
 from model_arkestra.base import BaseModelRunner
-from model_arkestra.common import _merge_engine_defaults, _resolve_backend, _resolve_engine, build_model_args, _get_device_profile_env
+from model_arkestra.common import build_model_args, _get_device_profile_env
 from model_arkestra.llama_cpp import LlamaCppEngine
 from model_arkestra.types import _ModelContext
 
@@ -25,44 +25,28 @@ class ProcessModelRunner(BaseModelRunner):
     ) -> None:
         await self._ensure_port_available(ctx.port)
 
-        # Resolve backend and merge engine defaults.
+        # Resolve backend and locate binary.
         be_id = ctx.backend_id or model_data.get("backend")
-        be_id = _resolve_backend(self.cm, model_data, ctx.name, be_id)
         backend = self.cm[f"backends/{be_id}"] if be_id else {}
-
-        # Resolve engine and merge its defaults into the backend config.
-        engine_name = (backend or {}).get("engine", "llama-cpp")
-        engine_cfg = _resolve_engine(self.cm, engine_name)
-        merged = _merge_engine_defaults(engine_cfg, backend or {})
-
-        binary_dir = merged.get("binary_dir", "") or ""
-        binary_name = merged.get("binary", "llama-server") or "llama-server"
+        binary_dir = (backend or {}).get("binary_dir", "") or ""
+        binary_name = (backend or {}).get("binary", "llama-server") or "llama-server"
         binary_path = os.path.join(binary_dir, binary_name)
         if not os.path.isfile(binary_path):
             raise RuntimeError(
                 f"Binary '{binary_path}' not found for backend '{be_id}'"
             )
 
-        # Filter inference kwargs through engine — drop anything not valid for llama.cpp.
-        raw_inference = self._inference_kwargs.get(ctx.name, {})
-        if engine_name == "llama-cpp":
-            from model_arkestra.llama_cpp import LlamaCppEngine
-            engine = LlamaCppEngine()
-        else:
-            engine = None  # future: resolve by name
-        filtered_inference = engine.filter_infer_kwargs(raw_inference) if engine else raw_inference
-
-        # Build args from config backend + model + inference kwargs.
-        result = build_model_args(
-            self.cm, ctx.name,
-            env_vars={"PORT": str(ctx.port)},
-            override_backend=ctx.backend_id,
-            inference_kwargs=filtered_inference,
-        )
-        if result is None:
+        # Build merged param dict and convert to CLI tokens via engine.
+        merged = build_model_args(self.cm, ctx.name,
+                                  inference_kwargs=self._inference_kwargs.get(ctx.name, {}))
+        if merged is None:
             raise RuntimeError(f"Model '{ctx.name}' has no backend configured")
 
-        args_list, _cmd_str = result
+        engine_name = (backend or {}).get("engine", "llama-cpp")
+        if engine_name == "llama-cpp":
+            args_list = LlamaCppEngine.build_cli_args(merged, ctx.port)
+        else:
+            args_list = list(merged.values())  # fallback — future engines subclass
 
         # Merge environment: process + global env + device-profile env + backend env_container.
         env = os.environ.copy()

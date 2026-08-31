@@ -353,6 +353,7 @@ class ModelArkestra:
         in config.yaml can then override or extend this map.
         """
         self._runner_classes: Dict[str, type] = {}
+        self._runner_kwargs_override: Dict[str, Dict[str, Any]] = {}
 
         # Built-in concrete runners keyed by their lowercase short name.
         for _cls in (ProcessModelRunner, PodmanModelRunner, DockerModelRunner, OnnxRunner, RemoteModelRunner):
@@ -366,8 +367,6 @@ class ModelArkestra:
         runner_cfg = self._cm.get("runners", {})
         if not runner_cfg:
             return
-
-        self._runner_kwargs_override: Dict[str, Dict[str, Any]] = {}
 
         for key, entry in runner_cfg.items():
             if key == "default":

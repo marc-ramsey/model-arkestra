@@ -25,7 +25,6 @@ backends:
       GGML_CUDA_ENABLE_UNIFIED_MEMORY: 'ON'
     args:
       hf: ${CHECKPOINT}
-      port: ${PORT}
     runner: process
 
 runners:

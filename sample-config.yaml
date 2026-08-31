@@ -19,7 +19,6 @@ backends:
     source_ref: rocm-gfx1151
     container: Containerfile.rocm
     args:
-      port: "${PORT}"
       ngl: 999
       ctx-size: ${ctx-size}
   rocm-container:
@@ -35,14 +34,12 @@ backends:
     runner: ProcessModelRunner
     source_ref: official-cuda
     args:
-      port: "${PORT}"
       ngl: 999
       ctx-size: ${ctx-size}
   vulkan-radv:
     runner: ProcessModelRunner
     source_ref: official-vulkan-radv
     args:
-      port: "${PORT}"
       ngl: 999
       ctx-size: ${ctx-size}
   cpu:
