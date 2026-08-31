@@ -231,7 +231,10 @@ function showToast(msg) {
 // ── Audio playback helpers (called from within IIFE via window.*) ──
 let audioEl = null;
 let _onLoadedMetadata = null, _onTimeUpdate = null, _onEnded = null;
-window._audioState = { playing: false, currentSec: 0, durationSec: 0 };
+
+// Expose for widget.js renderers
+window.playAudioFromUrl = playAudioFromUrl;
+Object.defineProperty(window, 'audioEl', { get: () => audioEl, configurable: true });
 
 function escapeHtml(s) {
     return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -284,119 +287,8 @@ function playAudioFromUrl(url) {
     audioEl.addEventListener('timeupdate',     _onTimeUpdate);
     audioEl.addEventListener('ended',         _onEnded);
 
-    // Progress seek — bound once at init in wireAudioUI(), no setTimeout needed
+    // Progress seek — bound once in widget.js ChatPane renderer
 
     audioEl.play();
 }
 
-// Wire TTS toggle and model selectors
-(function wireAudioUI() {
-    // ── Audio playback controls — bound once at init ───────────
-    const progEl = document.getElementById('audio-progress');
-    if (progEl) {
-        progEl.addEventListener('input', () => {
-            if (!audioEl?.duration) return;
-            audioEl.currentTime = (progEl.value / 100) * audioEl.duration;
-        });
-    }
-    const pauseBtn = document.getElementById('btn-pause-audio');
-    if (pauseBtn) {
-        pauseBtn.addEventListener('click', () => {
-            if (!audioEl) return;
-            audioEl.paused ? audioEl.play() : audioEl.pause();
-        });
-    }
-    const stopBtn = document.getElementById('btn-stop-audio');
-    if (stopBtn) {
-        stopBtn.addEventListener('click', () => {
-            if (!audioEl) return;
-            audioEl.pause();
-            audioEl = null;
-            progEl.value = 0;
-        });
-    }
-    const ttsToggle = document.querySelector('.chat-tts-toggle');
-    if (ttsToggle) {
-        let ttsActive = false;
-        ttsToggle.addEventListener('click', () => {
-            ttsActive = !ttsActive;
-            const statusEl = document.getElementById('tts-status');
-            if (statusEl) statusEl.textContent = ttsActive ? 'On' : 'Off';
-            ttsToggle.style.color = ttsActive ? 'var(--green)' : '';
-        });
-    }
-
-    // TTS speak button
-    const ttsBtn = document.getElementById('btn-send-tts');
-    if (ttsBtn) {
-        ttsBtn.addEventListener('click', () => window._actions.sendTTS());
-    }
-
-    // ASR file upload
-    const fileInput = document.getElementById('asr-file-input');
-    const uploadBtn = document.getElementById('btn-upload-audio');
-    if (uploadBtn && fileInput) {
-        uploadBtn.addEventListener('click', () => fileInput.click());
-    }
-    if (fileInput) {
-        fileInput.addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (file) window._actions.sendASR(file);
-        });
-    }
-
-    // Drag-and-drop on upload area
-    const dropArea = document.querySelector('.asr-upload-area');
-    if (dropArea) {
-        ['dragenter','dragover'].forEach(evt => {
-            dropArea.addEventListener(evt, (e) => { e.preventDefault(); dropArea.style.borderColor = 'var(--accent)'; });
-        });
-        ['dragleave','dragend'].forEach(evt => {
-            dropArea.addEventListener(evt, () => { dropArea.style.borderColor = ''; });
-        });
-        dropArea.addEventListener('drop', (e) => {
-            e.preventDefault();
-            dropArea.style.borderColor = '';
-            const file = e.dataTransfer.files[0];
-            if (file?.type.startsWith('audio/')) window._actions.sendASR(file);
-            else showToast('Please drop an audio file');
-        });
-    }
-
-    // Mic recording button
-    const micBtn = document.getElementById('btn-record-audio');
-    if (micBtn) {
-        let isRecording = false;
-        micBtn.addEventListener('click', async () => {
-            if (!isRecording) {
-                // Start: find active recorder or create new one
-                try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    const recorder = new MediaRecorder(stream);
-                    const chunks = [];
-                    isRecording = true;
-                    micBtn.textContent = '⏹ Stop';
-                    micBtn.classList.add('recording');
-
-                    recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
-
-                    recorder.onstop = async () => {
-                        stream.getTracks().forEach(t => t.stop());
-                        isRecording = false;
-                        micBtn.textContent = '⏺ Mic';
-                        micBtn.classList.remove('recording');
-                        const blob = new Blob(chunks, { type: 'audio/webm' });
-                        await window._actions.sendASR(blob);
-                    };
-
-                    recorder.start();
-                    window._micRecorder = recorder; // store for stop
-                } catch {
-                    showToast('Mic access denied');
-                }
-            } else {
-                window._micRecorder?.stop();
-            }
-        });
-    }
-})();
