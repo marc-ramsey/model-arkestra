@@ -11,6 +11,14 @@ const EventBus = {
     emit(e, d)  { for(const fn of this._h.get(e)||[]) fn(d); },
 };
 
+// Config constants — shared between widget.js and app.js
+const CFG = {
+    STORAGE_CHAT_PARAMS: 'arkestra-chat-params',
+    DEFAULT_TTS:        'default-tts',
+    DEFAULT_WHISPER:    'default-whisper',
+    POLL_INTERVAL:      2000,
+};
+
 function esc(s)  { return (s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function sanitizeId(n) { return (n||'').replace(/[^a-zA-Z0-9_-]/g, '_'); }
 function normalizeStatus(s) { return (s?.value || s || '').replace('runnerstate.','').toLowerCase(); }
@@ -582,7 +590,7 @@ function startLogPoll(modelId) {
     };
 
     poll();
-    logTimer = setInterval(poll, POLL_INTERVAL);
+    logTimer = setInterval(poll, CFG.POLL_INTERVAL);
 }
 
 function stopLogPoll() { if (logTimer) clearInterval(logTimer); logTimer=null; logSince=0; }
@@ -643,7 +651,7 @@ async function doStream(text, modelName, onData, options = {}) {
     const info = window._modelsCache?.find(m => m.id === modelName);
     if (!info?.port) throw new Error('Model not running');
 
-    const params = JSON.parse(localStorage.getItem('arkestra-chat-params')||'{}')[modelName] || {};
+    const params = JSON.parse(localStorage.getItem(CFG.STORAGE_CHAT_PARAMS)||'{}')[modelName] || {};
     const resp = await fetch('http://127.0.0.1:' + info.port + '/v1/chat/completions', {
         method: 'POST', headers:{'Content-Type':'application/json'},
         signal,
@@ -728,11 +736,11 @@ async function adminPost(path, body) {
 // Constants and globals for app.js
 // ═══════════════════════════════════════════════════════════
 
-const POLL_INTERVAL = 2000;
 let chatHistory = [];
 let _configSnapshots = {};
 
 window.EventBus = EventBus;
+window.CFG = CFG;
 window.render = render;
 window.wireEvents = wireEvents;
 window.adminPost = adminPost;

@@ -85,7 +85,7 @@ function showToast(msg) {
             try {
                 // Determine TTS model — use the chat model or fall back to a known TTS type
                 const chatModelSel = document.getElementById('chat-model-select');
-                const modelName = chatModelSel?.value || 'default-tts';
+                const modelName = chatModelSel?.value || window.CFG?.DEFAULT_TTS;
                 
                 // Call speech endpoint with text input
                 const resp = await fetch(window.location.origin + '/v1/audio/speech', {
@@ -108,7 +108,7 @@ function showToast(msg) {
         // ── ASR: upload audio file and get transcription ───
         async sendASR(file) {
             const modelSel = document.getElementById('asr-model-select');
-            const modelName = modelSel?.value || 'default-whisper';
+            const modelName = modelSel?.value || window.CFG?.DEFAULT_WHISPER;
             const resultDiv = document.getElementById('asr-result-display');
 
             if (!file) { showToast('No audio file selected'); return; }
@@ -169,7 +169,7 @@ function showToast(msg) {
     document.addEventListener('input', (e) => {
         if (!e.target.id?.startsWith('f-chat-')) return;
         const name = e.target.id.replace('f-chat-', '');
-        const key = 'arkestra-chat-params';
+        const key = window.CFG?.STORAGE_CHAT_PARAMS;
         try {
             const params = JSON.parse(localStorage.getItem(key)||'{}');
             const chatModelSel = document.getElementById('chat-model-select');
