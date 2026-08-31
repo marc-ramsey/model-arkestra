@@ -120,6 +120,22 @@ class OnnxRunner(BaseModelRunner):  # type: ignore[name-defined]
                 raise RuntimeError(f"kokero-onnx not installed — TTS unavailable for '{ctx.name}'")
             return  # Kokoro manages its own session below
 
+        # ── Streaming ASR models: sherpa-ai paraformer (VAD bundled) ──
+        if inference_type == "sherpa-asr":
+            ctx.inference_type = "sherpa-asr"
+            if self.arkestra:
+                self.arkestra.log(f"[start] sherpa-asr '{ctx.name}' loaded")
+            return
+
+        # ── Streaming TTS models: Piper (generates WAV per request) ───
+        if inference_type == "piper":
+            from piper import PiperVoice
+            ctx.piper_voice = PiperVoice.load(str(resolved_path))
+            ctx.inference_type = "piper"
+            if self.arkestra:
+                self.arkestra.log(f"[start] piper tts '{ctx.name}' loaded")
+            return
+
         device_name = model_data.get("device", "CPUExecutionProvider")
         providers_cfg = model_data.get("providers", None)
 
@@ -321,6 +337,78 @@ class OnnxRunner(BaseModelRunner):  # type: ignore[name-defined]
                 voice=voice or ctx.g2p_lang,
                 speed=speed,
             )
+            # Convert numpy float32 [-1,1] → int16 WAV
+            audio_int16 = (samples * 32767).astype("int16")
+            buf = io.BytesIO()
+            with wave.open(buf, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(sr)
+                wf.writeframes(audio_int16.tobytes())
+            return buf.getvalue()
+
+        return await asyncio.to_thread(_do_synthesize)
+
+    async def stream_asr(self, model_name: str, audio_bytes: bytes) -> Dict[str, Any]:
+        """Streaming ASR with partial results via sherpa-ai paraformer.
+
+        Receives WebM/PCM audio, decodes to float32 at 16kHz mono,
+        feeds into OnlineStream for live partial token output.
+
+        Returns: {"partial": "text while processing", "final": "complete text"}
+        """
+        import librosa
+
+        ctx = self._models.get(model_name)
+        if not ctx:
+            from model_arkestra.types import ModelNotStarted
+            raise ModelNotStarted(model_name)
+
+        def _do_stream():
+            from sherpa_onnx import OnlineRecognizer, OnlineStream, OfflineModelConfig, OnlineRecognizerConfig
+
+            # Decode WebM → PCM float32 at 16kHz mono
+            samples = librosa.load(io.BytesIO(audio_bytes), sr=16000, mono=True)[0]
+
+            # Create streaming instance (cheap C++ pointer wrapper)
+            stream = OnlineStream()
+            stream.accept_waveform(16000, samples.tolist())
+
+            # Build OfflineRecognizer on first use, cache for reuse
+            if not hasattr(ctx, '_sherpa_rec'):
+                ctx._sherpa_rec = OnlineRecognizer(
+                    config=OnlineRecognizerConfig(model_config=OfflineModelConfig())
+                )
+
+            rec = ctx._sherpa_rec
+
+            partial_text = ""
+            while rec.decode_stream(stream):
+                result = stream.get_result()
+                if result.text:
+                    partial_text = result.text
+
+            return {
+                "partial": partial_text,
+                "final": stream.final_result.text if hasattr(stream, 'final_result') else partial_text
+            }
+
+        return await asyncio.to_thread(_do_stream)
+
+    async def stream_tts(self, model_name: str, text: str) -> bytes:
+        """Piper TTS — generates complete WAV in one call.
+
+        V1: single WAV frame (no intermediate chunking). First byte latency ~300ms on CPU.
+
+        Returns: WAV bytes ready for WebSocket binary frame transmission.
+        """
+        ctx = self._models.get(model_name)
+        if not ctx:
+            from model_arkestra.types import ModelNotStarted
+            raise ModelNotStarted(model_name)
+
+        def _do_synthesize():
+            samples, sr = ctx.piper_voice.synthesize(text)
             # Convert numpy float32 [-1,1] → int16 WAV
             audio_int16 = (samples * 32767).astype("int16")
             buf = io.BytesIO()

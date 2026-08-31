@@ -530,6 +530,65 @@ class ArkestraServer:
                     raise HTTPException(status_code=500, detail=str(e))
             return Response(content=wav_bytes, media_type="audio/wav")
 
+        # ── Streaming audio WebSocket (dev endpoint — may become /v1/...) ─
+        @app.websocket("/ark/audio/stream")
+        async def audio_stream_ws(websocket: WebSocket) -> None:
+            """Unified JSON-over-text protocol.
+
+            Client sends audio frames as base64-encoded JSON:
+              {"type":"audio_frame","data":"base64string..."}
+            TTS requests as plain JSON:
+              {"type":"tts","text":"hello world"}
+
+            Server responds with partial/final transcripts (JSON) or WAV bytes.
+            """
+            await websocket.accept()
+            arkestra = self._arkestra
+
+            try:
+                while True:
+                    msg = json.loads(await websocket.receive_text())
+                    msg_type = msg.get("type")
+
+                    if msg_type == "tts":
+                        model_name = (arkestra._find_model_by_tag("piper-tts") or
+                                      arkestra._find_model_by_tag("piper"))
+                        if not model_name:
+                            await websocket.send_text(
+                                json.dumps({"type":"error", "message": "No piper-tts model loaded"}))
+                            continue
+                        try:
+                            wav = await arkestra.stream_tts(model_name, msg["text"])
+                            await websocket.send_bytes(wav)
+                        except Exception as e:
+                            await websocket.send_text(
+                                json.dumps({"type":"error", "message": str(e)}))
+
+                    elif msg_type == "audio_frame":
+                        import base64
+                        raw_data = base64.b64decode(msg["data"])
+                        model_name = (arkestra._find_model_by_tag("sherpa-asr") or
+                                      arkestra._find_model_by_tag("sherpa"))
+                        if not model_name:
+                            await websocket.send_text(
+                                json.dumps({"type":"error", "message": "No sherpa-asr model loaded"}))
+                            continue
+                        try:
+                            result = await arkestra.stream_asr(model_name, raw_data)
+                            await websocket.send_text(
+                                json.dumps({"type":"partial", "text": result["partial"]}))
+                            await websocket.send_text(
+                                json.dumps({"type":"final", "text": result["final"]}))
+                        except Exception as e:
+                            await websocket.send_text(
+                                json.dumps({"type":"error", "message": str(e)}))
+
+                    else:
+                        await websocket.send_text(
+                            json.dumps({"type":"error", "message": f"Unknown type: {msg_type}"}))
+            except Exception:
+                pass  # client disconnected
+
         # ── Admin subcomponent ───────────────────────────────────
         from model_arkestra.admin import ArkestraAdmin
         admin_key = self._arkestra.resolve_config("ADMIN_KEY", explicit=self.admin_key)
