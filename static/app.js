@@ -17,7 +17,6 @@ function showToast(msg) {
     _init = true;
 
     // ── Load and render JSON tree ────────────────────────────────
-    // ── Load and render JSON tree ────────────────────────────────
     const tree = await fetch('/static/app.json').then(r => r.json());
     const root = document.getElementById('app-root');
     if (root) root.replaceWith(window.render(tree));
@@ -29,17 +28,6 @@ function showToast(msg) {
         async start(id)   { await window.adminPost('/admin/start/'+encodeURIComponent(id), {}); },
         async stop(id)    { await window.adminPost('/admin/stop/'+encodeURIComponent(id), {}); },
         async eject(id)   { try { await window.adminPost('/admin/eject/'+encodeURIComponent(id), {}); } catch(e) { console.error('[app] eject:',e.message); } },
-
-        sendChat() {
-            const modelId = document.getElementById('chat-model-select')?.value;
-            const textEl = document.getElementById('f-chat-input');
-            if (!modelId || !textEl?.value.trim()) return;
-            window.sendChat(modelId, textEl);
-        },
-
-        toggleChatParams() {
-            document.getElementById('chat-params-panel')?.classList.toggle('open');
-        },
 
         async save(id) {
             const panel = document.getElementById('config-' + sanitizeId(id));
@@ -75,60 +63,9 @@ function showToast(msg) {
             location.reload();
         },
 
-        async sendTTS() { await window._audio?.sendTTS(); },
-
-        // ── ASR: upload audio file and get transcription ───
+        async sendTTS(text) { await window._audio?.sendTTS(text); },
         async sendASR(file) { await window._audio?.sendASR(file); },
-
     };
-
-    // Wire Enter key on chat input to sendChat action
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && e.target.id === 'f-chat-input' && !e.shiftKey) {
-            e.preventDefault();
-            actions.sendChat();
-        }
-    });
-
-    // Clear chat history when model changes
-    const sel = document.getElementById('chat-model-select');
-    if (sel) {
-        sel.addEventListener('change', (e) => {
-            chatHistory = [];
-            EventBus.emit('model.select', { modelId: e.target.value });
-        });
-    }
-
-    window.wireEvents(actions);
-    window._actions = actions;  // expose for audio wiring
-
-    // Toggle chat params panel (one-time registration, not per-render)
-    document.addEventListener('click', (e) => {
-        if (e.target.id === 'btn-toggle-chat-params') {
-            document.getElementById('chat-params-panel')?.classList.toggle('open');
-        }
-    });
-
-    // Save chat params to localStorage on change
-    document.addEventListener('input', (e) => {
-        if (!e.target.id?.startsWith('f-chat-')) return;
-        const name = e.target.id.replace('f-chat-', '');
-        const key = window.CFG?.STORAGE_CHAT_PARAMS;
-        try {
-            const params = JSON.parse(localStorage.getItem(key)||'{}');
-            const chatModelSel = document.getElementById('chat-model-select');
-            const modelName = chatModelSel?.value;
-            if (!modelName) return;
-            if (!params[modelName]) params[modelName] = {};
-            // Map widget names to API field names
-            const apiName = name === 'temp' ? 'temperature' :
-                            name === 'max-tokens' ? 'max_tokens' :
-                            name === 'top-p' ? 'top_p' :
-                            name === 'top-k' ? 'top_k' : name;
-            params[modelName][apiName] = e.target.type === 'number' ? Number(e.target.value) : e.target.value;
-            localStorage.setItem(key, JSON.stringify(params));
-        } catch {}
-    });
 
     // ── Load model data and populate tree ────────────────────────
     try {
@@ -168,7 +105,7 @@ function showToast(msg) {
                 if (dot && m.status) dot.className = 'status-dot ' + window.normalizeStatus(m.status);
             }
         } catch {}
-    }, POLL_INTERVAL);
+    }, CFG.POLL_INTERVAL);
 
 })(); // end IIFE
 

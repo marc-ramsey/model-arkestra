@@ -173,13 +173,11 @@ function playAudioFromUrl(url) {
 }
 
 // ── TTS action (uses streaming AudioStream when available) ──────
-async function sendTTS() {
-    const textEl = document.getElementById('f-chat-input');
-    if (!textEl?.value.trim()) return;
+async function sendTTS(text) {
+    if (!text?.trim()) return;
 
     try {
-        // Try streaming first, fall back to batch endpoint
-        await window._audioStream.speak(textEl.value.trim());
+        await window._audioStream.speak(text.trim());
     } catch(e) {
         // Fallback: original batch POST
         const chatModelSel = document.getElementById('chat-model-select');
@@ -191,7 +189,7 @@ async function sendTTS() {
             const resp = await fetch(window.location.origin + '/v1/audio/speech', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model: modelName, input: textEl.value.trim() }),
+                body: JSON.stringify({ model: modelName, input: text.trim() }),
             });
             if (!resp.ok) throw new Error('TTS API ' + resp.status);
             const blob = await resp.blob();
@@ -221,81 +219,14 @@ async function sendASR(file) {
         const resp = await fetch(window.location.origin + '/v1/audio/transcriptions', { method: 'POST', body: formData });
         if (!resp.ok) throw new Error('ASR API ' + resp.status);
         const data = await resp.json();
-        resultDiv.innerHTML = '<div class="asr-text">' + escapeHtml(data.text || '') + '</div>' +
+        resultDiv.innerHTML = '<div class="asr-text">' + window.esc(data.text || '') + '</div>' +
             (data.language ? '<div class="asr-lang">Language: ' + data.language + '</div>' : '');
     } catch(e) {
         resultDiv.innerHTML = '<div class="asr-status" style="color:var(--red)">Error: ' + e.message + '</div>';
     }
 }
 
-// ── Mic recording (uses streaming AudioStream, not batch ASR) ───
-let _micRecorder = null; // kept for backward compat with callers that reference it
-
-function wireMicBtn() {
-    const micBtn = document.getElementById('btn-record-audio');
-    if (!micBtn) return;
-
-    let isRecording = false;
-    micBtn.addEventListener('click', async () => {
-        if (!isRecording) {
-            try {
-                await window._audioStream.connect();
-                const resultDiv = document.getElementById('asr-result-display');
-                window._audioStream.onPartialTranscript = (text) => {
-                    if (resultDiv) resultDiv.textContent = text;
-                };
-                window._audioStream.onFinalTranscript = (text) => {
-                    // Final transcript — could update chat or persist
-                    if (resultDiv && !text.match(/\.$/) && !text.match(/!$/)) {
-                        resultDiv.innerHTML = '<div class="asr-text">' + escapeHtml(text) + '</div>';
-                    }
-                };
-                await window._audioStream.startRecording();
-                isRecording = true;
-                micBtn.textContent = '⏹ Stop';
-                micBtn.classList.add('recording');
-            } catch {
-                window.showToast?.('Mic access denied or connection failed');
-            }
-        } else {
-            await window._audioStream.stopRecording();
-            isRecording = false;
-            micBtn.textContent = '⏺ Mic';
-            micBtn.classList.remove('recording');
-        }
-    });
-}
-
-// ── ASR upload wiring (called from AudioTranscriber renderer) ─────
-function wireAsrUpload() {
-    const fileInput = document.getElementById('asr-file-input');
-    const uploadBtn = document.getElementById('btn-upload-audio');
-    if (uploadBtn && fileInput) { uploadBtn.addEventListener('click', () => fileInput.click()); }
-
-    if (fileInput) {
-        fileInput.addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (file) sendASR(file);
-        });
-    }
-
-    const dropArea = document.querySelector('.asr-upload-area');
-    if (!dropArea) return;
-
-    ['dragenter','dragover'].forEach(evt => {
-        dropArea.addEventListener(evt, (e) => { e.preventDefault(); dropArea.style.borderColor = 'var(--accent)'; });
-    });
-    ['dragleave','dragend'].forEach(evt => {
-        dropArea.addEventListener(evt, () => { dropArea.style.borderColor = ''; });
-    });
-    dropArea.addEventListener('drop', (e) => {
-        e.preventDefault(); dropArea.style.borderColor = '';
-        const file = e.dataTransfer.files[0];
-        if (file?.type.startsWith('audio/')) sendASR(file);
-        else window.showToast?.('Please drop an audio file');
-    });
-}
-
 // ── Expose on window for app.js and widget.js ─────────────────────
+window._audioStream = new AudioStream();
 window._audio = { playAudioFromUrl, sendTTS, sendASR };
 Object.defineProperty(window, 'audioEl', { get: () => _audioEl, configurable: true });

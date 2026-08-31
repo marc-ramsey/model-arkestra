@@ -11,7 +11,7 @@ const EventBus = {
     emit(e, d)  { for(const fn of this._h.get(e)||[]) fn(d); },
 };
 
-// Config constants — shared between widget.js and app.js
+// Config constants
 const CFG = {
     STORAGE_CHAT_PARAMS: 'arkestra-chat-params',
     DEFAULT_TTS:        'default-tts',
@@ -19,13 +19,18 @@ const CFG = {
     POLL_INTERVAL:      2000,
 };
 
+// ── Shared utilities ────────────────────────────────────────────
 function esc(s)  { return (s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function sanitizeId(n) { return (n||'').replace(/[^a-zA-Z0-9_-]/g, '_'); }
 function normalizeStatus(s) { return (s?.value || s || '').replace('runnerstate.','').toLowerCase(); }
-
-// Convert snake_case/hyphenated key to Title-Case label: "top-p" → "Top-P"
 function keyToLabel(key) {
     return key.replace(/[-_](.)/g, (_, c) => c.toUpperCase());
+}
+function formatTime(sec) {
+    if (!sec || isNaN(sec)) return '0:00';
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return m + ':' + String(s).padStart(2, '0');
 }
 
 // render() - walks JSON tree -> DOM. Returns element.
@@ -180,7 +185,6 @@ renderers.ChatPane = function() {
         '<button id="btn-stop-audio" title="Stop">⏹</button>';
     el.appendChild(audioBar);
 
-    // TTS Speak button in input bar (added below)
     const paramsPanel = document.createElement('div');
     paramsPanel.className = 'chat-params-panel';
     paramsPanel.id = 'chat-params-panel';
@@ -202,21 +206,48 @@ renderers.ChatPane = function() {
 
     // ── Wire ChatPane internals ───────────────────────────────
     let ttsActive = false;
-    const ttsToggle = header.querySelector('.chat-tts-toggle');
-    if (ttsToggle) {
-        ttsToggle.addEventListener('click', () => {
-            ttsActive = !ttsActive;
-            const statusEl = document.getElementById('tts-status');
-            if (statusEl) statusEl.textContent = ttsActive ? 'On' : 'Off';
-            ttsToggle.style.color = ttsActive ? 'var(--green)' : '';
-        });
-    }
+    header.querySelector('.chat-tts-toggle')?.addEventListener('click', () => {
+        ttsActive = !ttsActive;
+        const statusEl = document.getElementById('tts-status');
+        if (statusEl) statusEl.textContent = ttsActive ? 'On' : 'Off';
+        header.querySelector('.chat-tts-toggle').style.color = ttsActive ? 'var(--green)' : '';
+    });
 
-    // TTS speak button — delegates to widget-audio.js
-    const sendTtsBtn = inputBar.querySelector('#btn-send-tts');
-    if (sendTtsBtn) {
-        sendTtsBtn.addEventListener('click', () => window._audio?.sendTTS());
-    }
+    // Params panel toggle
+    header.querySelector('#btn-toggle-chat-params')?.addEventListener('click', () => {
+        document.getElementById('chat-params-panel')?.classList.toggle('open');
+    });
+
+    // TTS speak button — delegates to widget-audio.js with current input text
+    inputBar.querySelector('#btn-send-tts')?.addEventListener('click', () => {
+        const textEl = document.getElementById('f-chat-input');
+        window._audio?.sendTTS(textEl?.value?.trim() || '');
+    });
+
+    // Send chat button and Enter key
+    inputBar.querySelector('#btn-send-chat')?.addEventListener('click', () => {
+        const sel = document.getElementById('chat-model-select');
+        const textEl = document.getElementById('f-chat-input');
+        if (sel?.value && textEl?.value.trim()) window.sendChat(sel.value, textEl);
+    });
+
+    // Save chat params to localStorage on change
+    inputBar.addEventListener('input', (e) => {
+        if (!e.target.id?.startsWith('f-chat-')) return;
+        const name = e.target.id.replace('f-chat-', '');
+        const modelName = document.getElementById('chat-model-select')?.value;
+        if (!modelName) return;
+        try {
+            const params = JSON.parse(localStorage.getItem(CFG.STORAGE_CHAT_PARAMS)||'{}');
+            if (!params[modelName]) params[modelName] = {};
+            const apiName = name === 'temp' ? 'temperature' :
+                            name === 'max-tokens' ? 'max_tokens' :
+                            name === 'top-p' ? 'top_p' :
+                            name === 'top-k' ? 'top_k' : name;
+            params[modelName][apiName] = e.target.type === 'number' ? Number(e.target.value) : e.target.value;
+            localStorage.setItem(CFG.STORAGE_CHAT_PARAMS, JSON.stringify(params));
+        } catch {}
+    });
 
     return el;
 };
@@ -229,7 +260,6 @@ renderers.AudioTranscriber = function() {
     const el = document.createElement('div');
     el.className = 'pane pane-audio';
 
-    // Header with model selector
     const header = document.createElement('div');
     header.className = 'pane-header';
     header.innerHTML = '<span class="pane-title">ASR</span>' +
@@ -237,7 +267,6 @@ renderers.AudioTranscriber = function() {
         '<button id="btn-record-audio" title="Record from mic">⏺ Mic</button>';
     el.appendChild(header);
 
-    // Upload area
     const uploadArea = document.createElement('div');
     uploadArea.className = 'asr-upload-area';
     uploadArea.innerHTML = '<input type="file" id="asr-file-input" accept="audio/*" style="display:none">' +
@@ -245,15 +274,59 @@ renderers.AudioTranscriber = function() {
         '<div id="asr-upload-hint" class="asr-hint">Drag & drop or click to upload WAV/MP3/M4A/WebM</div>';
     el.appendChild(uploadArea);
 
-    // Transcription result
     const resultDiv = document.createElement('div');
     resultDiv.className = 'asr-result';
     resultDiv.id = 'asr-result-display';
     resultDiv.innerHTML = '<div class="asr-status">Select an ASR model and upload audio to transcribe</div>';
     el.appendChild(resultDiv);
 
-    // ── Wire AudioTranscriber internals (delegates to widget-audio.js) ──
-    window._audio?.wireMicBtn();
+    // ── Wire AudioTranscriber internals ───────────────────────
+    let isRecording = false;
+    const micBtn = header.querySelector('#btn-record-audio');
+    if (micBtn) {
+        micBtn.addEventListener('click', async () => {
+            if (!isRecording) {
+                try {
+                    await window._audioStream.connect();
+                    window._audioStream.onPartialTranscript = (text) => { resultDiv.textContent = text; };
+                    window._audioStream.onFinalTranscript = (text) => {
+                        resultDiv.innerHTML = '<div class="asr-text">' + esc(text) + '</div>' +
+                            (!text.match(/[.!\?]$/) ? ' <span class="cursor"></span>' : '');
+                    };
+                    await window._audioStream.startRecording();
+                    isRecording = true;
+                    micBtn.textContent = '⏹ Stop';
+                    micBtn.classList.add('recording');
+                } catch { window.showToast?.('Mic access denied or connection failed'); }
+            } else {
+                await window._audioStream.stopRecording();
+                isRecording = false;
+                micBtn.textContent = '⏺ Mic';
+                micBtn.classList.remove('recording');
+            }
+        });
+    }
+
+    // Upload wiring
+    const fileInput = uploadArea.querySelector('#asr-file-input');
+    if (fileInput) {
+        uploadArea.querySelector('#btn-upload-audio')?.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', (e) => { const f = e.target.files[0]; if (f) window._audio.sendASR(f); });
+    }
+
+    // Drag & drop on upload area
+    ['dragenter','dragover'].forEach(evt => {
+        uploadArea.addEventListener(evt, (e) => { e.preventDefault(); uploadArea.style.borderColor = 'var(--accent)'; });
+    });
+    ['dragleave','dragend'].forEach(evt => {
+        uploadArea.addEventListener(evt, () => { uploadArea.style.borderColor = ''; });
+    });
+    uploadArea.addEventListener('drop', (e) => {
+        e.preventDefault(); uploadArea.style.borderColor = '';
+        const file = e.dataTransfer.files[0];
+        if (file?.type.startsWith('audio/')) window._audio.sendASR(file);
+        else window.showToast?.('Please drop an audio file');
+    });
 
     return el;
 };
@@ -649,15 +722,12 @@ async function adminPost(path, body) {
     return r.json();
 }
 
-// ═══════════════════════════════════════════════════════════
-// Constants and globals for app.js
-// ═══════════════════════════════════════════════════════════
-
 let chatHistory = [];
 let _configSnapshots = {};
 
 window.EventBus = EventBus;
 window.CFG = CFG;
+window.esc = esc;
 window.render = render;
 window.wireEvents = wireEvents;
 window.adminPost = adminPost;
