@@ -185,3 +185,65 @@ LogPane calls `startLogPoll(modelId)` which:
 - All action handlers must be registered in `actions` map before `wireEvents()` runs
 - No built-in error states — handle HTTP failures in action handlers and render accordingly
 - Widget names are case-sensitive (capitalized: SplitPane, LogPane)
+
+## Streaming Audio
+
+Real-time voice chat is handled by the `AudioStream` class in `widget-audio.js`. It manages a single WebSocket connection to `/ark/audio/stream` for bidirectional audio communication.
+
+### AudioStream API
+
+```js
+const stream = window._audioStream;
+```
+
+| Method | Description |
+|---|---|
+| `connect()` | Opens WebSocket. Idempotent — safe to call multiple times. |
+| `speak(text)` | Sends TTS request (`{type:"tts",text}`). Server replies with binary WAV bytes. |
+| `startRecording()` | Opens mic via `getUserMedia`, samples at 16kHz, sends frames every 50ms as base64 JSON. |
+| `stopRecording()` | Closes mic stream, waits for in-flight results (~200ms). |
+
+**Callbacks:**
+
+| Callback | Signature | Purpose |
+|---|---|---|
+| `onPartialTranscript(text)` | `(string) => void` | Called on each partial result — use for live display (grows while speaking). |
+| `onFinalTranscript(text)` | `(string) => void` | Called when VAD detects end of speech sentence. |
+
+**Example — Mic button handler:**
+```js
+micBtn.onclick = async () => {
+  if (!isRecording) {
+    await stream.connect();
+    stream.onPartialTranscript = text => { displayArea.textContent = text; };
+    stream.onFinalTranscript = text => { appendToChat(text); };
+    await stream.startRecording();
+    isRecording = true;
+  } else {
+    await stream.stopRecording();
+    isRecording = false;
+  }
+};
+```
+
+### Audio Frame Format
+
+Audio frames are sent as base64-encoded PCM float32 in JSON:
+```json
+{"type":"audio_frame","data":"<base64>"}
+```
+
+- **Rate**: 16kHz mono (client decimates from system capture rate ~48kHz)
+- **Format**: IEEE float32, amplitude [-1.0, 1.0]
+- **Chunk size**: ~50ms (~800 samples = 3200 bytes → ~4300B JSON frame)
+- Server-side: librosa decodes and resamples as needed — STT input is always 16kHz mono float32
+
+### TTS Playback
+
+Server responds to `{"type":"tts","text":"..."}` with binary WAV bytes. The client decodes via `AudioContext.decodeAudioData()` and queues for playback automatically.
+
+### Integration Points
+
+- `sendTTS()` — delegates to `stream.speak()`, falls back to `/v1/audio/speech` POST if WebSocket fails
+- `wireMicBtn()` — replaces batch MediaRecorder→POST pattern with streaming AudioStream API
+- `wireAsrUpload()` — unchanged; still uses `/v1/audio/transcriptions` POST for file uploads (separate from mic)

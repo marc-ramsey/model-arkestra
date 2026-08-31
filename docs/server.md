@@ -118,6 +118,46 @@ def custom_endpoint():
 | `POST` | `/v1/embeddings` | Text embeddings — ONNX models with `capabilities: [embed]` |
 | `POST` | `/v1/audio/transcriptions` | Speech-to-text (Whisper) — ONNX models with `capabilities: [stt]` |
 | `POST` | `/v1/audio/speech` | Text-to-speech (Kokoro) — ONNX models with `capabilities: [tts]` |
+| `WS`   | `/ark/audio/stream` | Streaming voice chat — live ASR partial transcripts + TTS audio chunks |
+
+### WebSocket /ark/audio/stream
+
+Bidirectional voice chat endpoint. Uses a uniform JSON-over-text protocol for control messages and base64-encoded PCM for audio frames.
+
+**Protocol:**
+
+| Direction | Format | Purpose |
+|---|---|---|
+| Client → Server | `{"type":"audio_frame","data":"base64..."}` | Microphone audio (16kHz mono float32 PCM) |
+| Server → Client | `{"type":"partial","text":"hel..."}` | Growing transcript during speech |
+| Server → Client | `{"type":"final","text":"hello world."}` | Complete sentence |
+| Client → Server | `{"type":"tts","text":"speak this"}` | Text-to-speech request |
+| Server → Client | binary WAV bytes | TTS audio response |
+
+**Example — Live mic transcription:**
+```js
+const ws = new WebSocket(`ws://${location.host}/ark/audio/stream`);
+ws.onmessage = e => {
+  if (e.data instanceof ArrayBuffer) return; // TTS WAV chunks handled separately
+  const msg = JSON.parse(e.data);
+  if (msg.type === 'partial') showLiveText(msg.text);   // updates while speaking
+  if (msg.type === 'final')   appendChatBubble(msg.text); // complete sentence
+};
+// Send mic audio every 50ms
+const frame = { type: 'audio_frame', data: btoa(float32Samples) };
+ws.send(JSON.stringify(frame));
+```
+
+**Example — TTS playback:**
+```js
+ws.send(JSON.stringify({ type: 'tts', text: 'Hello there' }));
+// Server responds with binary WAV bytes → decodeAudioData() → play()
+```
+
+**Notes:**
+- Audio frames should be 16kHz mono float32 PCM. Higher capture rates are resampled server-side via librosa.
+- The `/ark/` prefix marks this as a development endpoint — it may migrate to `/v1/audio/stream` in the future.
+- Requires no special auth beyond whatever `--api-key` is already configured for other `/v1/*` routes.
 
 ### POST /v1/chat/completions
 
