@@ -230,6 +230,7 @@ function showToast(msg) {
 
 // ── Audio playback helpers (called from within IIFE via window.*) ──
 let audioEl = null;
+let _onLoadedMetadata = null, _onTimeUpdate = null, _onEnded = null;
 window._audioState = { playing: false, currentSec: 0, durationSec: 0 };
 
 function escapeHtml(s) {
@@ -244,8 +245,15 @@ function formatTime(sec) {
 }
 
 function playAudioFromUrl(url) {
-    // Stop any existing playback
+    // Stop any existing playback — detach its handlers to prevent stale fire
     if (audioEl) { audioEl.pause(); URL.revokeObjectURL(audioEl.src); }
+
+    // Remove handlers from previous audioEl so closures don't fire on it
+    if (audioEl && typeof audioEl.removeEventListener === 'function') {
+        if (_onLoadedMetadata) audioEl.removeEventListener('loadedmetadata', _onLoadedMetadata);
+        if (_onTimeUpdate)     audioEl.removeEventListener('timeupdate',     _onTimeUpdate);
+        if (_onEnded)          audioEl.removeEventListener('ended',         _onEnded);
+    }
 
     audioEl = new Audio(url);
     const bar = document.getElementById('audio-playback-bar');
@@ -256,22 +264,25 @@ function playAudioFromUrl(url) {
     if (!bar || !progress) return;
     bar.classList.remove('hidden');
 
-    audioEl.addEventListener('loadedmetadata', () => {
+    // Named closures — stored for cleanup on next play()
+    _onLoadedMetadata = () => {
         durEl.textContent = formatTime(audioEl.duration);
         progress.max = 100;
-    });
-
-    audioEl.addEventListener('timeupdate', () => {
+    };
+    _onTimeUpdate = () => {
         if (!audioEl?.duration) return;
         const pct = (audioEl.currentTime / audioEl.duration) * 100;
         progress.value = pct;
         currEl.textContent = formatTime(audioEl.currentTime);
-    });
-
-    audioEl.addEventListener('ended', () => {
+    };
+    _onEnded = () => {
         audioEl = null;
         bar.classList.add('hidden');
-    });
+    };
+
+    audioEl.addEventListener('loadedmetadata', _onLoadedMetadata);
+    audioEl.addEventListener('timeupdate',     _onTimeUpdate);
+    audioEl.addEventListener('ended',         _onEnded);
 
     // Progress seek — bound once at init in wireAudioUI(), no setTimeout needed
 
