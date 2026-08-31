@@ -212,36 +212,10 @@ renderers.ChatPane = function() {
         });
     }
 
-    // TTS speak button
+    // TTS speak button — delegates to widget-audio.js
     const sendTtsBtn = inputBar.querySelector('#btn-send-tts');
     if (sendTtsBtn) {
-        sendTtsBtn.addEventListener('click', () => window._actions?.sendTTS());
-    }
-
-    // Audio playback controls
-    const audioBar = el.querySelector('#audio-playback-bar');
-    const progEl = audioBar?.querySelector('#audio-progress');
-    if (progEl) {
-        progEl.addEventListener('input', () => {
-            if (!window.audioEl?.duration) return;
-            window.audioEl.currentTime = (progEl.value / 100) * window.audioEl.duration;
-        });
-    }
-    const pauseBtn = audioBar?.querySelector('#btn-pause-audio');
-    if (pauseBtn) {
-        pauseBtn.addEventListener('click', () => {
-            if (!window.audioEl) return;
-            window.audioEl.paused ? window.audioEl.play() : window.audioEl.pause();
-        });
-    }
-    const stopBtn = audioBar?.querySelector('#btn-stop-audio');
-    if (stopBtn) {
-        stopBtn.addEventListener('click', () => {
-            if (!window.audioEl) return;
-            window.audioEl.pause();
-            window.audioEl = null;
-            progEl.value = 0;
-        });
+        sendTtsBtn.addEventListener('click', () => window._audio?.sendTTS());
     }
 
     return el;
@@ -278,65 +252,8 @@ renderers.AudioTranscriber = function() {
     resultDiv.innerHTML = '<div class="asr-status">Select an ASR model and upload audio to transcribe</div>';
     el.appendChild(resultDiv);
 
-    // ── Wire AudioTranscriber internals ───────────────────────
-    const micBtn = header.querySelector('#btn-record-audio');
-    if (micBtn) {
-        let isRecording = false;
-        micBtn.addEventListener('click', async () => {
-            if (!isRecording) {
-                try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    const recorder = new MediaRecorder(stream);
-                    const chunks = [];
-                    isRecording = true;
-                    micBtn.textContent = '⏹ Stop';
-                    micBtn.classList.add('recording');
-                    recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
-                    recorder.onstop = async () => {
-                        stream.getTracks().forEach(t => t.stop());
-                        isRecording = false;
-                        micBtn.textContent = '⏺ Mic';
-                        micBtn.classList.remove('recording');
-                        const blob = new Blob(chunks, { type: 'audio/webm' });
-                        await window._actions?.sendASR(blob);
-                    };
-                    recorder.start();
-                    window._micRecorder = recorder;
-                } catch {
-                    showToast && showToast('Mic access denied');
-                }
-            } else {
-                window._micRecorder?.stop();
-            }
-        });
-    }
-
-    const fileInput = uploadArea.querySelector('#asr-file-input');
-    const uploadBtn = uploadArea.querySelector('#btn-upload-audio');
-    if (uploadBtn && fileInput) {
-        uploadBtn.addEventListener('click', () => fileInput.click());
-    }
-    if (fileInput) {
-        fileInput.addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (file) window._actions?.sendASR(file);
-        });
-    }
-
-    // Drag-and-drop on upload area
-    ['dragenter','dragover'].forEach(evt => {
-        uploadArea.addEventListener(evt, (e) => { e.preventDefault(); uploadArea.style.borderColor = 'var(--accent)'; });
-    });
-    ['dragleave','dragend'].forEach(evt => {
-        uploadArea.addEventListener(evt, () => { uploadArea.style.borderColor = ''; });
-    });
-    uploadArea.addEventListener('drop', (e) => {
-        e.preventDefault();
-        uploadArea.style.borderColor = '';
-        const file = e.dataTransfer.files[0];
-        if (file?.type.startsWith('audio/')) window._actions?.sendASR(file);
-        else showToast && showToast('Please drop an audio file');
-    });
+    // ── Wire AudioTranscriber internals (delegates to widget-audio.js) ──
+    window._audio?.wireMicBtn();
 
     return el;
 };

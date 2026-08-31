@@ -75,66 +75,10 @@ function showToast(msg) {
             location.reload();
         },
 
-        // ── TTS: send text to TTS model and play audio ───
-        async sendTTS() {
-            const textEl = document.getElementById('f-chat-input');
-            if (!textEl?.value.trim()) return;
-            const statusEl = document.getElementById('chat-status');
-            statusEl.textContent = 'Synthesizing...';
-
-            try {
-                // Determine TTS model — use the chat model or fall back to a known TTS type
-                const chatModelSel = document.getElementById('chat-model-select');
-                const modelName = chatModelSel?.value || window.CFG?.DEFAULT_TTS;
-                
-                // Call speech endpoint with text input
-                const resp = await fetch(window.location.origin + '/v1/audio/speech', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ model: modelName, input: textEl.value.trim() }),
-                });
-
-                if (!resp.ok) throw new Error('TTS API ' + resp.status);
-
-                const blob = await resp.blob();
-                const audioUrl = URL.createObjectURL(blob);
-                playAudioFromUrl(audioUrl);
-            } catch(e) {
-                statusEl.textContent = 'TTS error: ' + e.message;
-                setTimeout(() => { statusEl.textContent = ''; }, 3000);
-            }
-        },
+        async sendTTS() { await window._audio?.sendTTS(); },
 
         // ── ASR: upload audio file and get transcription ───
-        async sendASR(file) {
-            const modelSel = document.getElementById('asr-model-select');
-            const modelName = modelSel?.value || window.CFG?.DEFAULT_WHISPER;
-            const resultDiv = document.getElementById('asr-result-display');
-
-            if (!file) { showToast('No audio file selected'); return; }
-            if (!resultDiv) return;
-
-            resultDiv.innerHTML = '<div class="asr-status">Transcribing...</div>';
-
-            try {
-                const formData = new FormData();
-                formData.append('model', modelName);
-                formData.append('file', file);
-
-                const resp = await fetch(window.location.origin + '/v1/audio/transcriptions', {
-                    method: 'POST',
-                    body: formData,
-                });
-
-                if (!resp.ok) throw new Error('ASR API ' + resp.status);
-
-                const data = await resp.json();
-                resultDiv.innerHTML = '<div class="asr-text">' + escapeHtml(data.text || '') + '</div>' +
-                    (data.language ? '<div class="asr-lang">Language: ' + data.language + '</div>' : '');
-            } catch(e) {
-                resultDiv.innerHTML = '<div class="asr-status" style="color:var(--red)">Error: ' + e.message + '</div>';
-            }
-        },
+        async sendASR(file) { await window._audio?.sendASR(file); },
 
     };
 
@@ -229,66 +173,5 @@ function showToast(msg) {
 })(); // end IIFE
 
 // ── Audio playback helpers (called from within IIFE via window.*) ──
-let audioEl = null;
-let _onLoadedMetadata = null, _onTimeUpdate = null, _onEnded = null;
-
-// Expose for widget.js renderers
-window.playAudioFromUrl = playAudioFromUrl;
-Object.defineProperty(window, 'audioEl', { get: () => audioEl, configurable: true });
-
-function escapeHtml(s) {
-    return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-
-function formatTime(sec) {
-    if (!sec || isNaN(sec)) return '0:00';
-    const m = Math.floor(sec / 60);
-    const s = Math.floor(sec % 60);
-    return m + ':' + String(s).padStart(2, '0');
-}
-
-function playAudioFromUrl(url) {
-    // Stop any existing playback — detach its handlers to prevent stale fire
-    if (audioEl) { audioEl.pause(); URL.revokeObjectURL(audioEl.src); }
-
-    // Remove handlers from previous audioEl so closures don't fire on it
-    if (audioEl && typeof audioEl.removeEventListener === 'function') {
-        if (_onLoadedMetadata) audioEl.removeEventListener('loadedmetadata', _onLoadedMetadata);
-        if (_onTimeUpdate)     audioEl.removeEventListener('timeupdate',     _onTimeUpdate);
-        if (_onEnded)          audioEl.removeEventListener('ended',         _onEnded);
-    }
-
-    audioEl = new Audio(url);
-    const bar = document.getElementById('audio-playback-bar');
-    const progress = document.getElementById('audio-progress');
-    const durEl = document.getElementById('audio-duration');
-    const currEl = document.getElementById('audio-current');
-
-    if (!bar || !progress) return;
-    bar.classList.remove('hidden');
-
-    // Named closures — stored for cleanup on next play()
-    _onLoadedMetadata = () => {
-        durEl.textContent = formatTime(audioEl.duration);
-        progress.max = 100;
-    };
-    _onTimeUpdate = () => {
-        if (!audioEl?.duration) return;
-        const pct = (audioEl.currentTime / audioEl.duration) * 100;
-        progress.value = pct;
-        currEl.textContent = formatTime(audioEl.currentTime);
-    };
-    _onEnded = () => {
-        audioEl = null;
-        bar.classList.add('hidden');
-    };
-
-    audioEl.addEventListener('loadedmetadata', _onLoadedMetadata);
-    audioEl.addEventListener('timeupdate',     _onTimeUpdate);
-    audioEl.addEventListener('ended',         _onEnded);
-
-    // Progress seek — bound once in widget.js ChatPane renderer
-
-    audioEl.play();
-}
+window._audioState = { playing: false, currentSec: 0, durationSec: 0 };
 
