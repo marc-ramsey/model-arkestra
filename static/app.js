@@ -136,35 +136,6 @@ function showToast(msg) {
             }
         },
 
-        // ── ASR: record from microphone and transcribe ───
-        async startMicRecording() {
-            const btn = document.getElementById('btn-record-audio');
-            if (!btn) return;
-
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                const recorder = new MediaRecorder(stream);
-                const chunks = [];
-
-                btn.textContent = '⏹ Stop';
-                btn.classList.add('recording');
-
-                recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
-
-                recorder.onstop = async () => {
-                    stream.getTracks().forEach(t => t.stop());
-                    btn.textContent = '⏺ Mic';
-                    btn.classList.remove('recording');
-
-                    const blob = new Blob(chunks, { type: 'audio/webm' });
-                    await sendASR(blob);
-                };
-
-                recorder.start();
-            } catch(e) {
-                showToast('Mic access denied');
-            }
-        },
     };
 
     // Wire Enter key on chat input to sendChat action
@@ -302,26 +273,37 @@ function playAudioFromUrl(url) {
         bar.classList.add('hidden');
     });
 
-    // Progress seek
-    setTimeout(() => {
-        progress.addEventListener('input', (e) => {
-            if (!audioEl?.duration) return;
-            audioEl.currentTime = (e.target.value / 100) * audioEl.duration;
-        });
-        document.getElementById('btn-pause-audio')?.addEventListener('click', () => {
-            audioEl?.paused ? audioEl.play() : audioEl.pause();
-        });
-        document.getElementById('btn-stop-audio')?.addEventListener('click', () => {
-            if (audioEl) { audioEl.pause(); audioEl = null; bar.classList.add('hidden'); }
-        });
-    }, 0);
+    // Progress seek — bound once at init in wireAudioUI(), no setTimeout needed
 
     audioEl.play();
 }
 
 // Wire TTS toggle and model selectors
 (function wireAudioUI() {
-    // TTS on/off toggle (class-based: .tts-active)
+    // ── Audio playback controls — bound once at init ───────────
+    const progEl = document.getElementById('audio-progress');
+    if (progEl) {
+        progEl.addEventListener('input', () => {
+            if (!audioEl?.duration) return;
+            audioEl.currentTime = (progEl.value / 100) * audioEl.duration;
+        });
+    }
+    const pauseBtn = document.getElementById('btn-pause-audio');
+    if (pauseBtn) {
+        pauseBtn.addEventListener('click', () => {
+            if (!audioEl) return;
+            audioEl.paused ? audioEl.play() : audioEl.pause();
+        });
+    }
+    const stopBtn = document.getElementById('btn-stop-audio');
+    if (stopBtn) {
+        stopBtn.addEventListener('click', () => {
+            if (!audioEl) return;
+            audioEl.pause();
+            audioEl = null;
+            progEl.value = 0;
+        });
+    }
     const ttsToggle = document.querySelector('.chat-tts-toggle');
     if (ttsToggle) {
         let ttsActive = false;

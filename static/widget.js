@@ -561,13 +561,15 @@ async function doStream(text, modelName, onData, options = {}) {
         const { done, value } = await reader.read();
         if (done) break;
         buf += decoder.decode(value, { stream:true });
-        const lines = buf.split('\n');
-        buf = lines.pop() || '';
 
-        for (const line of lines) {
-            let t = line.trim();
-            if (!t || t === '[DONE]') continue;
-            if (t.startsWith('data: ')) t = t.slice(6);
+        // Process complete lines only — incomplete tail stays in buf for next read.
+        // This handles the edge case where a TCP chunk delivers part of an SSE line.
+        let idx;
+        while ((idx = buf.indexOf('\n')) >= 0) {
+            const line = buf.slice(0, idx).trim();
+            buf = buf.slice(idx + 1); // partial next line preserved
+            if (!line || line === '[DONE]') continue;
+            let t = line.startsWith('data: ') ? line.slice(6) : line;
             try {
                 const p = JSON.parse(t);
                 const d = p.choices?.[0]?.delta?.content;
