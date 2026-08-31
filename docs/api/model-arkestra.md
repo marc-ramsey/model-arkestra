@@ -7,7 +7,7 @@ The `ModelArkestra` class is the centralized entry point for orchestrating multi
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `config_path` | `str` | *(required)* | Path to the YAML config file. |
-| `start_port` | `int` | `18000` | Fallback starting port — only used when `models-start-port` is absent from config. Port allocation reads the actual values from config at init time. |
+| `start_port` | `int` | `18000` | Fallback starting port — only used when ``model-start-port`` is absent from config. Port allocation reads the actual values from config at init time. |
 | `**runner_kwargs` | — | — | Passed through to each runner instance (e.g. `ready_timeout`, `warmup_delay`). |
 
 ### Backward-compat shims
@@ -82,7 +82,7 @@ Stops all model processes. Model entries remain in `_models` with state `STOPPED
 
 ### `async shutdown() -> None`
 
-Full teardown: stops all models, clears all runner and model entries, and resets the port allocator to `models-start-port`. For container runners, also sends `rm -f` on every stopped container. Use this for final cleanup (e.g. context manager exit, test teardown).
+Full teardown: stops all models, clears all runner and model entries, and resets the port allocator to ``model-start-port``. For container runners, also sends `rm -f` on every stopped container. Use this for final cleanup (e.g. context manager exit, test teardown).
 
 ### `async ainvoke(model_name: str, prompt: str = "", backend: str | None = None, messages: list[dict[str, Any]] | None = None, **kwargs) -> str`
 

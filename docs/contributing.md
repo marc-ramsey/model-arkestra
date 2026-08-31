@@ -34,7 +34,7 @@ Functions used by the runner classes to build commands from configuration data:
 
 | Function | Description |
 |---|---|
-| `build_model_args(cm, model_name, env_vars=None, override_backend=None) → (list[str], str)` | Builds command arguments for a model using its backend config — resolves the effective backend, fills `${PORT}` and `${CHECKPOINT}` placeholders in the backend args template, and concatenates backend args with model-specific args. Returns `(arg_list, cmd_str)`. |
+| `build_model_args(cm, model_name, inference_kwargs=None, override_backend=None) → dict[str, Any] | None` | Merges model-level args with inference kwargs into a flat dict. Returns ``None`` if the model has no args section and no inference kwargs. Infrastructure flags (`--port`, `--model`) are injected by the engine layer, not this function. |
 | `_resolve_backend(cm, model, model_name, override_backend) → str` | Determines which backend ID to use for a model. Resolution order: `override_backend` → `model["backend"]` → `backends.default`. Used internally by `build_model_args`. |
 
 These replace the former `ConfigManager.assemble_command()` and `ConfigManager._resolve_backend_for_model()` methods, keeping command assembly logic inside arkestra where it belongs.

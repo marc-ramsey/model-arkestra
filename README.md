@@ -212,7 +212,7 @@ from model_arkestra.process import ProcessModelRunner          # process runner
 from model_arkestra.podman import PodmanModelRunner            # podman runner
 from model_arkestra.docker import DockerModelRunner            # docker runner
 from model_arkestra.container_runner import ContainerModelRunner  # container base class
-from model_arkestra.http_client import ModelHttpClient         # lightweight HTTP client
+from model_arkestra.unicode_ringbuffer import UnicodeRingBuffer  # log buffer internals
 from model_arkestra.langchain_adapter import LangChainModelAdapter  # LangChain LCEL wrapper
 from model_arkestra.server import ArkestraServer             # OpenAI v1-compatible API server
 from model_arkestra.onnx_server import OnnxServer            # ONNX inference (auxiliary workloads)

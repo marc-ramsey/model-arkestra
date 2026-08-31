@@ -186,11 +186,11 @@ models:
 
     args:
       temp: 0.7
-      top-p: 20
+      top-p: 0.95
       ctx-size: 16384
       jinja: true
 
-    max_log_lines: 500        # per-model log buffer size
+    max_log_lines: 2000        # per-model log buffer size
     capabilities: ["chat"]     # non-arg — shown in admin UI, not passed to subprocess
 ```
 
@@ -205,7 +205,7 @@ backends:
 
   vulkan-radv:
     description: "Vulkan with RADV driver — works on AMD, NVIDIA, Intel"
-    runner: ProcessModelRunner
+    runner: process
     source_ref: official-vulkan-radv
     args:
       ngl: 999
@@ -213,7 +213,7 @@ backends:
 
   rocm:
     description: "ROCm — best for AMD iGPU and discrete GPUs"
-    runner: ProcessModelRunner
+    runner: process
     source_ref: lemonade-rocm-nightly
     args:
       ngl: 999
@@ -221,7 +221,7 @@ backends:
 
   cuda:
     description: "NVIDIA CUDA — for NVIDIA discrete GPUs"
-    runner: ProcessModelRunner
+    runner: process
     source_ref: official-cuda
     args:
       ngl: 999
@@ -229,7 +229,7 @@ backends:
 
   cpu:
     description: "CPU-only mode — uses all available cores"
-    runner: ProcessModelRunner
+    runner: process
     source_ref: ggml-org-cpu
     args:
       threads: ${nproc}
@@ -280,7 +280,7 @@ defaults:
 | Key | Type | Description |
 |---|---|---|
 | `description` | str | Human-readable description shown in `list-backends`. |
-| `runner` | str | Runner type: `"process"`, `"podman"`, `"docker"`, `"container"`, or `"remote"` (**legacy** — use `clusters:` top-level key for federation). Use `"container"` to defer to the top-level `container_type:` config value. |
+| `runner` | str | Runner type: ``"process"``, ``"podman"``, ``"docker"``, or ``"remote"``. Use ``"container"`` to defer to the top-level ``container_type:`` config value. |
 | `base_url` | str | (Legacy `runner: remote` only) URL of the target arkestra worker. Prefer the `clusters:` top-level key instead. |
 | `admin_key` | str | (Remote optional) API key forwarded as `x-admin-key` header to workers requiring authentication. If the target worker also proxies, forward its `admin_key` value here.
 | `source_ref` | str | Name of a source entry from the `sources:` section below. |
@@ -318,7 +318,7 @@ This appends to the `backends:` section of backends.yaml:
 ```yaml
 my-avx512:
   description: "Custom AVX512 build"
-  runner: ProcessModelRunner
+  runner: process
   args:
     ngl: 999
     ctx-size: ${ctx-size}
@@ -366,25 +366,28 @@ models:
 
 ## Backend Resolution & Defaults Chain
 
-Arguments follow a six-layer resolution cascade — each layer fills values missing from the one above:
+### Argument Merge Pipeline
 
-1. `**overrides` passed to `start()` — transient, single invocation only
-2. Model-level `args:` dict — explicit per-model overrides
-3. `default.args:` merged into model args — global shared defaults
-4. Backend entry `args:` from backends.yaml — inherited by all models using it
-5. Source-level defaults (cache TTL, checksum verification)
-6. Hardcoded fallbacks
+Arguments are merged in two phases — first a dict merge, then CLI conversion:
 
-Backend selection resolution:
+**Phase 1 — Dict Merge:**
+1. Model-level ``args:`` dict from config.yaml — explicit per-model overrides
+2. Runtime ``inference_kwargs`` passed to ``start()`` — transient, single invocation only (last-wins for overlapping keys)
 
-1. Model's `backend:` field (if specified)
-2. `backends.default:` key in config.yaml
-3. `"vulkan-radv"` hardwired fallback
+**Phase 2 — CLI Conversion:**
+The engine layer (e.g., ``LlamaCppEngine.build_cli_args(merged, port)``) converts the merged dict to CLI tokens via ``_dict_to_cli()``. Infrastructure flags (`--port`, `--model`) are injected separately.
 
-Runner resolution (for ProcessModelRunner, always process):
+### Backend Selection Resolution:
 
-1. Backend entry's `runner:` field
-2. Hardwired `"ProcessModelRunner"` for process mode
+1. Model's ``backend:`` field (if specified)
+2. ``backends.default:`` key in config.yaml
+3. ``"vulkan-radv"`` hardwired fallback
+
+### Runner Resolution:
+
+1. Backend entry's ``runner:`` field (lowercase: ``process``, ``podman``, ``docker``, ``remote``)
+2. ``runners:`` section mapping type → class name
+3. Hardwired ``"process
 
 ---
 

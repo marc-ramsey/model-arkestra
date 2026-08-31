@@ -192,13 +192,12 @@ curl -X POST 'http://localhost:8080/admin/start/qwen3.5-4b' \
 
 Transient overrides are **not** persisted to disk. They apply only to this invocation:
 
-Infra keys (resolved before inference filtering):
-- `args` — command-line arguments override
-- `repo` — model repo override
-- `model` — model path within repo override
-- `backend` — backend ID override (runner resolves from config chain)
-- `runner` — explicit runner type (`process`, `podman`, `docker`, or `remote` (legacy))
-- `max_log_lines` — per-invocation log buffer size
+Infra keys (resolved by ``ModelArkestra.start()``):
+- ``args`` — transient args override
+- ``backend`` — backend ID override (runner resolves from config chain)
+- ``runner`` — explicit runner type (``process``, ``podman``, ``docker``, or ``remote``)
+- ``model`` — model path within repo override (transient only)
+- ``max_log_lines`` — per-invocation log buffer size
 
 Any other keys are treated as inference parameters for llama.cpp. Only those present in the engine's ``LLAMA_INFER_ARGS`` whitelist (e.g. `temp`, `top-p`, `reasoning-budget`) reach CLI construction; unknown keys are silently dropped to prevent subprocess crashes.
 
@@ -320,7 +319,7 @@ Returns only log lines with sequence number greater than `847`:
 | `X-Current-Max` | Latest log line sequence number on the server |
 | `X-Missed-Lines` | Number of lines pruned from the buffer before or during the requested range. Zero if all requested lines are still in the buffer. |
 
-**Missed-lines scenario:** when a client is disconnected too long, older lines may fall off the ring buffer (default capacity: 500 lines). If `since=N` but line N has already been evicted, the response includes `X-Missed-Lines: K` indicating how many lines were skipped. The returned JSON still includes any remaining lines newer than the gap.
+**Missed-lines scenario:** when a client is disconnected too long, older lines may fall off the ring buffer (default capacity: 2000 lines). If `since=N` but line N has already been evicted, the response includes `X-Missed-Lines: K` indicating how many lines were skipped. The returned JSON still includes any remaining lines newer than the gap.
 
 **Delta protocol usage pattern:**
 1. Client starts with `since=0` to get all available lines
@@ -328,7 +327,7 @@ Returns only log lines with sequence number greater than `847`:
 3. On reconnect, client sends its last known `since` value
 4. If `X-Missed-Lines > 0`, the client knows some log lines were lost
 
-**Implementation notes:** Log lines are tagged with a per-model monotonic sequence number as they are appended to the ring buffer by subprocess watchers (`ProcessModelRunner`) or container log streaming (`podman logs -f` / `docker logs -f`). The buffer uses a fixed-size deque (default 500 lines, configurable via `max_log_lines` in config or startup override). Only lines within the current window are available — older entries are automatically evicted.
+**Implementation notes:** Log lines are tagged with a per-model monotonic sequence number as they are appended to the ring buffer by subprocess watchers (`ProcessModelRunner`) or container log streaming (`podman logs -f` / `docker logs -f`). The buffer uses a fixed-size ring (default 2000 lines, configurable via `max_log_lines` in config or startup override). Only lines within the current window are available — older entries are automatically evicted.
 
 ### GET /admin/logs?since=N&lines=M
 

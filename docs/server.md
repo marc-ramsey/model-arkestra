@@ -78,7 +78,7 @@ def custom_endpoint():
 # Mount the Arkestra app routes onto it
 server = ArkestraServer("config.yaml")
 arkestra_app = server.get_app()
-app.mount("", arkestra_app)  # all /v1/*, /health routes merge in
+app.mount("/arkestra", arkestra_app)  # all /arkestra/v1/*, /arkestra/health routes merge in
 
 uvicorn.run(app, port=8080)
 ```
@@ -96,7 +96,7 @@ from model_arkestra.server import ArkestraServer
 async def lifespan(app: FastAPI):
     # Start Arkestra — models load lazily on first inference request
     server = ArkestraServer("config.yaml")
-    app.mount("", server.get_app())
+    app.mount("/arkestra", server.get_app())
     yield
     await server.shutdown()
 
@@ -301,4 +301,4 @@ Both scripts accept an optional first argument to select the container runtime (
 - [Admin API](./admin.md) — admin panel that extends the same FastAPI app
 - [Usage Guide](./usage.md) — Python API for starting/controlling models
 - [Configuration Format](./config.md) — how config drives model behavior
-- [HTTP Client](./http-client.md) — standalone client utility for external integrations
+- [HTTP Client](./http-client.md) — standalone client utility for external integrations (see `http_proxy.py`)

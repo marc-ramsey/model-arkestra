@@ -247,7 +247,7 @@ for line in lines:
 lines = await runner.get_logs("qwen3-4b", lines=50)
 ```
 
-The buffer is a ring deque (default 500 lines) with per-line sequence numbers. Lines are tagged as they are appended by subprocess watchers or container log streaming. The admin endpoint returns deltas (`?since=N`) rather than full SSE streams — clients poll on a schedule to receive only new entries.
+The buffer is a ring buffer (default 2000 lines) with per-line sequence numbers. Lines are tagged as they are appended by subprocess watchers or container log streaming. The admin endpoint returns deltas (`?since=N`) rather than full SSE streams — clients poll on a schedule to receive only new entries.
 
 ## Delta Log Protocol
 

@@ -52,8 +52,12 @@ When `runner=` is supplied, that value is used directly:
 
 ```
 runner="podman" → PodmanModelRunner   (verified against registry)
+runner="docker" → DockerModelRunner   (verified against registry)
 runner="process" → ProcessModelRunner  (verified against registry)
+runner="onnx" → OnnxModelRunner       (ONNX inference server)
 ```
+
+When `backend=` is supplied without `runner=`, the backend's ``runner:`` field (or its engine mapping) determines the runner type.
 
 ### Automatic resolution (config chain)
 
@@ -76,10 +80,10 @@ All names are deterministic and derived from configuration — no random or time
 
 | Name | Pattern | Source |
 |---|---|---|
-| ROCm image | `ark-llama:rocm` | `images.rocm.image` in config.yaml |
-| Vulkan image | `ark-llama:vulkan-radv` | `images.vulkan-radv.image` in config.yaml |
+| ROCm image | `ark-llama:rocm` | `backends.rocm.image` in backends.yaml |
+| Vulkan image | `ark-llama:vulkan-radv` | `backends.vulkan-radv.image` in backends.yaml |
 
-The `default-image` top-level key is the fallback when no backend specifies an `image:`. Defined and documented in [Configuration Format](../config.md).
+The `backends.default.image` value is the fallback when no backend specifies an ``image:``.
 
 ### Container Names (Podman / Docker)
 
@@ -104,7 +108,7 @@ Backend identifiers serve as the single naming hub — they connect config, imag
 | Context | Reference |
 |---|---|
 | `backends:` key in YAML | `rocm`, `vulkan-radv` |
-| Image registry key (`images:`) | Same IDs; each defines its `image` tag and `containerfile` |
+| Image tag (per-backend) | Same IDs; each defines its ``image`` tag in backends.yaml |
 | Runner type dispatch | `runner: podman` + backend ID → resolves to correct ContainerModelRunner subclass |
 
 The backend ID never changes across the system — it is the anchor that ties config, images, and runtime execution together.
@@ -115,12 +119,12 @@ The starting port and range are driven entirely by config:
 
 | Config key | Purpose |
 |---|---|
-| `models-start-port` | First port in the range (default 18000) |
-| `model-ports` | Size of the pool — valid ports are `start_port` through `start_port + model-ports - 1` |
+| `model-start-port` (in `default:`) | First port in the range (default 18000) |
+| `model-ports` (in `default:`) | Size of the pool — valid ports are ``start_port`` through ``start_port + model-ports - 1`` |
 
 When `ModelArkestra.start()` is called without an explicit `port`, it allocates the next available number from this range sequentially. Once all ports in the pool are exhausted, `RuntimeError("Port range exceeded: …")` is raised immediately.
 
-A **direct** runner instance (e.g. `ProcessModelRunner(cm)`) does **not** use a global counter — it picks `models-start-port` as the default for its first model, and subsequent calls reuse existing ports via `_dispatch()` / in-place restart.
+A **direct** runner instance (e.g. ``ProcessModelRunner(cm)``) does **not** use a global counter — it picks ``model-start-port`` as the default for its first model, and subsequent calls reuse existing ports via `_dispatch()` / in-place restart.
 
 Stopped models **retain their port assignments** in both the orchestrator and direct runner instances. Calling `start()` again on a stopped model restarts it on the same port (in-place). New models are assigned the next unused port from the pool when using `ModelArkestra`.
 
@@ -147,18 +151,19 @@ For crash detection, shutdown sequencing, and teardown behavior, see [Lifecycle]
 
 ## Argument Passing and Resolution
 
-CLI arguments flow through a defaults cascade before reaching subprocess construction. Values are stored as flat YAML dicts internally and reconstructed to CLI flags via ``_dict_to_cli()`` inside `build_model_args()`.
+CLI arguments flow through a two-phase pipeline:
 
-### Defaults Cascade
+1. **Merge**: ``build_model_args()`` merges model-level ``args:`` with runtime inference kwargs into a flat dict.
+2. **Convert**: The engine layer (e.g. ``LlamaCppEngine.build_cli_args(merged, port)``) converts the dict to CLI tokens.
 
-Each layer fills in values, with later layers overriding earlier ones for overlapping keys:
+Values are stored as flat YAML dicts internally and reconstructed to CLI flags via ``_dict_to_cli()`` which is called from the engine or container runner.
 
-1. `**inference_kwargs` — transient runtime values (single invocation), merged into model args dict
-2. Model-level `args:` dict — explicit per-model overrides
-3. `defaults:` top-level config section — global shared defaults
-4. Backend `args:` dict — per-backend fallback values
-5. Engine + runner type defaults — inference engine and execution container baselines
-6. Hardcoded fallbacks on the base runner class
+### Merge Phase
+
+The merged dict contains only two sources — model args from config plus runtime inference kwargs (last-wins):
+
+1. Model-level ``args:`` dict — explicit per-model overrides
+2. Runtime ``inference_kwargs`` passed to ``start()`` — transient, single invocation only
 
 ### Engine → Target Resolution
 
@@ -170,7 +175,10 @@ For llama.cpp backends, inference kwargs are filtered through `LlamaCppEngine.LL
 
 ### CLI Reconstruction (`_dict_to_cli()`)
 
-The `_dict_to_cli()` helper inside `build_model_args()` converts a merged args dict into a subprocess-compatible command (llama.cpp only — container runners have their own path):
+The ``_dict_to_cli()`` helper in `model_arkestra.common` converts a flat dict to CLI flags. It is called by:
+
+- ``LlamaCppEngine.build_cli_args(merged, port)`` for process runners (llama.cpp)
+- ``container_runner._build_container_cmd()`` for podman/docker — with post-processing to replace the host port with the inside container port
 
 | YAML Entry | Reconstructed Flag |
 |---|---|
@@ -179,7 +187,7 @@ The `_dict_to_cli()` helper inside `build_model_args()` converts a merged args d
 
 Keys use kebab-case in YAML, matching CLI flag names directly.
 
-Infrastructure flags (`--port`, `--model`) are added by the runner from context metadata. The conversion happens inside ``build_model_args()`` which is called once per model start — this is the only place where arguments become strings. Internally everything stays structured as dicts. For llama.cpp, a single whitelist (`LLAMA_INFER_ARGS`) gates what inference kwargs reach CLI construction.
+Infrastructure flags (`--port`, `--model`) are injected by the runner/engine. The conversion happens in ``LlamaCppEngine.build_cli_args()`` for process runners, or via ``_dict_to_cli()`` + port-replacement loop in container runners. Internally everything stays structured as dicts until CLI conversion time.
 
 ## Related
 
