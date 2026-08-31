@@ -1,7 +1,7 @@
-
 default:
   model-start-port: 18000
   model-ports: 4
+  warmup-time: 10
 
 macros:
   ctx-size: 16384
@@ -12,8 +12,7 @@ backends:
     args: -hf ${CHECKPOINT}
 
 runners:
-  default: ProcessModelRunner
-
+  default: process
 
 models:
   test-model:

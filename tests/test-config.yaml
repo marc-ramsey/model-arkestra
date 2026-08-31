@@ -12,9 +12,6 @@ images:
   vulkan-radv:
     image: ark-llama:vulkan-radv
     containerfile: Containerfile.vulkan-radv
-    default: true
-
-default-image: ark-llama:vulkan-radv
 
 macros:
   ctx-size: 16384
@@ -38,7 +35,7 @@ backends:
     runner: process
 
 runners:
-  default: ProcessModelRunner
+  default: process
 
 models:
   qwen3.5-4b:

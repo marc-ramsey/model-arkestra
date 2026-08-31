@@ -1,16 +1,19 @@
-warmup-time: 10
-models-start-port: 18000
-model-ports: 2
+default:
+  model-start-port: 18000
+  model-ports: 2
+  warmup-time: 10
+  model-repo: unsloth
+  model-quant: Q4_K_M
+  ctx-size: 16384
+
 env:
   ADMIN_KEY: test-admin-key
+
 images:
   vulkan-radv:
     image: ark-llama:vulkan-radv
     containerfile: Containerfile.vulkan-radv
-    default: true
-default-image: ark-llama:vulkan-radv
-macros:
-  ctx-size: 16384
+
 backends:
   default: vulkan-radv
   vulkan-radv:
@@ -24,8 +27,10 @@ backends:
       hf: ${CHECKPOINT}
       port: ${PORT}
     runner: process
+
 runners:
-  default: ProcessModelRunner
+  default: process
+
 models:
   qwen3.5-4b:
     repo: hugging-face

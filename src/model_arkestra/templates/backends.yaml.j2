@@ -1,7 +1,7 @@
 backends:
   vulkan-radv:
     description: "Vulkan with RADV driver \u2014 works on AMD, NVIDIA, and Intel GPUs"
-    runner: ProcessModelRunner
+    runner: process
     source_ref: official-vulkan-radv
     args:
       ngl: 999
@@ -9,7 +9,7 @@ backends:
       ctx-size: ${ctx-size}
   rocm:
     description: "ROCm \u2014 best for AMD iGPU and discrete GPUs"
-    runner: ProcessModelRunner
+    runner: process
     source_ref: rocm-gfx1151
     args:
       ngl: 999
@@ -28,7 +28,7 @@ backends:
       ngl: 999
   cuda:
     description: "NVIDIA CUDA \u2014 for NVIDIA discrete GPUs"
-    runner: ProcessModelRunner
+    runner: process
     source_ref: official-cuda
     args:
       ngl: 999
@@ -36,7 +36,7 @@ backends:
       ctx-size: ${ctx-size}
   cpu:
     description: "CPU-only mode \u2014 uses all available cores"
-    runner: ProcessModelRunner
+    runner: process
     source_ref: ggml-org-cpu
     args:
       threads: ${nproc}

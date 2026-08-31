@@ -1,11 +1,15 @@
 # Minimal config for model-arkestra unit/slow tests.
 # Not intended for real inference — just enough structure for code paths.
 
+default:
+  model-start-port: 18000
+  model-ports: 4
+  warmup-time: 10
+
 macros:
   llama-cmd: /usr/bin/llama-vulkan.sh --port ${PORT} -ngl 999
   reasoning-off: --temp 1.0 --top-k 64
   ctx-size: 4096
-models-start-port: 18000
 
 backends:
   default: process

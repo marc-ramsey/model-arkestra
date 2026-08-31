@@ -459,11 +459,7 @@ def image_and_runner_for_backend(cm_data, backend_id: str) -> tuple[str, str]:
     # Resolve runner: explicit runner → runners section → process fallback
     runner_type = backend.get("runner")
     if not runner_type:
-        runner_type = runners_section.get("default", "ProcessModelRunner").lower()
-        # Map class name → runtime string
-        runner_map = {"processmodelrunner": "process", "podmanmodelrunner": "podman",
-                      "dockermodelrunner": "docker"}
-        runner_type = runner_map.get(runner_type, runner_type)
+        runner_type = runners_section.get("default", "process")
     return image_tag, runner_type
 
 

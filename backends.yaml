@@ -2,11 +2,11 @@ engines:
   default-engine: llama-cpp
 
   llama-cpp:
-    runner: ProcessModelRunner
 
 backends:
   vulkan-radv:
     engine: llama-cpp
+    runner: process
     description: "Vulkan with RADV driver — works on AMD, NVIDIA, and Intel GPUs"
     source_ref: official-vulkan-radv
     args:
@@ -15,6 +15,7 @@ backends:
       ctx-size: ${ctx-size}
   rocm:
     engine: llama-cpp
+    runner: process
     description: "ROCm — best for AMD iGPU and discrete GPUs"
     source_ref: rocm-gfx1151
     args:
@@ -34,6 +35,7 @@ backends:
       ngl: 999
   cuda:
     engine: llama-cpp
+    runner: process
     description: "NVIDIA CUDA — for NVIDIA discrete GPUs"
     source_ref: official-cuda
     args:
@@ -42,6 +44,7 @@ backends:
       ctx-size: ${ctx-size}
   cpu:
     engine: llama-cpp
+    runner: process
     description: "CPU-only mode — uses all available cores"
     source_ref: ggml-org-cpu
     args:

@@ -673,7 +673,7 @@ def cmd_add_backend(
     be_section[name] = {
         "type": "custom",
         "description": description or f"Custom llama-server from {bin_path.parent}",
-        "runner": "ProcessModelRunner",
+        "runner": "process",
         "binary_path": str(bin_path),
         "args": {
             "ngl": 999,
