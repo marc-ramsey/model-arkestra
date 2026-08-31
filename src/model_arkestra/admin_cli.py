@@ -208,7 +208,6 @@ async def cmd_config_set(args: argparse.Namespace) -> None:
 async def cmd_config_create(args: argparse.Namespace) -> None:
     body: Dict[str, Any] = {
         "name": args.name or None,
-        "repo": args.repo,
         "model": args.model,
     }
     if args.backend:
@@ -400,8 +399,8 @@ def build_parser() -> argparse.ArgumentParser:
     # config create
     p = cps.add_parser("create", help="Add a new model to config")
     p.add_argument("--name", default=None)
-    p.add_argument("--repo", default="hugging-face", help="HF repo (default: hugging-face)")
-    p.add_argument("--model", "-m", required=True, help="HF model path (e.g. org/model:Q4_K_M)")
+    p.add_argument("--model", "-m", required=True,
+                   help="Model ref (e.g. unsloth/Qwen3.5:Q4_K_M or lcl:/path/file.gguf)")
     p.add_argument("--backend", default=None)
     p.add_argument("args", nargs="*", help="Extra fields as key=value")
 

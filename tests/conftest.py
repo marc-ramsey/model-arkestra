@@ -49,8 +49,8 @@ _test_cfg_path = os.path.join(
 with open(_test_cfg_path) as _f:
     _cfg: dict = yaml.safe_load(_f)
 
-_START_PORT: int = int(_cfg.get("models-start-port", 18000))
-_NUM_PORTS:   int = int(_cfg.get("model-ports", 32))
+_START_PORT: int = int(((_cfg.get("default") or {}).get("model-start-port")) or _cfg.get("models-start-port", 18000))
+_NUM_PORTS:   int = int(((_cfg.get("default") or {}).get("model-ports")) or _cfg.get("model-ports", 32))
 _CLEANUP_PORTS = tuple(range(_START_PORT, _START_PORT + _NUM_PORTS))
 
 # Also cover proxy test ports (e.g. 20100)

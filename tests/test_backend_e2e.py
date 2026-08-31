@@ -43,7 +43,7 @@ _CPU_MODELS = [
 ]
 
 # GPU models — use bartowski repos (open, no license gate)
-_GPU_TEST_MODEL = "bartowski/Llama-3.2-1B-Instruct-GGUF:Q4_K_M"
+_GPU_TEST_MODEL_REF = "bartowski/Llama-3.2-1B-Instruct-GGUF:Q4_K_M"
 
 # ── Auto-discovery ───────────────────────────────────────────────────────────
 
@@ -60,7 +60,7 @@ def _detect_all_backends() -> Tuple[List[Tuple[str, str]], Dict[str, str]]:
     # --- Process: Vulkan CPU ---
     vulkan_dir = "/home/marc/local/llama.cpp/build-vulkan-radv/bin"
     if os.path.isdir(vulkan_dir) and os.path.isfile(os.path.join(vulkan_dir, "llama-server")):
-        for model_key, checkpoint in _CPU_MODELS:
+        for model_key, model_ref in _CPU_MODELS:
             combo_id = f"process-vulkan-{model_key}"
             combos.append((combo_id, combo_id))
 
@@ -186,13 +186,14 @@ def _build_e2e_config(combos: List[Tuple[str, str]], bin_paths: Dict[str, str]) 
             continue
 
         if model_key is not None:
-            checkpoint = dict(_CPU_MODELS).get(model_key, _GPU_TEST_MODEL)
+            entry = next((m for m in _CPU_MODELS if m[0] == model_key), (_GPU_TEST_MODEL_REF,))
+            model_ref = entry[1]
         else:
-            checkpoint = _GPU_TEST_MODEL
+            model_ref = _GPU_TEST_MODEL_REF
 
         test_models.append({
             "model_name": combo_id,
-            "checkpoint": checkpoint or _GPU_TEST_MODEL,
+            "model": model_ref,
             "backend": backend_name,
             "args": {"temp": 0.7, "top-p": 0.95, "ctx-size": 2048},
         })
@@ -301,7 +302,7 @@ def _build_e2e_config(combos: List[Tuple[str, str]], bin_paths: Dict[str, str]) 
     # Models section
     lines.append("models:")
     for m in test_models:
-        lines.extend([f"  {m['model_name']}:", f"    checkpoint: {m['checkpoint']}", f"    backend: {m['backend']}", "    args:"])
+        lines.extend([f"  {m['model_name']}:", f"    model: {m['model']}", f"    backend: {m['backend']}", "    args:"])
         for k, v in m["args"].items():
             lines.append(f"      {k}: {v}")
 

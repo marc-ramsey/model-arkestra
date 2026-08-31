@@ -48,8 +48,9 @@ def _make_cm(backend_cfg: dict | None = None, runner_cfg: dict | None = None) ->
         backends_block = "# backends disabled"
 
     yaml_content = f"""
-models-start-port: 18000
-model-ports: 4
+default:
+  model-start-port: 18000
+  model-ports: 4
 
 macros:
   ctx-size: 16384
@@ -61,9 +62,9 @@ runners:
 
 models:
   test-model:
-    repo: hugging-face
     model: dummy/dummy:Q4_K_M
-    args: --temp 0.7
+    args:
+      temp: 0.7
 """
     with open(cfg_path, "w") as f:
         f.write(yaml_content)

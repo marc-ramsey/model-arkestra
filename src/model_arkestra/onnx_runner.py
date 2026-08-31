@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from model_arkestra.base import BaseModelRunner
-from model_arkestra.common import default_cache_root
+from model_arkestra.common import default_cache_root, resolve_model_ref
 
 
 class OnnxRunner(BaseModelRunner):  # type: ignore[name-defined]
@@ -75,15 +75,20 @@ class OnnxRunner(BaseModelRunner):  # type: ignore[name-defined]
         # Resolve model path from config or context
         model_path = getattr(ctx, '_model_path', None)
         if not model_path:
-            repo = model_data.get("repo", "")
-            model_file = model_data.get("model", "")
-            chk = model_data.get("checkpoint", "")
-            if repo and model_file:
-                model_path = f"{repo}:{model_file}"
-            elif chk:
-                model_path = chk  # backward compat with legacy checkpoint field
+            default_section = (self.cm.data.get("default") or {})
+            resolved = resolve_model_ref(
+                raw=model_data.get("model"),
+                default_section=default_section,
+                model_repos=self.cm.data.get("model-repos"),
+            )
+            if resolved.repo == "hf":
+                model_path = f"hf:{resolved.ref}"
+            elif resolved.repo == "lcl":
+                model_path = resolved.ref.removeprefix("lcl:")
         if not model_path:
-            raise RuntimeError(f"Model '{ctx.name}' missing 'repo'+'model', 'checkpoint', or '_model_path'")
+            raise RuntimeError(
+                f"Model '{ctx.name}' missing 'model' field or '_model_path'"
+            )
 
         resolved_path = self._resolve_model_path(model_path, ctx)
 
@@ -192,19 +197,21 @@ class OnnxRunner(BaseModelRunner):  # type: ignore[name-defined]
 
             log_size = inference_kwargs.get("max_log_lines", self.log_buffer_size)
 
-            # Resolve cache directory: new 'repo' format or legacy 'checkpoint'
-            repo = model_data.get("repo")
-            chk = model_data.get("checkpoint", "")
+            # Resolve cache directory via unified resolver
+            default_section = (self.cm.data.get("default") or {})
+            resolved = resolve_model_ref(
+                raw=model_data.get("model"),
+                default_section=default_section,
+                model_repos=self.cm.data.get("model-repos"),
+            )
 
             from model_arkestra.types import _ModelContext
             ctx = _ModelContext(model_name, eff_port, max_log_lines=log_size)
             ctx.backend_id = backend or model_data.get("backend")
 
-            if repo or chk:
+            if resolved.cache_path:
                 cache_root = default_cache_root()
-                # Use the original HF path (without quantizer tag) for legacy compat
-                hf_path = repo.split(":", 1)[0] if (repo and ":" in repo) else chk.split(":", 1)[0]
-                ctx._cache_dir = cache_root / f"models--{hf_path.replace('/', '--')}"
+                ctx._cache_dir = cache_root / f"models--{resolved.cache_path}"
                 os.makedirs(ctx._cache_dir, exist_ok=True)
 
             self._models[model_name] = ctx

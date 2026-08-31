@@ -15,8 +15,10 @@ from model_arkestra.gpu_detect import detect_all, has_rocm, has_vulkan, has_nvid
 from model_arkestra.base import BaseModelRunner
 from model_arkestra.common import (
     _resolve_backend, default_cache_root, resolve_config_path,
-    resolve_tags as _resolve_model_tags, image_and_runner_for_backend,
+    resolve_model_ref, resolve_tags as _resolve_model_tags,
+    image_and_runner_for_backend,
 )
+from model_arkestra.common import ModelRef as _ModelRef
 from model_arkestra.docker import DockerModelRunner
 from model_arkestra.onnx_runner import OnnxRunner
 from model_arkestra.podman import PodmanModelRunner
@@ -49,7 +51,8 @@ class ModelArkestra:
         base = (backends_config if backends_config is not None
                 else (yaml.safe_load(open(backends_path)) or {} if backends_path.exists() else {}))
         self._cm.merge(base)
-        self._next_port = self._cm.data.get('models-start-port', start_port)
+        default_section = self._cm.data.get("default", {}) or {}
+        self._next_port = default_section.get('model-start-port', start_port)
 
         self._runners: Dict[str, BaseModelRunner] = {}
         self._runner_kwargs = runner_kwargs
@@ -59,7 +62,8 @@ class ModelArkestra:
         # Extract sources section for binary_downloader compatibility
         self._sources: Dict[str, Any] = self._cm.data.get("sources", {})
         # ── Global log buffer (single ring for all server-level events) ─
-        app_log_lines = int(self._cm.data.get('app-log-lines', 2000))
+        default_section = self._cm.data.get("default", {}) or {}
+        app_log_lines = int(default_section.get('app-log-lines', 2000))
         self._global_log_buf = UnicodeRingBuffer(app_log_lines * _ModelContext.AVG_LINE_BYTES)
         self._global_log_seq: int = 0
         # ── Backend runtime validation (hard error on mismatch) ───────
@@ -106,8 +110,9 @@ class ModelArkestra:
             if ctx is not None and ctx.port is not None:
                 return ctx.port
 
-        start_port = self._cm.data.get('models-start-port', 18000)
-        max_ports = self._cm.data.get('model-ports', 32)
+        default_section = self._cm.data.get("default", {}) or {}
+        start_port = default_section.get('model-start-port', 18000)
+        max_ports = default_section.get('model-ports', 32)
         end_port = start_port + max_ports - 1
 
         if self._next_port > end_port:
@@ -612,11 +617,16 @@ class ModelArkestra:
             model_data = self.get_model(model_name, env_vars={})
             model_path_str = str((model_data or {}).get("model_path", ""))
             if not model_path_str:
-                # Resolve from repo + model fields
-                repo = (model_data or {}).get("repo", "")
-                model_file = (model_data or {}).get("model", "")
-                if repo and model_file:
-                    model_path_str = f"{repo}:{model_file}"
+                default_section = (self._cm.data.get("default") or {})
+                resolved = resolve_model_ref(
+                    raw=(model_data or {}).get("model"),
+                    default_section=default_section,
+                    model_repos=self._cm.data.get("model-repos"),
+                )
+                if resolved.repo == "hf":
+                    model_path_str = f"hf:{resolved.ref}"
+                elif resolved.repo == "lcl":
+                    model_path_str = resolved.ref.removeprefix("lcl:")
 
             from model_arkestra.types import _ModelContext
             ctx = _ModelContext(model_name, eff_port, max_log_lines=log_size)
@@ -706,16 +716,13 @@ class ModelArkestra:
             raise ValueError(f"Model '{model_name}' not in config")
 
         model_cfg = cfg[model_name]
-        # Resolve cache path from new schema (repo+model) or legacy (checkpoint)
-        repo_field = model_cfg.get("repo", "")
-        model_field = model_cfg.get("model", "")
-        chk = model_cfg.get("checkpoint", "")
-        if repo_field and model_field:
-            repo = model_field.split(":", 1)[0]  # strip quantizer tag
-        elif chk:
-            repo = chk.split(":", 1)[0]
-        else:
-            repo = ""
+        default_section = (self._cm.data.get("default") or {})
+        resolved = resolve_model_ref(
+            raw=model_cfg.get("model"),
+            default_section=default_section,
+            model_repos=self._cm.data.get("model-repos"),
+        )
+        cache_path = resolved.cache_path
         result: Dict[str, Any] = {
             "ok": True,
             "model": model_name,
@@ -726,7 +733,7 @@ class ModelArkestra:
         # Stop the model first (always)
         await self.stop(model_name)
 
-        if not repo:
+        if not cache_path:
             # No cache to clear — just record context cleanup and return
             for r in self._runners.values():
                 if model_name in r._models:
@@ -735,7 +742,7 @@ class ModelArkestra:
             return result
 
         cache_root = self._cache_root()
-        cache_dir = self._cache_dir_for_checkpoint(repo)
+        cache_dir = self._cache_dir_for_checkpoint(cache_path)
 
         # Safety check: other running contexts sharing this cache?
         if cache_dir.exists():
@@ -744,11 +751,14 @@ class ModelArkestra:
                 if ctx.name == model_name or ctx.state != RunnerState.RUNNING:
                     continue
                 other_cfg = cfg.get(ctx.name, {})
-                other_repo = other_cfg.get("model", "") or other_cfg.get("checkpoint", "")
-                if not other_repo:
+                other_resolved = resolve_model_ref(
+                    raw=other_cfg.get("model"),
+                    default_section=default_section,
+                    model_repos=self._cm.data.get("model-repos"),
+                )
+                if not other_resolved.cache_path:
                     continue
-                other_path = other_repo.split(":", 1)[0].replace("/", "--")
-                if self._cache_dir_for_checkpoint(other_path) == cache_dir:
+                if self._cache_dir_for_checkpoint(other_resolved.cache_path) == cache_dir:
                     targets.append(ctx.name)
             if targets:
                 raise ValueError(
@@ -793,7 +803,7 @@ class ModelArkestra:
         for r in self._runners.values():
             await r.shutdown()
         self._runners.clear()
-        self._next_port = self._cm.data.get('models-start-port', 18000)
+        self._next_port = (self._cm.data.get("default") or {}).get('model-start-port', 18000)
 
     @property
     def running_models(self) -> Set[str]:

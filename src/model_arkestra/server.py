@@ -468,7 +468,7 @@ class ArkestraServer:
                 model_name = self._find_model_by_tag("asr")
             # Legacy fallback (for configs still using default-stt-model key)
             if not cfg or (model_name and not self._arkestra.cm.data.get("models", {}).get(model_name)):
-                legacy = self._arkestra.cm.data.get("default-stt-model")
+                legacy = (self._arkestra.cm.data.get("default") or {}).get("stt-model")
                 if legacy and self._arkestra.cm.data.get("models", {}).get(legacy):
                     model_name = legacy
             if not model_name or not self._arkestra.cm.data.get("models", {}).get(model_name):
@@ -510,7 +510,7 @@ class ArkestraServer:
                 model_name = self._find_model_by_tag("tts")
             # Legacy fallback (for configs still using default-tts-model key)
             if not cfg or (model_name and not self._arkestra.cm.data.get("models", {}).get(model_name)):
-                legacy = self._arkestra.cm.data.get("default-tts-model")
+                legacy = (self._arkestra.cm.data.get("default") or {}).get("tts-model")
                 if legacy and self._arkestra.cm.data.get("models", {}).get(legacy):
                     model_name = legacy
             if not model_name or not self._arkestra.cm.data.get("models", {}).get(model_name):

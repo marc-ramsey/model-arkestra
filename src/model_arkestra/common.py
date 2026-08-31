@@ -8,8 +8,140 @@ from model_arkestra.gpu_detect import detect_all
 
 
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 import yaml
+from typing import Any, Dict, List, Optional, Tuple
+
+# ── Model resolution ────────────────────────────────────────────────────────
+
+@dataclass
+class ModelRef:
+    """Fully resolved model reference.
+
+    Attributes:
+        ref:          Fully qualified path, e.g. ``unsloth/Qwen3.5:Q4_K_M``
+                      or ``/local/path/file.gguf``.
+        repo:         Source type — ``"hf"`` or ``"lcl"``.
+        cache_path:   Repo portion for HF cache dir computation,
+                      e.g. ``unsloth--Qwen3.5``, or empty string for lcl.
+    """
+    ref: str
+    repo: str            # "hf" | "lcl"
+    cache_path: str = ""  # owner--model for HF, empty for lcl
+
+
+def resolve_model_ref(
+    raw: Optional[str],
+    default_section: Dict[str, Any],
+    model_repos: Optional[Dict[str, Any]] = None,
+    backend_repo: Optional[str] = None,
+) -> ModelRef:
+    """Resolve a model reference through the full resolution chain.
+
+    Syntax: ``[<ark-path>:][<repo>:]<model>[:<quant>]``
+
+    Resolution chain for repo type (hf vs lcl):
+      1. Parse raw string — bare ``/path`` → lcl, else tentatively hf
+      2. Model-level ``repo:`` override if present in model dict
+      3. Backend-level ``repo:`` from backend args dict
+      4. Default ``model-repo`` from default section
+      5. Hardwired fallback: "hf"
+
+    Args:
+        raw:           Raw ref from config ``model:"` field.
+        default_section: The ``default:"` section from config data.
+        model_repos:   Alias registry (e.g. ``{"fb": {"name": "foo-bar"}}``).
+        backend_repo:  Optional repo type from backend args dict.
+
+    Returns:
+        Fully resolved ``ModelRef`` with all fields populated.
+    """
+    if not raw or not raw.strip():
+        return ModelRef(ref="", repo="hf", cache_path="")
+
+    raw = raw.strip()
+
+    # --- Step 1: Handle local paths immediately ---
+    if raw.startswith("lcl:"):
+        return ModelRef(ref=raw, repo="lcl", cache_path="")
+    if raw.startswith("/"):
+        return ModelRef(ref=f"lcl:{raw}", repo="lcl", cache_path="")
+
+    # --- Step 2: Parse raw string into components ---
+    colon_idx = raw.find(":")
+    if colon_idx == -1:
+        # No colon — "owner/model" or just "model"
+        slash_idx = raw.find("/")
+        if slash_idx != -1:
+            owner, model_name = raw[:slash_idx], raw[slash_idx + 1:]
+            quant = ""
+        else:
+            owner = None
+            model_name = raw
+            quant = ""
+    else:
+        prefix, rest = raw[:colon_idx], raw[colon_idx + 1:]
+
+        # Check if prefix is a registered alias
+        if model_repos and prefix in model_repos:
+            owner = model_repos[prefix].get("name", prefix)
+            model_name, quant = _split_quant(rest)
+        elif "/" in rest:
+            # "alias/owner:model" — split after first slash
+            slash_idx = rest.find("/")
+            owner, model_with_quant = rest[:slash_idx], rest[slash_idx + 1:]
+            model_name, quant = _split_quant(model_with_quant)
+        elif "/" in prefix:
+            # "owner/model:quant" — split prefix at first slash
+            slash_idx = prefix.find("/")
+            owner = prefix[:slash_idx]
+            model_name = prefix[slash_idx + 1:]
+            quant = rest if rest else ""
+        else:
+            # No "/" in either part — this is "modelname:quant"
+            owner = None
+            model_name, quant = _split_quant(raw)
+
+    # --- Step 3: Resolve defaults through chain ---
+    default_repo = str(default_section.get("model-repo", "") or "")
+    default_quant = str(default_section.get("model-quant", "") or "")
+    effective_repo = owner if owner else (backend_repo or default_repo)
+    final_quant = quant or default_quant
+
+    # --- Step 4: Build fully qualified ref ---
+    if effective_repo and model_name:
+        if "/" in effective_repo:
+            # Owner already has slash — use as-is, append model if needed
+            ref = f"{effective_repo}"
+        else:
+            ref = f"{effective_repo}/{model_name}"
+    elif effective_repo:
+        ref = effective_repo
+    else:
+        ref = model_name or ""
+
+    # Append quantifier
+    if final_quant and not ref.endswith(f":{final_quant}"):
+        ref = f"{ref}:{final_quant}"
+
+    # --- Step 5: Compute cache path (for HF refs only) ---
+    cache_path = ""
+    repo_type = "hf" if effective_repo else "lcl"
+    if repo_type == "hf":
+        hf_ref = ref.rsplit(":", 1)[0]  # strip quant suffix
+        parts = hf_ref.split("/", 1)
+        cache_path = parts[0].replace("/", "--") + "--" + parts[1] if len(parts) == 2 else ""
+
+    return ModelRef(ref=ref, repo=repo_type, cache_path=cache_path)
+
+
+def _split_quant(s: str) -> Tuple[str, str]:
+    """Split ``name:quant`` into (name, quant), or (s, "") if no colon."""
+    idx = s.find(":")
+    if idx != -1:
+        return s[:idx], s[idx + 1:]
+    return s, ""
 # Subprocess env — convert os.environ to plain dict for uvloop compatibility
 SUBPROCESS_ENV: Dict[str, str] = dict(os.environ)
 
@@ -523,10 +655,21 @@ def build_model_args(
     if backend is None:
         raise RuntimeError(f"Backend '{backend_id}' not found in backends config")
 
+    # Resolve model ref — replaces legacy checkpoint/repo+model fields
+    default_section = cm.data.get("default", {}) or {}
+    model_repos = cm.data.get("model-repos")
+    resolved_model = resolve_model_ref(
+        raw=model.get("model"),
+        default_section=default_section,
+        model_repos=model_repos,
+        backend_repo=(backend or {}).get("repo"),
+    )
+
     # 3. Resolve PORT
     port = env_vars.get("PORT") if env_vars is not None else None
     if port is None:
-        port = str(cm.data.get("models-start-port", 18000))
+        default_section = cm.data.get("default", {}) or {}
+        port = str(default_section.get("model-start-port", 18000))
 
     # Build macro map: top-level scalar keys + expanded macros section.
     # Structural dict keys (models, env, backends, runners) are excluded,
@@ -541,6 +684,7 @@ def build_model_args(
         resolve_macros[k] = v
     resolve_macros["PORT"] = port
     resolve_macros["NPROC"] = str(os.cpu_count())
+    resolve_macros["CHECKPOINT"] = resolved_model.ref
 
     # 4. Resolve backend args — flat dict only
     backend_args_raw = backend.get("args")
@@ -630,10 +774,16 @@ def _resolve_backend(
     if model_backend:
         return str(model_backend)
 
-    # Check top-level flat config key: backend-default
+    # Check top-level flat config key: backend-default (legacy)
     flat_default = cm.data.get("backend-default")
     if flat_default:
         return str(flat_default)
+
+    # Check new schema: default.backend
+    default_section = cm.data.get("default", {}) or {}
+    new_default = default_section.get("backend")
+    if new_default:
+        return str(new_default)
 
     # Nested backends.default key
     backends_section = cm.data.get("backends", {})

@@ -92,8 +92,7 @@ Returns a list of all configured models with their full runtime context. Models 
 | `args` | Model args from config |
 | `repo` | Model repo identifier |
 | `model` | Model path within repo |
-| `capabilities` | Capability tags (default `["chat"]` if none specified) |
-| `available_capabilities` | Resolved capability pool for the admin UI chips — follows the chain: per-model `capabilities` → backend-declared `backends.<id>.capabilities` → hardcoded fallback `["chat"]` |
+| `tags` | Capability tags for the model — resolves per-model `tags` → backend-declared `backends.<id>.capabilities` → hardcoded fallback `["chat"]` |
 
 **Status values:**
 - `running`, `loading`, `error`, `stopping` — real states from active runner contexts
@@ -152,7 +151,7 @@ Returns:
     "args": {"temp": 0.7, "top-k": 20, "ctx-size": 131072},
     "backend": "rocm"
   },
-  "available_capabilities": ["chat"]
+  "tags": ["chat"]
 }
 ```
 

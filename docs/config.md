@@ -45,11 +45,13 @@ model-arkestra start                 # validates backends, starts server
 This file defines models, ports, and global settings. Backend selection is minimal — just pick the default:
 
 ```yaml
-models-start-port: 18000
-model-ports: 32
-warmup-time: 10
-
-app-log-lines: 2000
+default:
+  model-start-port: 18000     # first port in the auto-allocated range
+  model-ports: 32              # number of ports available
+  warmup-time: 10.0            # seconds after /health before "running"
+  app-log-lines: 2000          # global log ring buffer size
+  model-repo: unsloth           # default HuggingFace repo owner
+  model-quant: Q4_K_M          # default quantizer suffix
 
 env:
   HF_HUB_CACHE: ~/.cache/huggingface
@@ -59,7 +61,6 @@ backends:
 
 models:
   qwen3.8-27b:
-    repo: hugging-face
     model: unsloth/Qwen3.8-27B-GGUF:Q4_K_M
     args:
       temp: 0.7
@@ -78,7 +79,6 @@ models:
     port: 8090   # separate from LLM port range
 
   qwen3.6-27b-mtp:
-    repo: hugging-face
     model: unsloth/Qwen3.6-27B-MTP-GGUF:UD-Q4_K_XL
     args:
       temp: 0.6
@@ -109,11 +109,11 @@ See [ONNX Server](./onnx-server.md) for full documentation.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `models-start-port` | `int` | `18000` | First port in the auto-allocated range. |
-| `model-ports` | `int` | `32` | Number of ports available — valid range is `models-start-port` through `models-start-port + model-ports - 1`. |
-| `warmup-time` | `float` | `10.0` | Seconds to wait after `/health` returns OK before marking the model as `"running"`. |
-| `app-log-lines` | `int` | `2000` | Number of server-level log entries retained in the global ring buffer (Admin API → `/admin/logs`). Each entry ~200 bytes. |
-| `env` | `dict` | — | Environment variables merged into model subprocesses at startup (e.g., `HF_HUB_CACHE`). |
+| `model-start-port` (in `default:`) | `int` | `18000` | First port in the auto-allocated range. |
+| `model-ports` (in `default:`) | `int` | `32` | Number of ports available — valid range is `model-start-port` through `model-start-port + model-ports - 1`. |
+| `warmup-time` (in `default:`) | `float` | `10.0` | Seconds to wait after `/health` returns OK before marking the model as `"running"`. |
+| `app-log-lines` (in `default:`) | `int` | `2000` | Number of server-level log entries retained in the global ring buffer. |
+| `env` | `dict` | — | Environment variables merged into model subprocesses at startup. |
 | `container_type` | `str` | `"process"` | Default container runner when a backend uses `runner: container`. Valid values: `"podman"`, `"docker"`. Set to `"process"` to disable containers by default.
 
 ### `backends.default:` Key
@@ -127,7 +127,43 @@ backends:
 
 ### `models:` Section — Model Definitions
 
-Each model uses `repo:` + `model:` for the HF reference, `args:` for CLI flags, and optionally a `backend` override.
+Each model uses a single `model:` field for the reference, `args:` for CLI flags, and optionally a `backend` override.
+
+#### Model Field Syntax
+
+```
+[<ark-path>:][<repo>:]<model>[:<quant>]
+```
+
+| Input | Resolves to |
+|---|---|
+| `unsloth/Qwen3.5:Q4_K_M` | Full explicit — no expansion |
+| `fb:gemma-4e2b` | Alias `fb` → expands from `model-repos:` registry |
+| `Qwen3.5:Q4_K_M` | Bare name + quant — applies default repo & quant |
+| `gemma-4-e2b` | Bare name — applies default repo, appends default quant |
+| `lcl:/data/model.gguf` | Local path (lcl: prefix) |
+| `/data/model.gguf` | Auto-tagged as local path |
+
+#### Repo Type Resolution Chain
+
+The source type (`hf` or `lcl`) is determined by:
+1. Parse raw string — `/path` → `lcl`, else tentatively `hf`
+2. Model-level `repo:` field (if specified)
+3. Backend-level `repo:` in args dict
+4. Default `model-repo` from `default:` section
+5. Hardwired fallback: `"hf"`
+
+#### Alias Registry (`model-repos:`)
+
+Short aliases expand to full repo paths:
+
+```yaml
+model-repos:
+  fb:   # alias key
+    name: foo-bar   # expands to "foo-bar"
+```
+
+Usage: `fb:gemma-4e2b` → resolves to `foo-bar/gemma-4e2b:<default_quant>`
 
 #### `args:` Field Format
 
@@ -145,7 +181,6 @@ The `args:` key is a **flat YAML dict** where each key is a CLI flag name (kebab
 ```yaml
 models:
   qwen3-4b:
-    repo: hugging-face
     model: unsloth/Qwen3-4B-GGUF:Q4_K_M
     backend: rocm            # optional override (defaults to backends.default)
 
@@ -311,11 +346,9 @@ clusters:
 
 models:
   gpu-server/gemma-4b:
-    repo: hugging-face
     model: unsloth/gemma-4-E2B-it-GGUF:Q4_K_M
     backend: rocm
   cpu-worker/whisper-large:
-    repo: hugging-face
     model: distil-whisper/distil-small.en
     backend: cpu
 ```
@@ -337,7 +370,7 @@ Arguments follow a six-layer resolution cascade — each layer fills values miss
 
 1. `**overrides` passed to `start()` — transient, single invocation only
 2. Model-level `args:` dict — explicit per-model overrides
-3. `defaults:` section at top level of config.yaml — global shared defaults
+3. `default.args:` merged into model args — global shared defaults
 4. Backend entry `args:` from backends.yaml — inherited by all models using it
 5. Source-level defaults (cache TTL, checksum verification)
 6. Hardcoded fallbacks

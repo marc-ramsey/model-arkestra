@@ -8,9 +8,9 @@ import socket
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator, Dict, Optional, Set
 import aiohttp
-from model_arkestra.common import _resolve_backend
+
 from model_arkestra.http_proxy import sse_events, parse_completion
-from model_arkestra.common import default_cache_root
+from model_arkestra.common import _resolve_backend, default_cache_root, resolve_model_ref
 from model_arkestra.unicode_ringbuffer import UnicodeRingBuffer
 from model_arkestra.types import (
     RunnerState, RunnerError, ServerReadyTimeout, 
@@ -398,7 +398,7 @@ class BaseModelRunner(ABC):
         # ── New model: allocate port & create context ────────────────
         else:
             eff_port = port if port is not None else int(
-                self.cm.data.get('models-start-port', 18000)
+                (self.cm.data.get("default") or {}).get('model-start-port', 18000)
             )
             if not isinstance(eff_port, int) or eff_port < 1 or eff_port > 65535:
                 raise ValueError(f"Invalid port: {eff_port}")
@@ -417,17 +417,15 @@ class BaseModelRunner(ABC):
             ctx.backend_id = effective_backend
             ctx.broadcast_addr = self.broadcast_addr
             # Resolve cache directory — private attr, never serialized
-            repo = model_data.get("repo", "")
-            chk = model_data.get("checkpoint", "")
-            if repo:
-                hf_path = repo.split(":", 1)[0] if ":" in repo else repo
-            elif chk:
-                hf_path = chk.split(":", 1)[0]
-            else:
-                hf_path = None
-            if hf_path:
+            default_section = (self.cm.data.get("default") or {})
+            resolved = resolve_model_ref(
+                raw=model_data.get("model"),
+                default_section=default_section,
+                model_repos=self.cm.data.get("model-repos"),
+            )
+            if resolved.cache_path:
                 cache_root = default_cache_root()
-                ctx._cache_dir = cache_root / f"models--{hf_path.replace('/', '--')}"
+                ctx._cache_dir = cache_root / f"models--{resolved.cache_path}"
                 os.makedirs(ctx._cache_dir, exist_ok=True)
             self._models[model_name] = ctx
             ctx.state = RunnerState.LOADING
@@ -440,7 +438,7 @@ class BaseModelRunner(ABC):
             model_data = self.cm.get_model(model_name, env_vars={"PORT": str(eff_port)})
 
         # ── Apply transient overrides from inference_kwargs ──────────
-        for key in ('args', 'checkpoint'):
+        for key in ('args', 'model'):
             if key in inference_kwargs and inference_kwargs[key] is not None:
                 model_data[key] = inference_kwargs[key]
         if inference_kwargs.get('backend') is not None:

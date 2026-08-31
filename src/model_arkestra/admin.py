@@ -29,6 +29,7 @@ from model_arkestra.common import (
     image_and_runner_for_backend,
     image_exists as _image_exists,
     remove_image,
+    resolve_model_ref,
     resolve_tags as _resolve_tags,
 )
 from model_arkestra.types import RunnerState
@@ -124,6 +125,8 @@ class ArkestraAdmin:
         cm_data = self.server._arkestra.cm.data
         bcfg = (cm_data.get("backends") or {}).get(bid, {})
         engine_name = bcfg.get("engine") if isinstance(bcfg, dict) else None
+        if not engine_name:
+            engine_name = (cm_data.get("default") or {}).get("engine")
         if not engine_name:
             engine_name = cm_data.get("engines", {}).get("default-engine")
         if not engine_name:
@@ -225,24 +228,18 @@ class ArkestraAdmin:
                             "runner_type": ctx.runner_type,
                             "backend_id": ctx.backend_id or self._resolve_model_backend(ctx.name, model_cfg),
                             "args": model_cfg.get("args", ""),
-                            "repo": model_cfg.get("repo", ""),
                             "model": model_cfg.get("model", ""),
-                            "tags": model_cfg.get("tags", []),
                         }
                     else:
-                        repo = model_cfg.get("repo", "")
-                        model_field = model_cfg.get("model", "")
-                        chk = model_cfg.get("checkpoint", "")
-                        if repo and model_field:
-                            # New schema: use model path (strip quantizer tag)
-                            hf_path = model_field.split(":", 1)[0]
-                            cache_path = Path(hf_cache).expanduser() / f"models--{hf_path.replace('/', '--')}"
-                        elif chk:
-                            # Legacy compat: use checkpoint path (strip quantizer tag)
-                            hf_path = chk.split(":", 1)[0]
-                            cache_path = Path(hf_cache).expanduser() / f"models--{hf_path.replace('/', '--')}"
-                        else:
-                            cache_path = None
+                        default_section = (self.server._arkestra.cm.data.get("default") or {})
+                        resolved = resolve_model_ref(
+                            raw=model_cfg.get("model"),
+                            default_section=default_section,
+                            model_repos=self.server._arkestra.cm.data.get("model-repos"),
+                        )
+                        cache_path = None
+                        if resolved.cache_path:
+                            cache_path = Path(hf_cache).expanduser() / f"models--{resolved.cache_path}"
                         is_cached = cache_path.exists() if cache_path else False
                         resolved_backend = self._resolve_model_backend(model_name, model_cfg)
                         _, runner_type = image_and_runner_for_backend(self.server._arkestra.cm.data, resolved_backend)
@@ -253,15 +250,13 @@ class ArkestraAdmin:
                             "runner_type": runner_type,
                             "backend_id": resolved_backend,
                             "args": model_cfg.get("args", ""),
-                            "repo": repo,
-                            "model": model_field,
-                            "tags": model_cfg.get("tags", []),
+                            "model": model_cfg.get("model", ""),
                         }
 
                     # Resolve available capabilities per-model (normal chain)
                     global_cfg = self.server._arkestra.cm.data or {}
                     bcfg = (global_cfg.get("backends") or {}).get(str(entry.get("backend_id") or ""))
-                    entry["available_tags"] = _resolve_tags(
+                    entry["tags"] = _resolve_tags(
                         model_cfg, global_cfg,
                         backend_id=str(entry.get("backend_id") or "") or None,
                     )
@@ -366,15 +361,14 @@ class ArkestraAdmin:
             """Create a new model entry in config."""
             cfg = self._models_cfg
 
-            if not body.get("repo") or not body.get("model"):
+            if not body.get("model"):
                 raise HTTPException(
-                    status_code=400, detail="Need 'repo' and 'model' to create a model"
+                    status_code=400, detail="Need 'model' to create a model"
                 )
 
-            repo = str(body["repo"])
-            model = str(body["model"])
+            model_str = str(body["model"])
 
-            name = body.get("name") or model.split(":")[0].rsplit("/", 1)[-1]
+            name = body.get("name") or model_str.split(":")[0].rsplit("/", 1)[-1]
             if not name:
                 raise HTTPException(
                     status_code=400, detail="Could not determine model name from model field"
@@ -387,8 +381,7 @@ class ArkestraAdmin:
 
             # Build new model entry from body fields (with safe defaults)
             new_model: Dict[str, Any] = {
-                "repo": repo,
-                "model": model,
+                "model": model_str,
             }
             for key in MODEL_CONFIG_FIELDS:
                 if key in body and body[key] is not None:
@@ -428,7 +421,7 @@ class ArkestraAdmin:
                 "config": copy.deepcopy(cfg[model]),
                 "args_schema": self._args_schema(model),
                 "status": status,
-                "available_tags": available_caps,
+                "tags": available_caps,
             }
 
         @self._app.put("/admin/config/{model:path}")

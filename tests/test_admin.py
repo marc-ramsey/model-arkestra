@@ -68,7 +68,7 @@ class TestAdminModels:
             assert "runner_type" in model
             assert "backend_id" in model
             assert "args" in model
-            assert "repo" in model
+            assert "model" in model
             assert "tags" in model
 
     def test_uncached_status_for_downloaded_checkpoints(self, live_server):
@@ -138,7 +138,7 @@ class TestConfigCollection:
         client = live_server["client"]
         r = client.post(
             "/admin/config",
-            json={"repo": "hugging-face", "model": "test/new-model:Q4", "args": "--temp 0.7"},
+            json={"model": "unsloth/test/new-model:Q4", "args": "--temp 0.7"},
         )
         assert r.status_code == 201
         body = r.json()
@@ -151,8 +151,7 @@ class TestConfigCollection:
         r = client.post(
             "/admin/config",
             json={
-                "repo": "hugging-face",
-                "model": "test/full-model:Q5",
+                "model": "unsloth/test/full-model:Q5",
                 "backend": "rocm",
                 "args": "--ctx 8192",
                 "tags": ["chat", "reasoning"],
@@ -165,8 +164,7 @@ class TestConfigCollection:
         # Verify the model was persisted in config
         cfg = live_server["server"]._arkestra.cm.data.get("models")
         assert "full-model" in cfg
-        assert cfg["full-model"]["repo"] == "hugging-face"
-        assert cfg["full-model"]["model"] == "test/full-model:Q5"
+        assert cfg["full-model"]["model"] == "unsloth/test/full-model:Q5"
         assert cfg["full-model"]["backend"] == "rocm"
         assert cfg["full-model"]["args"] == "--ctx 8192"
         assert cfg["full-model"]["tags"] == ["chat", "reasoning"]
@@ -204,10 +202,8 @@ class TestConfigModel:
         assert body["ok"] is True
         assert body["model"] == "qwen3.5-4b"
         cfg = body["config"]
-        assert "repo" in cfg
         assert "model" in cfg
         assert "args" in cfg
-        assert cfg["repo"] == "hugging-face"
         assert cfg["model"] == "unsloth/Qwen3.5-4B-GGUF:Q4_K_M"
 
     def test_get_nonexistent_returns_404(self, live_server):
@@ -318,7 +314,6 @@ class TestBackendResolutionFallback:
             "env:\n  ADMIN_KEY: test-key\n"
             "models:\n"
             "  no-default-test:\n"
-            "    repo: hugging-face\n"
             "    model: foo.gguf\n"
         )
         fd, path = tempfile.mkstemp(suffix=".yaml")
