@@ -51,8 +51,8 @@ class ModelArkestra:
         base = (backends_config if backends_config is not None
                 else (yaml.safe_load(open(backends_path)) or {} if backends_path.exists() else {}))
         self._cm.merge(base)
-        default_section = self._cm.data.get("default", {}) or {}
-        self._next_port = default_section.get('model-start-port', start_port)
+        default_section = self._cm.get("default", {})
+        self._next_port = self._cm.get("default/model-start-port", start_port)
 
         self._runners: Dict[str, BaseModelRunner] = {}
         self._runner_kwargs = runner_kwargs
@@ -60,10 +60,10 @@ class ModelArkestra:
         # ── Cluster topology ───────────────────────────────────────
         self._load_clusters()
         # Extract sources section for binary_downloader compatibility
-        self._sources: Dict[str, Any] = self._cm.data.get("sources", {})
+        self._sources: Dict[str, Any] = self._cm.get("sources", {})
         # ── Global log buffer (single ring for all server-level events) ─
-        default_section = self._cm.data.get("default", {}) or {}
-        app_log_lines = int(default_section.get('app-log-lines', 2000))
+        default_section = self._cm.get("default", {})
+        app_log_lines = int(self._cm.get("default/app-log-lines", 2000))
         self._global_log_buf = UnicodeRingBuffer(app_log_lines * _ModelContext.AVG_LINE_BYTES)
         self._global_log_seq: int = 0
         # ── Backend runtime validation (hard error on mismatch) ───────
@@ -110,9 +110,9 @@ class ModelArkestra:
             if ctx is not None and ctx.port is not None:
                 return ctx.port
 
-        default_section = self._cm.data.get("default", {}) or {}
-        start_port = default_section.get('model-start-port', 18000)
-        max_ports = default_section.get('model-ports', 32)
+        default_section = self._cm.get("default", {})
+        start_port = self._cm.get("default/model-start-port", 18000)
+        max_ports = self._cm.get("default/model-ports", 32)
         end_port = start_port + max_ports - 1
 
         if self._next_port > end_port:
@@ -132,7 +132,7 @@ class ModelArkestra:
         runtime is not detected on the system. CPU backends always pass
         since the binary will be downloaded at model-start time.
         """
-        backends = self._cm.data.get("backends") or {}
+        backends = self._cm.get("backends", {})
         if not isinstance(backends, dict):
             return  # no backends section — skip validation
         backend_id = backends.get("default")
@@ -168,7 +168,7 @@ class ModelArkestra:
 
         # Collect device-profiles from all engines
         profiles: Dict[str, Dict] = {}
-        for engine_cfg in (self.cm.data.get("engines") or {}).values():
+        for engine_cfg in (self.cm.get("engines", {}) or {}).values():
             if isinstance(engine_cfg, dict) and "device-profiles" in engine_cfg:
                 profiles.update(engine_cfg["device-profiles"])
         if not profiles:
@@ -221,16 +221,16 @@ class ModelArkestra:
         self._clusters: Dict[str, Dict[str, Any]] = {}
 
         # Auto-create the local cluster
-        host = self.cm.data.get("host") or "0.0.0.0"
-        port = self.cm.data.get("admin-port", 9090)
-        self._local_cluster_key: str = self.cm.data.get("local-cluster-key", "local")
+        host = self.cm.get("host", "0.0.0.0")
+        port = self.cm.get("admin-port", 9090)
+        self._local_cluster_key: str = self.cm.get("local-cluster-key", "local")
         self._clusters[self._local_cluster_key] = {
             "base-url": f"http://{host}:{port}",
-            "admin-key": (self._cm.data.get("env") or {}).get("ADMIN_KEY"),
+            "admin-key": self._cm.get("env/ADMIN_KEY"),
         }
 
         # Parse remote clusters from YAML
-        raw_clusters = self._cm.data.get("clusters") or {}
+        raw_clusters = self._cm.get("clusters", {})
         if not isinstance(raw_clusters, dict):
             return
         for name, cfg in raw_clusters.items():
@@ -270,7 +270,7 @@ class ModelArkestra:
         cfg = self._clusters.get(cluster_name)
         if cfg is None:
             # Legacy fallback: check backends for runner=remote + base_url
-            backends_cfg = self._cm.data.get("backends", {})
+            backends_cfg = self._cm.get("backends", {})
             be = backends_cfg.get(cluster_name, {})
             if isinstance(be, dict) and be.get("runner") == "remote" and be.get("base_url"):
                 return cluster_name, str(be["base_url"]).rstrip("/"), local_id
@@ -293,7 +293,7 @@ class ModelArkestra:
 
     def get_backend(self, backend_id: str) -> Optional[Dict[str, Any]]:
         # Check backends.yaml first (preferred), then config.yaml (legacy)
-        be = self._cm.data.get("backends", {}).get(backend_id)
+        be = self._cm.get(f"backends/{backend_id}") if backend_id else None
         if be and isinstance(be, dict):
             return be
         # Fall back to config.yaml for legacy inline backend definitions
@@ -360,16 +360,27 @@ class ModelArkestra:
             self._runner_classes[key] = _cls
 
         # Aliases for common runner names.
-        self._runner_classes["onnx"] = OnnxRunner  # maps to OnnxRunner
+        self._runner_classes["onnx"] = OnnxRunner
 
         # Config can override built-ins or add entirely new ones.
-        runner_cfg = self._cm.data.get("runners") or {}
-        for key, class_name in runner_cfg.items():
+        runner_cfg = self._cm.get("runners", {})
+        if not runner_cfg:
+            return
+
+        self._runner_kwargs_override: Dict[str, Dict[str, Any]] = {}
+
+        for key, entry in runner_cfg.items():
             if key == "default":
                 continue
+            class_name = str(entry.get("class-name", "")) if isinstance(entry, dict) else str(entry)
             target = getattr(sys.modules[__name__], class_name, None)
             if target is not None:
                 self._runner_classes[key] = target
+                self._runner_kwargs_override[key] = (
+                    {k: v for k, v in entry.items() if k != "class-name"}
+                    if isinstance(entry, dict)
+                    else {}
+                )
 
     def _get_runner_instance(self, runner_type: str, model_name: Optional[str] = None) -> BaseModelRunner:
         """Instantiate a fresh runner per ``model_name`` (one runner per model)."""
@@ -381,7 +392,7 @@ class ModelArkestra:
                     f"Unknown runner type '{runner_type}'. "
                     f"Available: {list(self._runner_classes.keys())}"
                 )
-            self._runners[key] = cls(self._cm, arkestra=self, **self._runner_kwargs)
+            self._runners[key] = cls(self._cm, arkestra=self, **{**self._runner_kwargs, **self._runner_kwargs_override.get(runner_type, {})})
         return self._runners[key]
 
     # ── backward-compat shims (delegate to unified lazy factory) ─────────
@@ -424,7 +435,7 @@ class ModelArkestra:
         return self._get_runner_instance(runner_type, model_name)
 
     def _resolve_runner_type(self, model_name: str, env_vars: Dict[str, Any], override_backend: Optional[str] = None) -> str:
-        backends = self._cm.data.get("backends", {})
+        backends = self._cm.get("backends", {})
         if isinstance(backends, dict):
             backend_id = self._resolve_backend_id(
                 model_name, env_vars, override_backend
@@ -434,13 +445,13 @@ class ModelArkestra:
                 rtype = str(be["runner"])
                 # Resolve special "container" runner to the top-level default
                 if rtype == "container":
-                    rtype = self._cm.data.get("container_type", "process") or "process"
+                    rtype = self._cm.get("container_type", "process")
                 return rtype
-        runners_cfg = self._cm.data.get("runners", {})
+        runners_cfg = self._cm.get("runners", {})
         if isinstance(runners_cfg, dict):
             default_type = str(runners_cfg.get("default", "process"))
             # If backend resolution gave us something, verify it exists in runners
-            backends_section = self._cm.data.get("backends", {})
+            backends_section = self._cm.get("backends", {})  # type: ignore[assignment]
             if isinstance(backends_section, dict) and override_backend:
                 be = backends_section.get(override_backend, {})
                 if isinstance(be, dict) and "runner" in be:
@@ -462,7 +473,8 @@ class ModelArkestra:
         val = os.environ.get(key)
         if val:
             return val
-        return (self._cm.data.get("env") or {}).get(key)
+        env_cfg = self._cm.get("env", {})
+        return env_cfg.get(key) if isinstance(env_cfg, dict) else ""
 
     def _cache_root(self) -> Path:
         """Resolve HF_HUB_CACHE to a root Path."""
@@ -523,8 +535,8 @@ class ModelArkestra:
         if not model:
             raise ValueError(f"Unknown model '{local_name}' in cluster '{cluster_name}'.")
 
-        backends_cfg = self._cm.data.get("backends", {})
-        runners_cfg = self._cm.data.get("runners", {})
+        backends_cfg = self._cm.get("backends", {})
+        runners_cfg = self._cm.get("runners", {})
 
         # Separate infra keys from inference kwargs
         infra_keys = {"port", "backend", "runner"}
@@ -543,7 +555,7 @@ class ModelArkestra:
         be_id = self._resolve_backend_id(local_name, {}, backend)
         resolved_runner = str(be_cfg.get("runner", "process")) if (be_cfg := backends_cfg.get(be_id, {})) else "process"
         if resolved_runner == "container":
-            resolved_runner = self._cm.data.get("container_type", "process") or "process"
+            resolved_runner = self._cm.get("container_type", "process")
 
         model_cfg = self.get_model(local_name) or {}
         tags = _resolve_model_tags(model_cfg, self._cm.data, backend_id=be_id)
@@ -572,7 +584,7 @@ class ModelArkestra:
         be_cfg = backends_cfg.get(be_id, {})
         resolved_runner = str(be_cfg.get("runner", "process"))
         if resolved_runner == "container":
-            resolved_runner = self._cm.data.get("container_type", "process") or "process"
+            resolved_runner = self._cm.get("container_type", "process")
 
         if resolved_runner not in runners_cfg and resolved_runner not in ("process", "podman", "docker", "onnx", "remote"):
             raise ValueError(
@@ -613,15 +625,15 @@ class ModelArkestra:
         ctx = self.find_context(model_name)
         if ctx is None:
             eff_port = inference_kwargs.get("port") or 0  # dummy port for context compatibility
-            log_size = inference_kwargs.get("max_log_lines", self.cm.data.get('log-buffer-size') or 2000)
+            log_size = inference_kwargs.get("max_log_lines", self._cm.get("log-buffer-size", 2000))
             model_data = self.get_model(model_name, env_vars={})
             model_path_str = str((model_data or {}).get("model_path", ""))
             if not model_path_str:
-                default_section = (self._cm.data.get("default") or {})
+                default_section = self._cm.get("default", {})
                 resolved = resolve_model_ref(
                     raw=(model_data or {}).get("model"),
                     default_section=default_section,
-                    model_repos=self._cm.data.get("model-repos"),
+                    model_repos=self._cm.get("model-repos"),
                 )
                 if resolved.repo == "hf":
                     model_path_str = f"hf:{resolved.ref}"
@@ -657,7 +669,7 @@ class ModelArkestra:
         # Find or create the remote runner (shared per model instance)
         ctx = self.find_context(local_name)
         if ctx is None:
-            log_size = inference_kwargs.get("max_log_lines", self.cm.data.get('log-buffer-size') or 2000)
+            log_size = inference_kwargs.get("max_log_lines", self._cm.get("log-buffer-size", 2000))
             from model_arkestra.types import _ModelContext as MC
             ctx = MC(local_name, 0, max_log_lines=log_size)  # port=0 for remote models
             ctx.backend_id = "remote"
@@ -711,16 +723,16 @@ class ModelArkestra:
         Returns a dict with details about what was removed.  Raises ValueError
         if other running models share the same underlying cache directory.
         """
-        cfg = self._cm.data.get("models") or {}
+        cfg = self._cm.get("models", {})
         if model_name not in cfg:
             raise ValueError(f"Model '{model_name}' not in config")
 
         model_cfg = cfg[model_name]
-        default_section = (self._cm.data.get("default") or {})
+        default_section = self._cm.get("default", {})
         resolved = resolve_model_ref(
             raw=model_cfg.get("model"),
             default_section=default_section,
-            model_repos=self._cm.data.get("model-repos"),
+            model_repos=self._cm.get("model-repos"),
         )
         cache_path = resolved.cache_path
         result: Dict[str, Any] = {
@@ -754,7 +766,7 @@ class ModelArkestra:
                 other_resolved = resolve_model_ref(
                     raw=other_cfg.get("model"),
                     default_section=default_section,
-                    model_repos=self._cm.data.get("model-repos"),
+                    model_repos=self._cm.get("model-repos"),
                 )
                 if not other_resolved.cache_path:
                     continue
@@ -803,7 +815,7 @@ class ModelArkestra:
         for r in self._runners.values():
             await r.shutdown()
         self._runners.clear()
-        self._next_port = (self._cm.data.get("default") or {}).get('model-start-port', 18000)
+        self._next_port = self._cm.get("default/model-start-port", 18000)
 
     @property
     def running_models(self) -> Set[str]:

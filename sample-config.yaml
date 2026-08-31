@@ -15,8 +15,9 @@ env:
 backends:
   default: vulkan-radv
   rocm:
-    runner: ProcessModelRunner
+    runner: process
     source_ref: rocm-gfx1151
+    container: Containerfile.rocm
     args:
       port: "${PORT}"
       ngl: 999

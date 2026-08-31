@@ -40,7 +40,28 @@ def _make_cm(backend_cfg: dict | None = None, runner_cfg: dict | None = None) ->
     runner_section = ""
     if runner_cfg is not None:
         for k, v in runner_cfg.items():
-            runner_section += f"  {k}: {v}\n"
+            if isinstance(v, dict):
+                runner_section += f"  {k}:\n"
+                for kk, vv in v.items():
+                    runner_section += f"    {kk}: {vv}\n"
+            else:
+                runner_section += f"  {k}: {v}\n"
+
+    if not runner_section:
+        default_runners = (
+            "  process:\n"
+            "    class-name: ProcessModelRunner\n"
+            "  podman:\n"
+            "    class-name: PodmanModelRunner\n"
+            "  docker:\n"
+            "    class-name: DockerModelRunner\n"
+            "  onnx:\n"
+            "    class-name: OnnxRunner\n"
+            "  remote:\n"
+            "    class-name: RemoteModelRunner\n"
+        )
+    else:
+        default_runners = runner_section
 
     if backend_cfg:
         backends_block = f"backends:\n{backend_section}"
@@ -58,7 +79,7 @@ macros:
 {backends_block}
 
 runners:
-{runner_section or "  default: ProcessModelRunner"}
+{default_runners}
 
 models:
   test-model:
