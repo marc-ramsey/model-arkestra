@@ -470,7 +470,7 @@ body {
 .model-row.expanded .config-panel {
     display: grid !important;
     padding: 6px 8px;
-    grid-template-columns: auto 1fr;
+    grid-template-columns: max-content 1fr;
     gap: 4px 12px;
     align-items: start;
 }
@@ -698,6 +698,7 @@ body {
     color: #3a3632;
     text-align: left;
     justify-self: start;
+    white-space: nowrap;
 }
 .config-panel > .field-value {
     /* no width constraint — inputs fill their grid cell via their own 100% */
