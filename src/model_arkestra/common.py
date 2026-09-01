@@ -635,9 +635,23 @@ def build_model_args(
     model_args_raw = model.get("args")
     if isinstance(model_args_raw, dict):
         result.update(model_args_raw)
+
+    # Pull model-level fields into merged dict for CLI builder.
+    for k in ("model", "repo", "mmproj"):
+        v = model_args_raw.get(k) if isinstance(model_args_raw, dict) else None
+        if v is not None:
+            result[k] = v
+
+    # Default repo fallback — config default → class var.
+    if "repo" not in result:
+        default_section = cm.data.get("default") or {}
+        config_repo = default_section.get("repo") or default_section.get("model-repo")
+        if config_repo:
+            result["repo"] = str(config_repo)
+
     if inference_kwargs:
         for k, v in inference_kwargs.items():
-            if k not in ("backend", "checkpoint"):
+            if k != "backend":
                 result[k] = v
     return result
 

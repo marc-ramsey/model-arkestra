@@ -134,7 +134,13 @@ class ArkestraAdmin:
 
         # Look up in schema registry
         model_args_schema = self._schemas.get("model-args", {})
-        return model_args_schema.get(engine_name, {}) or {}
+        schema = model_args_schema.get(engine_name, {}) or {}
+
+        # Always expose model/repo/mmproj for CLI builder integration.
+        schema.setdefault("model", {"type": "string"})
+        schema.setdefault("repo", {"type": "string", "options": ["hf", "lcl"]})
+        schema.setdefault("mmproj", {"type": "string"})
+        return schema
 
     def _resolve_model_backend(self, model_name: str, model_cfg: dict) -> str:
         """Resolve backend for a model using the normal chain."""

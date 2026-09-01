@@ -213,7 +213,7 @@ class TestInteractions:
         assert has_textarea is False, "Args should be individual fields, not a textarea"
 
     def test_arg_field_count_matches_schema(self, page):
-        """Config panel has arg fields beyond checkpoint/backend."""
+        """Config panel has arg fields from schema (plus optional backend/runner)."""
         rows = page.query_selector_all(".model-row")
         if len(rows) < 1:
             pytest.skip("No model rows to click")
@@ -227,9 +227,9 @@ class TestInteractions:
         schema_keys = page.evaluate(
             "() => Object.keys(window._argSchema || {})"
         )
-        # checkpoint + args from schema (backend/runner optional)
-        assert field_count >= len(schema_keys) + 1, \
-            f"Expected {len(schema_keys)}+1 fields (got {field_count}, schema keys={schema_keys})"
+        # All fields come from schema + optional backend/runner (no more checkpoint)
+        assert field_count >= len(schema_keys), \
+            f"Expected at least {len(schema_keys)} fields (got {field_count}, schema keys={schema_keys})"
 
 
 # ═══════════════════════════════════════════════════════════
@@ -246,12 +246,13 @@ class TestEventWiring:
         # We verify by checking the conventions are in place via DOM IDs
 
     def test_button_id_convention(self, page):
-        """Action buttons follow btn-{action}-{id} convention."""
-        btn_ids = page.evaluate(
-            "() => [...document.querySelectorAll('.model-actions button')].map(b => b.id)"
+        """Action buttons use data-action + data-model attributes."""
+        btns = page.evaluate(
+            "() => [...document.querySelectorAll('.model-actions button')].map(b => ({ action: b.dataset.action || '', model: b.dataset.model || '' }))"
         )
-        for bid in btn_ids:
-            assert bid.startswith("btn-"), f"Button ID '{bid}' doesn't follow convention (btn-*-* )"
+        for btn in btns:
+            assert btn['action'], f"Button missing data-action attribute"
+            assert btn['model'], f"Button missing data-model attribute"
 
     def test_field_id_convention(self, page):
         """Input fields follow f-{context}-{name} convention."""

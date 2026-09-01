@@ -37,12 +37,6 @@ function showToast(msg) {
                 const el = fv.querySelector('input, select');
                 if (!el) continue;
                 const name = el.id;
-                if (name === 'repo') { body.repo = el.value; continue; }
-                if (name === 'model') {
-                    const repo = body.repo || '';
-                    body.checkpoint = repo ? repo + '/' + el.value : el.value;
-                    continue;
-                }
                 const isArg = window._argSchema?.hasOwnProperty(name);
                 if (isArg) {
                     body.args[name] = el.type === 'number' ? Number(el.value) : el.value;

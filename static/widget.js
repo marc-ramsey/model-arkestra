@@ -437,17 +437,8 @@ function renderModelRow(model) {
             window._argSchema = data.args_schema || {};
 
             const cp = data.config.checkpoint || '';
-            // Parse into repo + model (backwards compat: no prefix -> all in model)
-            let repoVal = '', modelVal = cp;
-            if (cp.includes('/')) {
-                const [first, ...rest] = cp.split('/');
-                if (['hf'].includes(first)) { repoVal = first; modelVal = rest.join('/'); }
-            }
 
-            const fields = [
-                { name:'repo', value:repoVal, label:'Repo' },
-                { name:'model', value:modelVal, label:'Model' },
-            ];
+            const fields = [];
 
             // Backend selector
             const bkOpts = Object.entries(data.backends||{}).map(([k,v]) => ({
@@ -504,8 +495,8 @@ function checkDirty(modelId, panel) {
     for (const key of argKeys) {
         if (val(key) !== (snap.args?.[key] ?? '')) { isDirty = true; break; }
     }
-    if (!isDirty && val('repo') !== (snap.repo||'')) isDirty = true;
-    else if (!isDirty && val('model') !== (snap.model||snap.checkpoint||'')) isDirty = true;
+    if (!isDirty && val('repo') !== (snap.args?.['repo']||'hf')) isDirty = true;
+    else if (!isDirty && val('model') !== (snap.args?.['model']||'')) isDirty = true;
     else if (!isDirty && val('backend') !== snap.backend) isDirty = true;
     else if (!isDirty && val('runner') !== snap.runner) isDirty = true;
 

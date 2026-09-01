@@ -39,6 +39,7 @@ except ImportError:
     )
 
 from model_arkestra.common import resolve_config_path
+from model_arkestra.config_manager import ConfigManager
 from model_arkestra.http_proxy import sse_events
 
 
@@ -832,12 +833,16 @@ def main(argv: list[str] | None = None) -> None:
     # Load config early so we can resolve defaults from it.
     import yaml
 
+    # Load config — use ConfigManager for consistent default/ path resolution
     resolved_path = str(resolve_config_path(args.config))
     try:
-        with open(resolved_path) as f:
-            cfg_data: dict = yaml.safe_load(f) or {}
+        cfg_cm = ConfigManager(resolved_path)
     except (FileNotFoundError, OSError):
-        cfg_data = {}
+        cfg_cm = None  # type: ignore[assignment]
+
+    def _cfg_get(path: str, default=None):
+        """Safely read from config via ConfigManager, returning default if no config loaded."""
+        return cfg_cm.get(path, default) if cfg_cm else default  # type: ignore[union-attr]
 
     # ── Resolve args in order: CLI > env > config > hardwired default ───
     if args.port is None:
@@ -848,16 +853,15 @@ def main(argv: list[str] | None = None) -> None:
             except ValueError:
                 pass
         if args.port is None:
-            args.port = cfg_data.get("admin-port") or 8080
+            args.port = _cfg_get("default/admin-port", 8080)
     if args.host is None:
         env_host = os.environ.get("HOST")
         if env_host:
             args.host = env_host
         else:
-            # No dedicated config key for server host — fall back to default
             args.host = "0.0.0.0"
     if args.ready_timeout is None:
-        cfg_to = cfg_data.get("warmup-time")
+        cfg_to = _cfg_get("default/warmup-time")
         if cfg_to is not None:
             try:
                 args.ready_timeout = float(cfg_to)

@@ -174,10 +174,21 @@ class TestEngineCLIConversion:
 
     def test_metadata_keys_skipped(self):
         from model_arkestra.llama_cpp import LlamaCppEngine
-        merged = {"hf": "my-org/my-model", "model": "other:Q4", "port": 9999, "temp": 0.7}
+        # hf and port are still metadata keys — skipped.
+        merged = {"hf": "my-org/my-model", "port": 9999, "temp": 0.7}
         cli = LlamaCppEngine.build_cli_args(merged, port=18000)
 
-        assert "--hf" not in cli
-        assert "--model" not in cli
-        assert "--port" in cli  # Port is injected by build_cli_args, not from merged
-        assert "18000" in cli  # But always uses the passed port arg
+        assert "-hf" not in cli  # hf is metadata (not a key in merged anyway)
+        assert "--port" in cli
+        assert "18000" in cli
+
+    def test_hf_model_emitted(self):
+        from model_arkestra.llama_cpp import LlamaCppEngine
+        merged = {"model": "unsloth/gemma-4-E2B-it-GGUF:Q4_K_XL", "repo": "hf", "temp": 0.7}
+        cli = LlamaCppEngine.build_cli_args(merged, port=12000)
+
+        assert "-hf" in cli
+        idx = cli.index("-hf")
+        assert cli[idx + 1] == "unsloth/gemma-4-E2B-it-GGUF:Q4_K_XL"
+        assert "--alias" in cli
+        assert "--mmproj" not in cli

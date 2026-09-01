@@ -16,7 +16,8 @@ class LlamaCppEngine:
     }
 
     # Metadata keys handled separately — not converted to CLI flags.
-    _METADATA_KEYS = {'model', 'hf', 'port'}
+    _METADATA_KEYS = {'hf', 'port'}
+    _DEFAULT_REPO = "hf"
 
     def filter_infer_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         """Return only inference-safe keys from arbitrary kwargs."""
@@ -27,13 +28,22 @@ class LlamaCppEngine:
         """Convert merged param dict + port into llama-server CLI tokens.
 
         ``merged`` comes from ``build_model_args()`` — a flat dict of model
-        args plus runtime inference kwargs.  Port is injected as the final
-        parameter.  Metadata keys (model, hf) are skipped here since they
-        are handled by the caller/runner layer.
+        args plus runtime inference kwargs.  Model ref is emitted as -hf/
+        --alias (HF) or passed through directly (local). Port is injected
+        as the final parameter.
         """
         cli: List[str] = []
         for key, value in merged.items():
-            if key in LlamaCppEngine._METADATA_KEYS:
+            if key == 'model' and value:
+                # Emit model ref with repo-specific flags.
+                repo = merged.get('repo', LlamaCppEngine._DEFAULT_REPO)
+                if repo == 'hf':
+                    cli.extend(['-hf', value])
+                    cli.extend(['--alias', value])
+                # else: local model — llama-server handles paths directly
+            elif key == 'mmproj' and value:
+                cli.extend(['--mmproj', value])
+            elif key in LlamaCppEngine._METADATA_KEYS:
                 continue
             kebab = key.replace('_', '-')
             prefix = '-' if kebab in _LLAMA_SHORT_FLAGS else '--'

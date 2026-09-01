@@ -221,9 +221,9 @@ class ModelArkestra:
         self._clusters: Dict[str, Dict[str, Any]] = {}
 
         # Auto-create the local cluster
-        host = self.cm.get("host", "0.0.0.0")
-        port = self.cm.get("admin-port", 9090)
-        self._local_cluster_key: str = self.cm.get("local-cluster-key", "local")
+        host = self._cm.get("default/host", "0.0.0.0")
+        port = self._cm.get("default/admin-port", 8080)
+        self._local_cluster_key: str = self._cm.get("default/local-cluster-key", "local")
         self._clusters[self._local_cluster_key] = {
             "base-url": f"http://{host}:{port}",
             "admin-key": self._cm.get("env/ADMIN_KEY"),
@@ -444,7 +444,7 @@ class ModelArkestra:
                 rtype = str(be["runner"])
                 # Resolve special "container" runner to the top-level default
                 if rtype == "container":
-                    rtype = self._cm.get("container_type", "process")
+                    rtype = self._cm.get("default/container_type", "process")
                 return rtype
         runners_cfg = self._cm.get("runners", {})
         if isinstance(runners_cfg, dict):
@@ -554,7 +554,7 @@ class ModelArkestra:
         be_id = self._resolve_backend_id(local_name, {}, backend)
         resolved_runner = str(be_cfg.get("runner", "process")) if (be_cfg := backends_cfg.get(be_id, {})) else "process"
         if resolved_runner == "container":
-            resolved_runner = self._cm.get("container_type", "process")
+            resolved_runner = self._cm.get("default/container_type", "process")
 
         model_cfg = self.get_model(local_name) or {}
         tags = _resolve_model_tags(model_cfg, self._cm.data, backend_id=be_id)
@@ -583,7 +583,7 @@ class ModelArkestra:
         be_cfg = backends_cfg.get(be_id, {})
         resolved_runner = str(be_cfg.get("runner", "process"))
         if resolved_runner == "container":
-            resolved_runner = self._cm.get("container_type", "process")
+            resolved_runner = self._cm.get("default/container_type", "process")
 
         if resolved_runner not in runners_cfg and resolved_runner not in ("process", "podman", "docker", "onnx", "remote"):
             raise ValueError(
@@ -624,7 +624,7 @@ class ModelArkestra:
         ctx = self.find_context(model_name)
         if ctx is None:
             eff_port = inference_kwargs.get("port") or 0  # dummy port for context compatibility
-            log_size = inference_kwargs.get("max_log_lines", self._cm.get("log-buffer-size", 2000))
+            log_size = inference_kwargs.get("max_log_lines", self._cm.get("default/log-buffer-size", 2000))
             model_data = self.get_model(model_name, env_vars={})
             model_path_str = str((model_data or {}).get("model_path", ""))
             if not model_path_str:
@@ -632,7 +632,7 @@ class ModelArkestra:
                 resolved = resolve_model_ref(
                     raw=(model_data or {}).get("model"),
                     default_section=default_section,
-                    model_repos=self._cm.get("model-repos"),
+                    model_repos=self._cm.get("default/model-repos"),
                 )
                 if resolved.repo == "hf":
                     model_path_str = f"hf:{resolved.ref}"
@@ -668,7 +668,7 @@ class ModelArkestra:
         # Find or create the remote runner (shared per model instance)
         ctx = self.find_context(local_name)
         if ctx is None:
-            log_size = inference_kwargs.get("max_log_lines", self._cm.get("log-buffer-size", 2000))
+            log_size = inference_kwargs.get("max_log_lines", self._cm.get("default/log-buffer-size", 2000))
             from model_arkestra.types import _ModelContext as MC
             ctx = MC(local_name, 0, max_log_lines=log_size)  # port=0 for remote models
             ctx.backend_id = "remote"
@@ -731,7 +731,7 @@ class ModelArkestra:
         resolved = resolve_model_ref(
             raw=model_cfg.get("model"),
             default_section=default_section,
-            model_repos=self._cm.get("model-repos"),
+            model_repos=self._cm.get("default/model-repos"),
         )
         cache_path = resolved.cache_path
         result: Dict[str, Any] = {
@@ -765,7 +765,7 @@ class ModelArkestra:
                 other_resolved = resolve_model_ref(
                     raw=other_cfg.get("model"),
                     default_section=default_section,
-                    model_repos=self._cm.get("model-repos"),
+                    model_repos=self._cm.get("default/model-repos"),
                 )
                 if not other_resolved.cache_path:
                     continue
