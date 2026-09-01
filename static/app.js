@@ -33,8 +33,8 @@ function showToast(msg) {
             const panel = document.getElementById('config-' + sanitizeId(id));
             if (!panel) return;
             const body = { args: {} };
-            for (const w of panel.querySelectorAll('.field-wrapper')) {
-                const el = w.querySelector('input, select');
+            for (const fv of panel.querySelectorAll('.field-value')) {
+                const el = fv.querySelector('input, select');
                 if (!el) continue;
                 const name = el.id;
                 if (name === 'repo') { body.repo = el.value; continue; }

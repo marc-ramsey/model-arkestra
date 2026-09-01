@@ -16,16 +16,30 @@
         .status-dot.cached { background: #41a2f5; }
         .model-name { font-size: 12px; }
 
-        .model-config-panel { display: none; border-top: 1px solid #414868; padding: 8px; margin-top: 4px; background: #16161e; }
-        .model-row.expanded .model-config-panel { display: block; }
-
-        .edit-form-grid { display: grid; gap: 6px; }
-        .edit-field label { display: block; font-size: 10px; font-weight: 600; color: #565f8e; text-transform: uppercase; margin-bottom: 2px; }
-        .edit-field input, .edit-field select, .edit-field textarea {
-            width: 100%; padding: 4px 6px; border: 1px solid #414868; border-radius: 4px;
-            font-size: 12px; background: #1a1b26; color: #c0caf5; outline: none;
+        .model-config-panel {
+            display: none;
+            padding: 6px 8px;
         }
-        .edit-field textarea { min-height: 40px; max-height: 80px; resize: vertical; }
+        .model-row.expanded .model-config-panel {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 4px 12px;
+            align-items: center;
+        }
+        .model-config-panel > .field-label {
+            font-size: 10.5px;
+            font-weight: 600;
+            color: #565f8e;
+            grid-column: 1;
+            text-align: right;
+        }
+        .model-config-panel > .field-value {
+            grid-column: 2;
+        }
+        .model-config-panel > .field-label.full-width,
+        .model-config-panel > .field-value.full-width {
+            grid-column: 1 / -1;
+        }
 
         .model-actions { display: flex; gap: 4px; margin-top: 8px; padding-top: 6px; border-top: 1px solid #414868; }
         .model-actions button { width: 32px; height: 24px; border: 1px solid #414868; border-radius: 4px;
@@ -140,12 +154,11 @@ async function populateModelPanel(modelName) {
         }
 
         let html = '';
-        html += '<div class="edit-form-grid">';
-        html += '<div class="edit-field"><label for="mc-checkpoint-' + sanitizeId(modelName) + '">Checkpoint</label>';
-        html += '  <input type="text" id="mc-checkpoint-' + sanitizeId(modelName) + '" value="' + escapeHTML(cfg.checkpoint || '') + '"></div>';
-        html += '<div class="edit-field"><label for="mc-backend-' + sanitizeId(modelName) + '">Backend</label>';
-        html += '  <select id="mc-backend-' + sanitizeId(modelName) + '">';
-        html += '    <option value="">(default)</option>';
+        html += '<label for="mc-checkpoint-' + sanitizeId(modelName) + '" class="field-label">Checkpoint</label>';
+        html += '<div class="field-value"><input type="text" id="mc-checkpoint-' + sanitizeId(modelName) + '" value="' + escapeHTML(cfg.checkpoint || '') + '"></div>';
+        html += '<label for="mc-backend-' + sanitizeId(modelName) + '" class="field-label">Backend</label>';
+        html += '  <div class="field-value"><select id="mc-backend-' + sanitizeId(modelName) + '">';
+        html += '    <option value=""' + (cfg.backend === undefined || cfg.backend === '' ? ' selected' : '') + '>(default)</option>';
         if (backendOptions) {
             for (const [key, val] of Object.entries(backendOptions)) {
                 const label = (typeof val === 'object') ? (val.host || key) : key;
@@ -153,9 +166,8 @@ async function populateModelPanel(modelName) {
             }
         }
         html += '  </select></div>';
-        html += '<div class="edit-field"><label for="mc-args-' + sanitizeId(modelName) + '">Args</label>';
-        html += '  <textarea id="mc-args-' + sanitizeId(modelName) + '" rows="2">' + escapeHTML(typeof cfg.args === 'object' ? JSON.stringify(cfg.args, null, 2) : (cfg.args || '')) + '</textarea></div>';
-        html += '</div>';
+        html += '<label for="mc-args-' + sanitizeId(modelName) + '" class="field-label full-width">Args</label>';
+        html += '<div class="field-value full-width"><textarea id="mc-args-' + sanitizeId(modelName) + '" rows="2">' + escapeHTML(typeof cfg.args === 'object' ? JSON.stringify(cfg.args, null, 2) : (cfg.args || '')) + '</textarea></div>';
 
         html += '<div class="model-actions">';
         html += '  <button type="button" data-action="reset" id="mc-reset-' + sanitizeId(modelName) + '">↺</button>';

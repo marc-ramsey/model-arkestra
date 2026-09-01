@@ -342,13 +342,15 @@ renderers.ConfigPanel = function({ id, fields }) {
     el.dataset.model = id;
 
     (fields||[]).forEach(f => {
-        const wrapper = document.createElement('div');
-        wrapper.className = 'field-wrapper field-' + (f.schema?.type || 'string');
+        const isFullWidth = f.widget === 'TextArea';
 
+        // Label cell — direct child of config-panel (grid column 1)
         const label = document.createElement('label');
+        label.className = 'field-label' + (isFullWidth ? ' full-width' : '');
         label.textContent = f.label || keyToLabel(f.name);
-        wrapper.appendChild(label);
+        el.appendChild(label);
 
+        // Input cell — direct child of config-panel (grid column 2)
         let input;
         if (f.options) {
             // SelectInput — schema.type is ignored, explicit options provided
@@ -369,8 +371,7 @@ renderers.ConfigPanel = function({ id, fields }) {
         } else if (f.schema?.type === 'bool') {
             input = document.createElement('select');
             input.innerHTML = '<option value="false">false</option><option value="true">true</option>';
-        } else if (f.widget === 'TextArea') {
-            // Explicit TextArea — multi-line
+        } else if (isFullWidth) {
             const ta = document.createElement('textarea');
             ta.rows = f.schema?.rows ?? 2;
             input = ta;
@@ -378,13 +379,14 @@ renderers.ConfigPanel = function({ id, fields }) {
             input = document.createElement('input'); input.type = 'text';
         }
 
+        const valueCell = document.createElement('div');
+        valueCell.className = 'field-value' + (isFullWidth ? ' full-width' : '');
         if (input) {
             input.id = f.name;
             input.value = f.value ?? '';
-            wrapper.appendChild(input);
+            valueCell.appendChild(input);
         }
-
-        el.appendChild(wrapper);
+        el.appendChild(valueCell);
     });
 
     // Action buttons row

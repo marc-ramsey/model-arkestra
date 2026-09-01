@@ -687,24 +687,28 @@ body {
 .config-panel {
     padding: 6px 8px;
 }
-.field-wrapper {
+.config-panel {
     display: grid;
     grid-template-columns: auto 1fr;
     gap: 4px 12px;
     align-items: center;
-    margin-bottom: 4px;
 }
-.field-wrapper > .field-label {
+.config-panel > .field-label {
     font-size: 10.5px;
     font-weight: 600;
     color: var(--text-dim);
     grid-column: 1;
+    text-align: right;
 }
-.field-wrapper > .field-value {
+.config-panel > .field-value {
     grid-column: 2;
 }
-.field-wrapper > .field-value input,
-.field-wrapper > .field-value select {
+.config-panel > .field-label.full-width,
+.config-panel > .field-value.full-width {
+    grid-column: 1 / -1;
+}
+.config-panel > .field-value input,
+.config-panel > .field-value select {
     padding: 4px 8px;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
@@ -713,10 +717,25 @@ body {
     background: var(--surface-alt);
     color: var(--text);
     outline: none;
+    width: 100%;
 }
-.field-wrapper > .field-value input:focus,
-.field-wrapper > .field-value select:focus {
+.config-panel > .field-value input:focus,
+.config-panel > .field-value select:focus {
     border-color: var(--accent);
+}
+.config-panel > .field-value textarea {
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    font-family: var(--font);
+    background: var(--surface-alt);
+    color: var(--text);
+    outline: none;
+    width: 100%;
+    min-height: 40px;
+    max-height: 80px;
+    resize: vertical;
 }
 .model-actions {
     display: flex;

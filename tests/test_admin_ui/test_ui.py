@@ -194,10 +194,10 @@ class TestInteractions:
         assert len(btn_ids) >= 3, f"Expected action buttons (got {len(btn_ids)}: {btn_ids})"
 
     def test_field_wrappers_in_config(self, page):
-        wrapper_count = page.evaluate(
-            "() => document.querySelectorAll('.config-panel .field-wrapper').length"
+        field_count = page.evaluate(
+            "() => document.querySelectorAll('.config-panel > .field-value').length"
         )
-        assert wrapper_count >= 1, f"No field wrappers in config panel (got {wrapper_count})"
+        assert field_count >= 1, f"No fields in config panel (got {field_count})"
 
     def test_arg_fields_from_schema(self, page):
         """Individual arg fields are rendered from args_schema, not a raw textarea."""
@@ -221,15 +221,15 @@ class TestInteractions:
         rows[0].click()
         time.sleep(1.5)
 
-        wrapper_count = page.evaluate(
-            "() => document.querySelectorAll('.config-panel .field-wrapper').length"
+        field_count = page.evaluate(
+            "() => document.querySelectorAll('.config-panel > .field-value').length"
         )
         schema_keys = page.evaluate(
             "() => Object.keys(window._argSchema || {})"
         )
         # checkpoint + args from schema (backend/runner optional)
-        assert wrapper_count >= len(schema_keys) + 1, \
-            f"Expected {len(schema_keys)}+1 fields (got {wrapper_count}, schema keys={schema_keys})"
+        assert field_count >= len(schema_keys) + 1, \
+            f"Expected {len(schema_keys)}+1 fields (got {field_count}, schema keys={schema_keys})"
 
 
 # ═══════════════════════════════════════════════════════════
