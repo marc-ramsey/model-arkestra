@@ -430,8 +430,16 @@ class ModelArkestra:
         for r in self._runners.values():
             if model_name in r._models and r._models[model_name].state == RunnerState.RUNNING:
                 return r
-        runner_type = self._resolve_runner_type(model_name, env_vars, backend)
-        return self._get_runner_instance(runner_type, model_name)
+        # Reverse-lookup: is `model_name` an HF ref? Find matching config key.
+        lookup = model_name
+        for config_key in self.get_models():
+            m = self.get_model(config_key) or {}
+            if (m.get("model") == model_name
+                    or m.get("args", {}).get("model") == model_name):
+                lookup = config_key
+                break
+        runner_type = self._resolve_runner_type(lookup, env_vars, backend)
+        return self._get_runner_instance(runner_type, lookup)
 
     def _resolve_runner_type(self, model_name: str, env_vars: Dict[str, Any], override_backend: Optional[str] = None) -> str:
         backends = self._cm.get("backends", {})
