@@ -67,6 +67,8 @@ function showToast(msg) {
         async sendASR(file) { await window._audio?.sendASR(file); },
     };
 
+    wireEvents(actions);
+
     // ── Load model data and populate tree ────────────────────────
     try {
         const data = await window.adminGet('/admin/models');

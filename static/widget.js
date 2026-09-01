@@ -395,7 +395,8 @@ renderers.ConfigPanel = function({ id, fields }) {
     (window._configActions||[]).forEach(a => {
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.id = 'btn-' + a + '-' + sanitizeId(id);
+        btn.dataset.action = a;
+        btn.dataset.model = id;
         btn.title = a.charAt(0).toUpperCase() + a.slice(1);
         const iconMap = { start:'▶', stop:'■', save:'✓', reset:'↺', eject:'⏏' };
         btn.textContent = iconMap[a] || a;
@@ -517,11 +518,11 @@ function checkDirty(modelId, panel) {
 // ═══════════════════════════════════════════════════════════
 
 function wireEvents(actions) {
-    // Click delegation: id="btn-{action}-{id}" -> actions[action](id)
+    // Click delegation on buttons with data-action + data-model
     document.addEventListener('click', (e) => {
-        const m = e.target.id?.match(/^btn-(.+)-(.+)$/);
-        if (!m) return;
-        actions[m[1]]?.(m[2].replace(/_/g, '-'));
+        const btn = e.target.closest('[data-action]');
+        if (!btn) return;
+        actions[btn.dataset.action]?.(btn.dataset.model);
     });
 
     // Field change: id="{name}" -> fires CustomEvent('field.change')
