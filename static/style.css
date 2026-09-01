@@ -695,8 +695,8 @@ body {
     font-size: 11px;
     font-weight: 600;
     color: #3a3632;
-    grid-column: 1;
     text-align: right;
+    width: fit-content;
 }
 .config-panel > .field-value {
     grid-column: 2;
