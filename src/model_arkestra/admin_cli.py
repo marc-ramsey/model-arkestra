@@ -451,7 +451,11 @@ def main(argv: list[str] | None = None) -> None:
             args.server = url_env
         else:
             data = _load_config(args.config)
-            port = data.get("admin-port") or (data.get("env") or {}).get("PORT")
+            # Check config.default.admin-port (matching server resolution chain)
+            default_section = data.get("default") or {}
+            port = (default_section.get("admin-port")
+                    or data.get("admin-port")
+                    or (data.get("env") or {}).get("PORT"))
             if port is not None:
                 args.server = f"http://127.0.0.1:{port}"
     if not args.server:
