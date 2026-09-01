@@ -469,7 +469,7 @@ body {
 .model-row.expanded .config-panel {
     display: grid !important;
     padding: 6px 8px;
-    grid-template-columns: max-content 1fr;
+    grid-template-columns: auto 1fr;
     gap: 4px 12px;
     align-items: start;
 }
