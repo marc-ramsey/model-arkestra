@@ -636,7 +636,7 @@ async function doStream(text, modelName, onData, options = {}) {
     if (!info?.port) throw new Error('Model not running');
 
     const params = JSON.parse(localStorage.getItem(CFG.STORAGE_CHAT_PARAMS)||'{}')[modelName] || {};
-    const resp = await fetch('http://127.0.0.1:' + info.port + '/v1/chat/completions', {
+    const resp = await fetch('/v1/chat/completions', {
         method: 'POST', headers:{'Content-Type':'application/json'},
         signal,
         body: JSON.stringify({
