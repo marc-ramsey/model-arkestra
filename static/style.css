@@ -469,7 +469,7 @@ body {
 .model-row.expanded .config-panel {
     display: grid !important;
     padding: 6px 8px;
-    grid-template-columns: max-content 1fr;
+    grid-template-columns: min-content 1fr;
     gap: 4px 12px;
     align-items: center;
 }
@@ -692,9 +692,9 @@ body {
 }
 .config-panel { padding: 6px 8px; }
 .config-panel > .field-label {
-    font-size: 10.5px;
+    font-size: 11px;
     font-weight: 600;
-    color: var(--text-dim);
+    color: #3a3632;
     grid-column: 1;
     text-align: right;
 }
