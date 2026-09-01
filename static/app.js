@@ -100,7 +100,8 @@ function showToast(msg) {
     setInterval(async () => {
         try {
             const data = await window.adminGet('/admin/models');
-            for (const m of (data?.models||[])) {
+            window._modelsCache = data.models || [];
+            for (const m of data.models||[]) {
                 const row = document.querySelector('.model-row[data-model="'+m.id+'"]');
                 if (!row) continue;
                 const dot = row.querySelector('.status-dot');

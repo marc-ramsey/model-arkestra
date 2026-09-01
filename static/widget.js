@@ -604,7 +604,7 @@ async function sendChat(modelName, inputEl = null) {
 
     appendBubble('user', text);
     chatHistory.push({ role:'user', content:text });
-    textEl.value = '';
+    el.value = '';
 
     // Clean up any in-flight stream from a previous message
     if (_streamBubble && _streamBubble.classList.contains('streaming')) {
@@ -649,7 +649,7 @@ async function doStream(text, modelName, onData, options = {}) {
         method: 'POST', headers:{'Content-Type':'application/json'},
         signal,
         body: JSON.stringify({
-            model:modelName, messages:chatHistory, stream:true,
+            model: info.model || modelName, messages:chatHistory, stream:true,
             temperature: params.temperature??0.7,
             top_p: params.top_p??0.95,
             max_tokens: params.max_tokens??512,

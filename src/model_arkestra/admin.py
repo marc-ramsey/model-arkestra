@@ -221,6 +221,7 @@ class ArkestraAdmin:
 
                     if ctx:
                         webui_status = model_status_for_ctx(ctx)
+                        model_ref = model_cfg.get("model") or (isinstance(model_cfg.get("args"), dict) and model_cfg["args"].get("model", ""))
                         entry = {
                             "id": ctx.name,
                             "status": webui_status,
@@ -228,7 +229,7 @@ class ArkestraAdmin:
                             "runner_type": ctx.runner_type,
                             "backend_id": ctx.backend_id or self._resolve_model_backend(ctx.name, model_cfg),
                             "args": model_cfg.get("args", ""),
-                            "model": model_cfg.get("model", ""),
+                            "model": model_ref,
                         }
                     else:
                         default_section = (self.server._arkestra.cm.data.get("default") or {})
@@ -250,7 +251,7 @@ class ArkestraAdmin:
                             "runner_type": runner_type,
                             "backend_id": resolved_backend,
                             "args": model_cfg.get("args", ""),
-                            "model": model_cfg.get("model", ""),
+                            "model": model_cfg.get("model") or (isinstance(model_cfg.get("args"), dict) and model_cfg["args"].get("model", "")),
                         }
 
                     # Resolve available capabilities per-model (normal chain)
