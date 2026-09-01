@@ -466,7 +466,13 @@ body {
 .model-row.expanded .model-name-bar::after { content: '▾'; }
 .model-row:hover { background: var(--surface-alt); }
 .model-row .config-panel { display: none; margin-top: 4px; }
-.model-row.expanded .config-panel { display: block; }
+.model-row.expanded .config-panel {
+    display: grid !important;
+    padding: 6px 8px;
+    grid-template-columns: max-content 1fr;
+    gap: 4px 12px;
+    align-items: center;
+}
 
 .capabilities-list {
     display: flex;
@@ -684,15 +690,7 @@ body {
     max-height: calc(100vh * 0.4);
     overflow-y: auto;
 }
-.config-panel {
-    padding: 6px 8px;
-}
-.config-panel {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 4px 12px;
-    align-items: center;
-}
+.config-panel { padding: 6px 8px; }
 .config-panel > .field-label {
     font-size: 10.5px;
     font-weight: 600;
