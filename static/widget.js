@@ -640,7 +640,7 @@ async function doStream(text, modelName, onData, options = {}) {
         method: 'POST', headers:{'Content-Type':'application/json'},
         signal,
         body: JSON.stringify({
-            model: info.model || modelName, messages:chatHistory, stream:true,
+            model: info.id || modelName, messages:chatHistory, stream:true,
             temperature: params.temperature??0.7,
             top_p: params.top_p??0.95,
             max_tokens: params.max_tokens??512,
