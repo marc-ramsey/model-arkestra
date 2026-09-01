@@ -698,10 +698,10 @@ body {
     color: #3a3632;
     text-align: left;
     justify-self: start;
-    white-space: nowrap;
+    grid-column: 1;
 }
 .config-panel > .field-value {
-    /* no width constraint — inputs fill their grid cell via their own 100% */
+    grid-column: 2;
 }
 .config-panel > .field-label.full-width,
 .config-panel > .field-value.full-width {
