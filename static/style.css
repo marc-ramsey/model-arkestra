@@ -470,7 +470,7 @@ body {
 .model-row.expanded .config-panel {
     display: grid !important;
     padding: 6px 8px;
-    grid-template-columns: minmax(0, fit-content(60%)) 1fr;
+    grid-template-columns: auto 1fr;
     gap: 4px 12px;
     align-items: start;
 }
@@ -700,7 +700,7 @@ body {
     justify-self: start;
 }
 .config-panel > .field-value {
-    width: 100%;
+    /* no width constraint — inputs fill their grid cell via their own 100% */
 }
 .config-panel > .field-label.full-width,
 .config-panel > .field-value.full-width {
