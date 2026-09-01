@@ -149,7 +149,7 @@ class TestEngineCLIConversion:
         assert "--top-p" in cli
         assert "0.95" in cli
         assert "--jinja" in cli
-        assert "-ngl" in cli  # ngl is a short-flag key
+        assert "-ngl" in cli
         assert "33" in cli
         assert "--port" in cli
         assert "18000" in cli
@@ -174,11 +174,11 @@ class TestEngineCLIConversion:
 
     def test_metadata_keys_skipped(self):
         from model_arkestra.llama_cpp import LlamaCppEngine
-        # hf and port are still metadata keys — skipped.
-        merged = {"hf": "my-org/my-model", "port": 9999, "temp": 0.7}
+        # port is injected — skipped.
+        merged = {"temp": 0.7, "port": 9999}
         cli = LlamaCppEngine.build_cli_args(merged, port=18000)
 
-        assert "-hf" not in cli  # hf is metadata (not a key in merged anyway)
+        assert "-hf" not in cli
         assert "--port" in cli
         assert "18000" in cli
 

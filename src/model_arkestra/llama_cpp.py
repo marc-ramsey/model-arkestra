@@ -15,8 +15,38 @@ class LlamaCppEngine:
         'reasoning-budget', 'keep', 'ignore-eos', 'grammar', 'chat-template',
     }
 
-    # Metadata keys handled separately — not converted to CLI flags.
-    _METADATA_KEYS = {'hf', 'port'}
+    # Config keys → llama-server CLI flags.
+    _CLI_MAP: Dict[str, str] = {
+        'temp':           '--temp',
+        'top-k':          '--top-k',
+        'top-p':          '--top-p',
+        'min-p':          '--min-p',
+        'typical':        '--typical',
+        'rope-freq-base': '--rope-freq-base',
+        'rope-freq-scale':'--rope-freq-scale',
+        'reasoning-budget':'--reasoning-budget',
+        'keep':           '--keep',
+        'top-nsigma':     '--top-nsigma',
+        'frequency-penalty':'--frequency-penalty',
+        'presence-penalty':'--presence-penalty',
+        'repeat-penalty': '--repeat-penalty',
+        'repeat-last-n':  '--repeat-last-n',
+        'rope-scaling':   '--rope-scaling',
+        'rope-scale':     '--rope-scale',
+        'ignore-eos':     '--ignore-eos',
+        'grammar':        '--grammar',
+        'chat-template':  '--chat-template',
+        'jinja':          '--jinja',
+        'jinja2':         '--jinja',
+        'flash-attn':     '--flash-attn',
+        'fa':             '--flash-attn',
+        'ctx-size':       '--ctx-size',
+        'ngl':            '-ngl',
+        'threads':        '--threads',
+        'threads-batch':  '--threads-batch',
+        'no-mmap':        '--no-mmap',
+    }
+
     _DEFAULT_REPO = "hf"
 
     def filter_infer_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
@@ -27,31 +57,39 @@ class LlamaCppEngine:
     def build_cli_args(merged: Dict[str, Any], port: int) -> List[str]:
         """Convert merged param dict + port into llama-server CLI tokens.
 
-        ``merged`` comes from ``build_model_args()`` — a flat dict of model
-        args plus runtime inference kwargs.  Model ref is emitted as -hf/
-        --alias (HF) or passed through directly (local). Port is injected
-        as the final parameter.
+        Reads ``model``, ``repo``, ``mmproj`` from merged (or uses defaults),
+        emits the corresponding flags. Remaining keys map through _CLI_MAP.
+        Unknown keys raise ValueError.
         """
         cli: List[str] = []
+
+        # ── Resolve model-related args ────────────────────────────────────
+        repo = merged.get('repo', LlamaCppEngine._DEFAULT_REPO) or LlamaCppEngine._DEFAULT_REPO
+        model_ref = merged.get('model')
+        mmproj_path = merged.get('mmproj')
+
+        if model_ref:
+            if repo == 'hf':
+                cli.extend(['-hf', model_ref, '--alias', model_ref])
+            else:
+                cli.extend(['--model', model_ref])
+
+        if mmproj_path:
+            cli.extend(['--mmproj', mmproj_path])
+
+        # ── Emit inference args via whitelist map ─────────────────────────
         for key, value in merged.items():
-            if key == 'model' and value:
-                # Emit model ref with repo-specific flags.
-                repo = merged.get('repo', LlamaCppEngine._DEFAULT_REPO)
-                if repo == 'hf':
-                    cli.extend(['-hf', value])
-                    cli.extend(['--alias', value])
-                # else: local model — llama-server handles paths directly
-            elif key == 'mmproj' and value:
-                cli.extend(['--mmproj', value])
-            elif key in LlamaCppEngine._METADATA_KEYS:
-                continue
-            kebab = key.replace('_', '-')
-            prefix = '-' if kebab in _LLAMA_SHORT_FLAGS else '--'
+            if key in ('model', 'repo', 'mmproj', 'port'):
+                continue  # handled above
+            if key not in LlamaCppEngine._CLI_MAP:
+                raise ValueError(f"Unknown arg: {key}")
+            flag = LlamaCppEngine._CLI_MAP[key]
             if isinstance(value, bool):
                 if value:
-                    cli.append(f"{prefix}{kebab}")
-            elif value is not None:
-                cli.extend([f"{prefix}{kebab}", str(value)])
+                    cli.append(flag)
+            elif value is not None and key != 'port':
+                cli.extend([flag, str(value)])
+
         cli.extend(['--port', str(port)])
         return cli
 
