@@ -19,6 +19,7 @@ from model_arkestra.common import (
     build_model_args, default_cache_root,
     resolve_binary_from_backend, safe_container_name,
 )
+from model_arkestra.llama_cpp import LlamaCppEngine
 from model_arkestra.types import RunnerState, _ModelContext
 
 
@@ -112,7 +113,7 @@ def _build_container_cmd(
         runner.cm, model_name,
         inference_kwargs=runner._inference_kwargs.get(model_name, {}),
     )
-    arg_list: List[str] = _dict_to_cli(merged) if merged else []
+    arg_list: List[str] = LlamaCppEngine.build_cli_args(merged, inside_port) if merged else []
 
     # Replace --port value with inside_port; ensure --host is present.
     fixed: List[str] = []

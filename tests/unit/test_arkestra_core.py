@@ -286,7 +286,7 @@ class TestCmDelegation:
     def test_get_backend_delegates(self):
         """.get_backend() delegates to ConfigManager."""
         arkestra = _make_cm(
-            backend_cfg={"default": "vulkan-radv", "vulkan-radv": {"args": "-hf ${CHECKPOINT}"}},
+            backend_cfg={"default": "vulkan-radv", "vulkan-radv": {"args": {}}},
             runner_cfg={"default": "ProcessModelRunner"},
         )
         be = arkestra.get_backend("vulkan-radv")

@@ -638,7 +638,9 @@ def build_model_args(
 
     # Pull model-level fields into merged dict for CLI builder.
     for k in ("model", "repo", "mmproj"):
-        v = model_args_raw.get(k) if isinstance(model_args_raw, dict) else None
+        v = model.get(k)  # top-level field takes priority
+        if v is None and isinstance(model_args_raw, dict):
+            v = model_args_raw.get(k)
         if v is not None:
             result[k] = v
 

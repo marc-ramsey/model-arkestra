@@ -9,7 +9,7 @@ macros:
 backends:
   default: vulkan-radv
   vulkan-radv:
-    args: -hf ${CHECKPOINT}
+    args: {}
 
 runners:
   default: ProcessModelRunner
