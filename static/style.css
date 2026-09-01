@@ -470,7 +470,7 @@ body {
 .model-row.expanded .config-panel {
     display: grid !important;
     padding: 6px 8px;
-    grid-template-columns: auto 1fr;
+    grid-template-columns: minmax(0, fit-content(60%)) 1fr;
     gap: 4px 12px;
     align-items: start;
 }
