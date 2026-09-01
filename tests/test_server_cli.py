@@ -49,7 +49,7 @@ class TestPortResolution:
         assert kwargs["port"] == 9091
 
     def test_config_admin_port_used(self, tmp_path):
-        cfg = _make_config({"admin-port": 9092}, tmp_path)
+        cfg = _make_config({"default": {"admin-port": 9092}}, tmp_path)
         env = {k: v for k, v in os.environ.items() if k != "PORT"}
         with patch.dict(os.environ, env, clear=True):
             mock_app = MagicMock()
@@ -103,7 +103,7 @@ class TestTimeoutResolution:
         assert kwargs["ready_timeout"] == 45.5
 
     def test_config_warmup_time_used(self, tmp_path):
-        cfg = _make_config({"warmup-time": "60"}, tmp_path)
+        cfg = _make_config({"default": {"warmup-time": "60"}}, tmp_path)
         mock_app = MagicMock()
         with patch("model_arkestra.server.ArkestraServer") as MockAs, \
              patch("model_arkestra.server.uvicorn.run"):
@@ -164,13 +164,9 @@ class TestHostResolution:
 class TestNonExistentConfig:
     """Behavior when config file doesn't exist."""
 
-    def test_missing_config_uses_defaults(self):
-        with patch.dict(os.environ, {"PORT": "9091"}):
-            mock_app = MagicMock()
-            with patch("model_arkestra.server.ArkestraServer") as MockAs, \
-                 patch("model_arkestra.server.uvicorn.run"):
-                MockAs.return_value.get_app.return_value = mock_app
+    def test_missing_config_raises(self):
+        """Missing config file raises RuntimeError (config must exist)."""
+        with patch("model_arkestra.server.uvicorn.run"):
+            with pytest.raises(RuntimeError, match="Config file not found"):
                 from model_arkestra.server import main
                 main(["--config", "/tmp/nonexistent-config.yaml"])
-        _, kwargs = MockAs.call_args
-        assert kwargs["port"] == 9091  # env PORT still works
