@@ -42,3 +42,5 @@ model-args:
     max-tokens:
       type: integer
       minimum: 1
+    chat-template-kwargs:
+      type: string
