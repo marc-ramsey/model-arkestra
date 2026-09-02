@@ -10,7 +10,6 @@ import aiohttp
 import copy
 import mimetypes
 import os
-import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -32,7 +31,6 @@ from model_arkestra.common import (
     resolve_model_ref,
     resolve_tags as _resolve_tags,
 )
-from model_arkestra.types import RunnerState
 from model_arkestra.http_proxy import model_status_for_ctx
 
 # ── Model config field definitions (single source of truth) ─────────────

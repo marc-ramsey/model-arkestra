@@ -1,11 +1,8 @@
 """Single entry point for all model operations — wraps ConfigManager + lazy runners."""
 from __future__ import annotations
-import asyncio
 import logging
 import os
 import shutil
-import subprocess
-import sys
 import yaml
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional, Set
@@ -16,9 +13,7 @@ from model_arkestra.base import BaseModelRunner
 from model_arkestra.common import (
     _resolve_backend, default_cache_root, resolve_config_path,
     resolve_model_ref, resolve_tags as _resolve_model_tags,
-    image_and_runner_for_backend,
 )
-from model_arkestra.common import ModelRef as _ModelRef
 from model_arkestra.docker import DockerModelRunner
 from model_arkestra.onnx_runner import OnnxRunner
 from model_arkestra.podman import PodmanModelRunner
