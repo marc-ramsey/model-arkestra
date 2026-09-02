@@ -36,18 +36,30 @@ def server():
 
     # Wait for server to be ready (max 30s)
     deadline = time.time() + 30
+    ok = False
     while time.time() < deadline:
         try:
             r = httpx.get("http://127.0.0.1:18500/admin/models", timeout=3)
             if r.status_code == 200 and "models" in r.text:
-                return proc
+                ok = True
+                break
         except Exception:
             pass
         time.sleep(0.5)
 
-    proc.kill()
-    out, err = proc.communicate(timeout=3)
-    raise RuntimeError(f"Server failed to start.\nstdout: {out.decode()}\nstderr: {err.decode()}")
+    if not ok:
+        proc.kill()
+        out, err = proc.communicate(timeout=3)
+        raise RuntimeError(f"Server failed to start.\nstdout: {out.decode()}\nstderr: {err.decode()}")
+
+    yield proc
+    # Teardown — kill the server subprocess
+    try:
+        proc.terminate()
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
 
 
 @pytest.fixture(scope="module")
