@@ -8,6 +8,9 @@ from model_arkestra.gpu_detect import detect_all
 from pathlib import Path
 import yaml
 from typing import Any, Dict, List, Optional, Tuple
+INFRA_KEYS = frozenset({
+    'backend', 'runner', 'tags', 'max-log-lines', 'model-repo', 'model-quant',
+})
 
 
 # ── Model resolution ────────────────────────────────────────────────────────
@@ -603,16 +606,40 @@ def _dict_to_cli(args_dict: Dict[str, Any]) -> List[str]:
     return cli
 
 
+
+
+
+def _resolve_arg(model_data: Dict, backend_cfg: Dict, default_section: Dict,
+                 key: str):
+    """Resolve one key through the unified chain.
+
+    Resolution order:
+      1. Model top-level field (``model_key:``)
+      2. Model nested in ``args:``
+      3. Backend args (``backend_args["key"]``)
+      4. Default section (``default.key``)
+      5. None — caller skips missing values
+    """
+    for v in (model_data.get(key), model_data.get("args", {}).get(key),
+              backend_cfg.get("args", {}).get(key),
+              default_section.get(key)):
+        if v is not None and v != "":
+            return v
+    return None
+
+
 def build_model_args(
     cm: Any,
     model_name: str,
     inference_kwargs: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Merge model args with runtime inference kwargs into a flat dict.
+    """Merge all config args through unified resolution chain.
 
-    Merges config-level model ``args:`` with runtime overrides passed as
-    *inference_kwargs* (last-wins).  Infra keys (``backend``, ``checkpoint``)
-    are silently dropped.
+    Collects keys from model, backend, and default sources. Resolves each
+    value from: model top-level → model.args → backend.args → default.section.
+    Runtime inference_kwargs override everything.
+
+    Infra keys (``backend``, ``runner``, ``tags``, ``max-log-lines``) are skipped.
 
     Args:
         cm:               ConfigManager instance.
@@ -630,30 +657,30 @@ def build_model_args(
     if model is None:
         return None
 
-    # Merge model args with runtime kwargs (last-wins).
     result: Dict[str, Any] = {}
-    model_args_raw = model.get("args")
-    if isinstance(model_args_raw, dict):
-        result.update(model_args_raw)
+    default_section = cm.data.get("default") or {}
+    backend_id = model.get("backend") or _resolve_backend(cm, model, model_name)
+    backend_cfg = (cm.data.get("backends") or {}).get(backend_id, {})
+    if not isinstance(backend_cfg, dict):
+        backend_cfg = {}
 
-    # Pull model-level fields into merged dict for CLI builder.
-    for k in ("model", "repo", "mmproj"):
-        v = model.get(k)  # top-level field takes priority
-        if v is None and isinstance(model_args_raw, dict):
-            v = model_args_raw.get(k)
-        if v is not None:
-            result[k] = v
+    # ── Collect all unique keys from config sources ────────────────────
+    keys: set[str] = set()
+    for src in (model, model.get("args") or {},
+                backend_cfg.get("args") or {}):
+        if isinstance(src, dict):
+            keys.update(k for k in src if k not in INFRA_KEYS)
 
-    # Default repo fallback — config default → class var.
-    if "repo" not in result:
-        default_section = cm.data.get("default") or {}
-        config_repo = default_section.get("repo") or default_section.get("model-repo")
-        if config_repo:
-            result["repo"] = str(config_repo)
+    # ── Resolve each key through unified chain ─────────────────────────
+    for key in keys:
+        val = _resolve_arg(model, backend_cfg, default_section, key)
+        if val is not None:
+            result[key] = val
 
+    # ── Runtime kwargs override everything (skip infra) ────────────────
     if inference_kwargs:
         for k, v in inference_kwargs.items():
-            if k != "backend":
+            if k not in INFRA_KEYS and k not in ('model', 'repo', 'mmproj'):
                 result[k] = v
     return result
 
