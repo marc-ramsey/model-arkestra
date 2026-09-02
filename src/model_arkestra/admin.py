@@ -54,7 +54,10 @@ class ArkestraAdmin:
         self._load_schema_registry()
 
     def _load_schema_registry(self) -> None:
-        """Load named schemas from schemas.yaml in the config directory."""
+        """Load named schemas from schemas.yaml in the config directory.
+
+        Falls back to bundled templates/schemas.yaml.j2 if none found.
+        """
         import yaml
         try:
             parent = Path(self.server._arkestra._config_path).parent
@@ -62,9 +65,18 @@ class ArkestraAdmin:
         except (AttributeError, TypeError):
             self._schemas = {}
             return
+
         if schema_path.exists():
             with open(schema_path) as f:
                 self._schemas = yaml.safe_load(f) or {}
+        else:
+            # Bundled fallback: ship a sensible default in the package
+            try:
+                from importlib.resources import files
+                bundled = (files("model_arkestra.templates") / "schemas.yaml.j2").read_text()
+                self._schemas = yaml.safe_load(bundled) or {}
+            except Exception:
+                self._schemas = {}
 
     def install(self) -> "ArkestraAdmin":
         """Install all admin routes on the FastAPI app. Idempotent."""

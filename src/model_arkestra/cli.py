@@ -201,7 +201,7 @@ Chat preserves full multi-turn history — every turn is sent to the model.
 # Init command — scaffold default config files
 # ═══════════════════════════════════════════════════════════
 DEFAULT_CONFIG_DIR = Path.home() / ".config" / "arkestra"
-TEMPLATE_FILES = ["config.yaml.j2", "backends.yaml.j2"]
+TEMPLATE_FILES = ["config.yaml.j2", "backends.yaml.j2", "schemas.yaml.j2"]
 
 # Map backend names to source names in sources.yaml
 BACKEND_TO_SOURCE: dict[str, str] = {

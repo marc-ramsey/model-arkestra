@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 from model_arkestra.base import BaseModelRunner
 from model_arkestra.common import (
-    INSPECT_RE, SUBPROCESS_ENV, _dict_to_cli,
+    INSPECT_RE, SUBPROCESS_ENV,
     build_model_args, default_cache_root,
     resolve_binary_from_backend, safe_container_name,
 )
