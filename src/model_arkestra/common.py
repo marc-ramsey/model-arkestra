@@ -570,45 +570,6 @@ def safe_container_name(name: str, port: int) -> str:
     safe = name.replace("_", "-").replace(".", "-")
     return f"llm-{safe}-{port}"
 
-def _dict_to_cli(args_dict: Dict[str, Any]) -> List[str]:
-    """Convert a flat args dict to CLI flag list (snake_case → kebab-case).
-
-    Boolean True → ``-flag`` or ``--flag`` (presence-only).  False → omitted.
-    All other values → ``-flag value`` or ``--flag value``.
-    Keys in _LLAMA_SHORT_FLAGS get a single `-`; everything else gets `--`.
-    """
-    # Set of config keys whose llama.cpp flag is -x (single dash), not --x
-    _LLAMA_SHORT_FLAGS = {
-        'c', 't', 'tb', 'fa', 'e', 'kvo',
-        'ctk', 'ctv', 'dt', 'dio', 'lm', 'dev',
-        'ot', 'cmoe', 'ncmoe',
-        'ngl', 'sm', 'ts', 'mg', 'fit', 'fitt',
-        'fitc', 'b', 'ub', 'hf', 'hff', 'hft',
-        'dr', 'mu', 'cl',
-        'a', 'ag', 'mm', 'mmu',
-        's', 'l', 'j', 'jf',
-        'bs', 'lcs', 'lcd',
-        'ctxcp', 'cms', 'cram',
-        'kvu', 'r', 'sp',
-        'np', 'cb', 'to',
-        'rea', 'sps', 'v', 'lv', 'm',
-    }
-
-    cli: List[str] = []
-    for key, value in args_dict.items():
-        kebab = key.replace('_', '-')
-        prefix = '-' if kebab in _LLAMA_SHORT_FLAGS else '--'
-        if isinstance(value, bool):
-            if value:
-                cli.append(f"{prefix}{kebab}")
-        else:
-            cli.extend([f"{prefix}{kebab}", str(value)])
-    return cli
-
-
-
-
-
 def _resolve_arg(model_data: Dict, backend_cfg: Dict, default_section: Dict,
                  key: str):
     """Resolve one key through the unified chain.

@@ -156,7 +156,7 @@ CLI arguments flow through a two-phase pipeline:
 1. **Merge**: ``build_model_args()`` merges model-level ``args:`` with runtime inference kwargs into a flat dict.
 2. **Convert**: The engine layer (e.g. ``LlamaCppEngine.build_cli_args(merged, port)``) converts the dict to CLI tokens.
 
-Values are stored as flat YAML dicts internally and reconstructed to CLI flags via ``_dict_to_cli()`` which is called from the engine or container runner.
+Values are stored as flat YAML dicts internally and converted to CLI flags by the engine layer (e.g. ``LlamaCppEngine.build_cli_args(merged, port)``).
 
 ### Merge Phase
 
@@ -171,14 +171,11 @@ Each backend name (e.g., `rocm`, `vulkan-radv`) implies an inference engine (lla
 
 ### Inference Param Filtering (`LlamaCppEngine`)
 
-For llama.cpp backends, inference kwargs are filtered through `LlamaCppEngine.LLAMA_INFER_ARGS` before reaching `_dict_to_cli()`. Only keys in this whitelist (e.g. `temp`, `top-p`, `reasoning-budget`) become CLI flags; anything else is silently dropped to prevent crashes from bogus POST body fields.
+For llama.cpp backends, inference kwargs are filtered through `LlamaCppEngine.LLAMA_INFER_ARGS` before being passed to ``LlamaCppEngine.build_cli_args()``. Only keys in this whitelist (e.g. `temp`, `top-p`, `reasoning-budget`) become CLI flags; anything else is silently dropped to prevent crashes from bogus POST body fields.
 
-### CLI Reconstruction (`_dict_to_cli()`)
+### CLI Reconstruction (`LlamaCppEngine.build_cli_args`)
 
-The ``_dict_to_cli()`` helper in `model_arkestra.common` converts a flat dict to CLI flags. It is called by:
-
-- ``LlamaCppEngine.build_cli_args(merged, port)`` for process runners (llama.cpp)
-- ``container_runner._build_container_cmd()`` for podman/docker — with post-processing to replace the host port with the inside container port
+``LlamaCppEngine.build_cli_args(merged, port)`` in `model_arkestra.llama_cpp` converts a flat dict to CLI flags. It handles model/repo/mmproj/port injection plus all remaining keys as kebab-case flags:
 
 | YAML Entry | Reconstructed Flag |
 |---|---|
@@ -187,7 +184,7 @@ The ``_dict_to_cli()`` helper in `model_arkestra.common` converts a flat dict to
 
 Keys use kebab-case in YAML, matching CLI flag names directly.
 
-Infrastructure flags (`--port`, `--model`) are injected by the runner/engine. The conversion happens in ``LlamaCppEngine.build_cli_args()`` for process runners, or via ``_dict_to_cli()`` + port-replacement loop in container runners. Internally everything stays structured as dicts until CLI conversion time.
+Infrastructure flags (`--port`, `--model`) are handled by ``LlamaCppEngine.build_cli_args()``. Internally everything stays structured as dicts until CLI conversion time.
 
 ## Related
 

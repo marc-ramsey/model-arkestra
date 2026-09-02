@@ -375,7 +375,7 @@ Arguments are merged in two phases — first a dict merge, then CLI conversion:
 2. Runtime ``inference_kwargs`` passed to ``start()`` — transient, single invocation only (last-wins for overlapping keys)
 
 **Phase 2 — CLI Conversion:**
-The engine layer (e.g., ``LlamaCppEngine.build_cli_args(merged, port)``) converts the merged dict to CLI tokens via ``_dict_to_cli()``. Infrastructure flags (`--port`, `--model`) are injected separately.
+``LlamaCppEngine.build_cli_args(merged, port)`` converts the merged dict to CLI tokens. Infrastructure flags (`--port`, `--model`) are injected by the engine.
 
 ### Backend Selection Resolution:
 
