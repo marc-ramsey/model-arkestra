@@ -238,8 +238,6 @@ body {
 /* ── Drag dividers ───────────────────────────── */
 .divider-v, .divider {
     width: 5px;
-    cursor: col-resize;/* ── Chat params panel (slide-out above input) ────────────── */
-    width: 5px;
     cursor: col-resize;
     background: var(--border);
     transition: background 0.15s;
