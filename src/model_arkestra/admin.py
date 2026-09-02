@@ -468,7 +468,7 @@ class ArkestraAdmin:
 
             try:
                 for key, value in body.items():
-                    if key in MODEL_CONFIG_FIELDS:
+                    if key in MODEL_CONFIG_FIELDS or key in (self._args_schema(model) or {}):
                         cfg[model][key] = value
                 self.server._arkestra.cm.export(self.server._arkestra.cm.config_path)
                 return {"ok": True, "model": model}

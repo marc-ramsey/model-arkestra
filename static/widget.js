@@ -33,6 +33,14 @@ function formatTime(sec) {
     return m + ':' + String(s).padStart(2, '0');
 }
 
+// Read inference param from model config — root level (flat) first,
+// then .args for legacy nested configs.
+function resolveArgValue(cfg, key) {
+    if (cfg[key] !== undefined && cfg[key] !== '') return String(cfg[key]);
+    if (cfg.args?.[key] !== undefined) return String(cfg.args[key]);
+    return '';
+}
+
 // render() - walks JSON tree -> DOM. Returns element.
 function render(node) {
     if (!node?.widget) return null;
@@ -457,7 +465,7 @@ function renderModelRow(model) {
 
             // Individual args from backend-provided schema
             for (const [k, schema] of Object.entries(data.args_schema || {})) {
-                fields.push({ name:k, value:String(data.config.args?.[k] ?? ''),
+                fields.push({ name:k, value: resolveArgValue(data.config, k),
                     label:k, schema:schema });
             }
 
@@ -493,10 +501,10 @@ function checkDirty(modelId, panel) {
     let isDirty = false;
     const argKeys = Object.keys(window._argSchema || {});
     for (const key of argKeys) {
-        if (val(key) !== (snap.args?.[key] ?? '')) { isDirty = true; break; }
+        if (val(key) !== resolveArgValue(snap, key)) { isDirty = true; break; }
     }
-    if (!isDirty && val('repo') !== (snap.args?.['repo']||'hf')) isDirty = true;
-    else if (!isDirty && val('model') !== (snap.args?.['model']||'')) isDirty = true;
+    if (!isDirty && val('repo') !== resolveArgValue(snap, 'repo')) isDirty = true;
+    else if (!isDirty && val('model') !== resolveArgValue(snap, 'model')) isDirty = true;
     else if (!isDirty && val('backend') !== snap.backend) isDirty = true;
     else if (!isDirty && val('runner') !== snap.runner) isDirty = true;
 

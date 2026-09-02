@@ -32,17 +32,12 @@ function showToast(msg) {
         async save(id) {
             const panel = document.getElementById('config-' + sanitizeId(id));
             if (!panel) return;
-            const body = { args: {} };
+            const body = {};
             for (const fv of panel.querySelectorAll('.field-value')) {
                 const el = fv.querySelector('input, select');
                 if (!el) continue;
                 const name = el.id;
-                const isArg = window._argSchema?.hasOwnProperty(name);
-                if (isArg) {
-                    body.args[name] = el.type === 'number' ? Number(el.value) : el.value;
-                } else {
-                    body[name] = el.value;
-                }
+                body[name] = el.type === 'number' ? Number(el.value) : el.value;
             }
             try {
                 await window.adminPost('/admin/config/'+encodeURIComponent(id), body);
