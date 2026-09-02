@@ -545,13 +545,7 @@ class ArkestraAdmin:
             new_lines, oldest_seq = ctx._get_lines_since(since, lines)
 
             # Calculate missed lines (entries pruned from ring before the requested since point)
-            if since > 0 and since <= oldest_seq:
-                # Requested seq is older than oldest valid — entire range was evicted
-                total_missed = since - oldest_seq + len(ctx._get_lines_since(0, 1)[0]) if oldest_seq < ctx._log_seq else since - oldest_seq
-            elif since > 0:
-                total_missed = max(0, since - oldest_seq)
-            else:
-                total_missed = 0
+            total_missed = max(0, since - oldest_seq) if since > 0 else 0
 
             return JSONResponse(
                 status_code=200,
