@@ -239,8 +239,9 @@ class ArkestraAdmin:
                         }
                     else:
                         default_section = (self.server._arkestra.cm.data.get("default") or {})
+                        raw_model = model_cfg.get("model") or (isinstance(model_cfg.get("args"), dict) and model_cfg["args"].get("model", ""))
                         resolved = resolve_model_ref(
-                            raw=model_cfg.get("model"),
+                            raw=raw_model,
                             default_section=default_section,
                             model_repos=self.server._arkestra.cm.data.get("model-repos"),
                         )
