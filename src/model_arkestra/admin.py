@@ -283,7 +283,7 @@ class ArkestraAdmin:
 
                 # Top-level metadata for dropdown options (static per-server)
                 backends = self.server._arkestra.cm.data.get("backends") or {}
-                runner_types = list(ModelArkestra._RUNNER_CLASSES.keys())
+                runner_types = list(self.server._arkestra._RUNNER_CLASSES.keys())
 
                 return {
                     "models": data,
@@ -451,7 +451,7 @@ class ArkestraAdmin:
                 "status": status,
                 "tags": available_caps,
                 "backends": global_cfg.get("backends") or {},
-                "runner_types": list(ModelArkestra._RUNNER_CLASSES.keys()),
+                "runner_types": list(self.server._arkestra._RUNNER_CLASSES.keys()),
             }
 
         @self._app.put("/admin/config/{model:path}")
