@@ -9,7 +9,7 @@ from pathlib import Path
 import yaml
 from typing import Any, Dict, List, Optional, Tuple
 INFRA_KEYS = frozenset({
-    'backend', 'runner', 'tags', 'max-log-lines', 'model-repo', 'model-quant',
+    'backend', 'runner', 'tags', 'max-log-lines',
 })
 
 
@@ -609,19 +609,17 @@ def _dict_to_cli(args_dict: Dict[str, Any]) -> List[str]:
 
 
 
-def _resolve_arg(model_data: Dict, backend_cfg: Dict, default_section: Dict,
+def _resolve_arg(args: Dict, backend_cfg: Dict, default_section: Dict,
                  key: str):
     """Resolve one key through the unified chain.
 
     Resolution order:
-      1. Model top-level field (``model_key:``)
-      2. Model nested in ``args:``
-      3. Backend args (``backend_args["key"]``)
-      4. Default section (``default.key``)
-      5. None — caller skips missing values
+      1. Model args (``args[key]``)
+      2. Backend args (``backend_args["key"]``)
+      3. Default section (``default.key``)
+      4. None — caller skips missing values
     """
-    for v in (model_data.get(key), model_data.get("args", {}).get(key),
-              backend_cfg.get("args", {}).get(key),
+    for v in (args.get(key), backend_cfg.get("args", {}).get(key),
               default_section.get(key)):
         if v is not None and v != "":
             return v
@@ -635,9 +633,8 @@ def build_model_args(
 ) -> Optional[Dict[str, Any]]:
     """Merge all config args through unified resolution chain.
 
-    Collects keys from model, backend, and default sources. Resolves each
-    value from: model top-level → model.args → backend.args → default.section.
-    Runtime inference_kwargs override everything.
+    Collects keys from model.args and backend args. Resolves each value from:
+    model.args → backend.args → default section. Runtime inference_kwargs override.
 
     Infra keys (``backend``, ``runner``, ``tags``, ``max-log-lines``) are skipped.
 
@@ -664,23 +661,23 @@ def build_model_args(
     if not isinstance(backend_cfg, dict):
         backend_cfg = {}
 
-    # ── Collect all unique keys from config sources ────────────────────
+    # ── Collect all unique keys from args sources ────────────────────
+    model_args = model.get("args") or {}
+    backend_args = backend_cfg.get("args") or {}
     keys: set[str] = set()
-    for src in (model, model.get("args") or {},
-                backend_cfg.get("args") or {}):
-        if isinstance(src, dict):
-            keys.update(k for k in src if k not in INFRA_KEYS)
+    for src in (model_args, backend_args):
+        keys.update(k for k in src if k not in INFRA_KEYS)
 
-    # ── Resolve each key through unified chain ─────────────────────────
+    # ── Resolve each key through unified chain ───────────────────────
     for key in keys:
-        val = _resolve_arg(model, backend_cfg, default_section, key)
+        val = _resolve_arg(model_args, backend_cfg, default_section, key)
         if val is not None:
             result[key] = val
 
-    # ── Runtime kwargs override everything (skip infra) ────────────────
+    # ── Runtime kwargs override everything (skip infra) ──────────────
     if inference_kwargs:
         for k, v in inference_kwargs.items():
-            if k not in INFRA_KEYS and k not in ('model', 'repo', 'mmproj'):
+            if k not in INFRA_KEYS:
                 result[k] = v
     return result
 

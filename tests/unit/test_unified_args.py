@@ -31,9 +31,10 @@ defaults:
 
 models:
   small-model:
-    repo: hugging-face
-    model: fake/model:Q4
+    backend: vulkan-radv
     args:
+      repo: hugging-face
+      model: fake/model:Q4
       temp: 0.7
       top-p: 0.95
       flash-attn: true
@@ -65,6 +66,8 @@ class TestConfigDefaultsNotMerged:
         """Model args from config must appear in merged dict."""
         result = build_model_args(cm, "small-model")
         assert result is not None
+        assert result["model"] == "fake/model:Q4"
+        assert result["repo"] == "hugging-face"
         assert result["temp"] == 0.7
         assert result["top-p"] == 0.95
 
@@ -99,9 +102,10 @@ class TestInferenceKwargsMerge:
         """Infra metadata keys must NOT appear in merged dict."""
         result = build_model_args(
             cm, "small-model",
-            inference_kwargs={"backend": "rocm", "model": "other:Q4"},
+            inference_kwargs={"backend": "rocm", "runner": "process"},
         )
         assert "backend" not in result
+        assert "runner" not in result
 
 
 class TestBoolInConfigDict:

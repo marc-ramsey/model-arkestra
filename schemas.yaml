@@ -5,7 +5,13 @@
 model-args:
 
   llama-cpp:
-    hf:
+    name:
+      type: string
+    repo:
+      type: string
+      default: hf
+      options: [hf, lcl]
+    model:
       type: string
     ctx-size:
       type: integer

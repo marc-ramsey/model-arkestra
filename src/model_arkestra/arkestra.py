@@ -630,7 +630,7 @@ class ModelArkestra:
             if not model_path_str:
                 default_section = self._cm.get("default", {})
                 resolved = resolve_model_ref(
-                    raw=(model_data or {}).get("model"),
+                    raw=(model_data or {}).get("args", {}).get("model"),
                     default_section=default_section,
                     model_repos=self._cm.get("default/model-repos"),
                 )
@@ -728,8 +728,10 @@ class ModelArkestra:
 
         model_cfg = cfg[model_name]
         default_section = self._cm.get("default", {})
+        # model/repo now live under args: like all other inference params
+        raw = model_cfg.get("args", {}).get("model")
         resolved = resolve_model_ref(
-            raw=model_cfg.get("model"),
+            raw=raw,
             default_section=default_section,
             model_repos=self._cm.get("default/model-repos"),
         )
@@ -762,8 +764,10 @@ class ModelArkestra:
                 if ctx.name == model_name or ctx.state != RunnerState.RUNNING:
                     continue
                 other_cfg = cfg.get(ctx.name, {})
+                # model/repo now live under args: like all other inference params
+                other_raw = other_cfg.get("args", {}).get("model")
                 other_resolved = resolve_model_ref(
-                    raw=other_cfg.get("model"),
+                    raw=other_raw,
                     default_section=default_section,
                     model_repos=self._cm.get("default/model-repos"),
                 )

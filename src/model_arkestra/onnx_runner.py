@@ -77,7 +77,7 @@ class OnnxRunner(BaseModelRunner):  # type: ignore[name-defined]
         if not model_path:
             default_section = (self.cm.data.get("default") or {})
             resolved = resolve_model_ref(
-                raw=model_data.get("model"),
+                raw=model_data.get("args", {}).get("model"),
                 default_section=default_section,
                 model_repos=self.cm.data.get("model-repos"),
             )
@@ -216,7 +216,7 @@ class OnnxRunner(BaseModelRunner):  # type: ignore[name-defined]
             # Resolve cache directory via unified resolver
             default_section = (self.cm.data.get("default") or {})
             resolved = resolve_model_ref(
-                raw=model_data.get("model"),
+                raw=model_data.get("args", {}).get("model"),
                 default_section=default_section,
                 model_repos=self.cm.data.get("model-repos"),
             )

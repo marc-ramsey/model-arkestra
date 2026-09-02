@@ -149,8 +149,9 @@ class ArkestraAdmin:
         schema = model_args_schema.get(engine_name, {}) or {}
 
         # Always expose model/repo/mmproj for CLI builder integration.
-        schema.setdefault("model", {"type": "string"})
+        schema.setdefault("name", {"type": "string"})
         schema.setdefault("repo", {"type": "string", "options": ["hf", "lcl"]})
+        schema.setdefault("model", {"type": "string"})
         schema.setdefault("mmproj", {"type": "string"})
         return schema
 
@@ -239,7 +240,7 @@ class ArkestraAdmin:
 
                     if ctx:
                         webui_status = model_status_for_ctx(ctx)
-                        model_ref = model_cfg.get("model") or (isinstance(model_cfg.get("args"), dict) and model_cfg["args"].get("model", ""))
+                        model_ref = model_cfg.get("args", {}).get("model", "")
                         entry = {
                             "id": ctx.name,
                             "status": webui_status,
@@ -251,7 +252,7 @@ class ArkestraAdmin:
                         }
                     else:
                         default_section = (self.server._arkestra.cm.data.get("default") or {})
-                        raw_model = model_cfg.get("model") or (isinstance(model_cfg.get("args"), dict) and model_cfg["args"].get("model", ""))
+                        raw_model = model_cfg.get("args", {}).get("model", "")
                         resolved = resolve_model_ref(
                             raw=raw_model,
                             default_section=default_section,
@@ -270,7 +271,7 @@ class ArkestraAdmin:
                             "runner_type": runner_type,
                             "backend_id": resolved_backend,
                             "args": model_cfg.get("args", ""),
-                            "model": model_cfg.get("model") or (isinstance(model_cfg.get("args"), dict) and model_cfg["args"].get("model", "")),
+                            "model": model_cfg.get("args", {}).get("model", ""),
                         }
 
                     # Resolve available capabilities per-model (normal chain)
@@ -408,8 +409,10 @@ class ArkestraAdmin:
 
             # Build new model entry from body fields (with safe defaults)
             new_model: Dict[str, Any] = {
-                "model": model_str,
+                "args": {"model": model_str},
             }
+            if "repo" in body and body["repo"] is not None:
+                new_model["args"]["repo"] = body["repo"]
             for key in MODEL_CONFIG_FIELDS:
                 if key in body and body[key] is not None:
                     new_model[key] = body[key]
