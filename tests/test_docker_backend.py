@@ -18,11 +18,19 @@ from model_arkestra.process import ProcessModelRunner
 from model_arkestra.types import RunnerState, _ModelContext, ModelNotStarted, ModelShutdown, MaxRestartsExceeded
 
 
+
 def _make_docker_runner():
     """Create a properly-configured MagicMock runner for docker tests."""
     runner = MagicMock()
     runner._resolve_image = lambda img: img if "/" in img else f"localhost/{img}"
     runner.broadcast_addr = "0.0.0.0"
+    runner.arkestra.resolve_config.return_value = None
+    runner._inference_kwargs = {}
+    # Provide a minimal cm stub so build_model_args can find the model.
+    runner.cm.data.get.side_effect = lambda key, default=None: (
+        {"test-model": {"args": {"ngl": 0}}, "default": {}}
+        if key == "models" else default
+    )
     return runner
 
 
@@ -36,16 +44,7 @@ def _make_podman_runner():
 
 # ── Backend resolution (mirrors Podman tests) ────────────────────
 
-class TestResolveBackendForDocker:
-    """Backend precedence: ctx.backend_id > model_data backend."""
 
-    def test_uses_ctx_backend_id(self):
-        """ctx.backend_id takes priority over model_data backend."""
-        pass
-
-    def test_falls_back_to_model_backend(self):
-        """No ctx.backend_id → model backend key."""
-        pass
 
 
 # ── Command building (consolidated) ───────────────────────────────

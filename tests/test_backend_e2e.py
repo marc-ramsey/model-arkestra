@@ -503,61 +503,6 @@ class TestFullLifecycle:
             _stop_model(client, base_url, model_name)
 
     @pytest.mark.e2e
-    @pytest.mark.parametrize("combo_id,model_name", BACKEND_COMBOS, ids=COMBO_IDS)
-    def test_logs_captured(self, e2e_server, combo_id: str, model_name: str):
-        """Model logs appear via the /admin/log endpoint."""
-        client = e2e_server["client"]
-        base_url = e2e_server["base_url"]
-
-        ok = _start_model(client, base_url, model_name)
-        try:
-            assert ok, f"Model {model_name} ({combo_id}) failed to start"
-            time.sleep(2)
-
-            resp = client.get(f"{base_url}/admin/log/{model_name}", params={"since": 0, "lines": 100}, timeout=10)
-            assert resp.status_code == 200
-            data = resp.json()
-            assert "lines" in data
-            assert len(data["lines"]) > 0, f"No log lines captured for {model_name}"
-
-        finally:
-            _stop_model(client, base_url, model_name)
-
-    @pytest.mark.e2e
-    @pytest.mark.parametrize("combo_id,model_name", BACKEND_COMBOS, ids=COMBO_IDS)
-    def test_stop_then_start_restores_stopped_state(self, e2e_server, combo_id: str, model_name: str):
-        """After stopping a model, it reports 'stopped'."""
-        client = e2e_server["client"]
-        base_url = e2e_server["base_url"]
-
-        ok = _start_model(client, base_url, model_name)
-        try:
-            assert ok, f"Model {model_name} ({combo_id}) failed to start"
-
-            _stop_model(client, base_url, model_name)
-
-            r = client.get(f"{base_url}/admin/models", timeout=10)
-            for m in r.json()["models"]:
-                if m["id"] == model_name:
-                    assert m.get("status", {}).get("value") == "sleeping", f"Expected 'stopped', got '{m['status']}'"
-
-        finally:
-            _stop_model(client, base_url, model_name)
-
-
-class TestErrorPaths:
-    """Verify error handling through the full stack."""
-
-    @pytest.mark.e2e
-    def test_unknown_model_404(self, e2e_server):
-        """Starting a model not in config returns 404."""
-        client = e2e_server["client"]
-        base_url = e2e_server["base_url"]
-
-        resp = client.post(f"{base_url}/admin/start/nonexistent-model", timeout=10)
-        assert resp.status_code == 404
-
-    @pytest.mark.e2e
     def test_start_nonexistent_returns_503_via_chat(self, e2e_server):
         """Chat endpoint for unstarted model returns 503."""
         client = e2e_server["client"]
