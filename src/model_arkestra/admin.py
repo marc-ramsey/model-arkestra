@@ -346,8 +346,15 @@ class ArkestraAdmin:
                 # _server is set via start() or when embedded
                 # (as in live tests that attach server_obj to proxy._server).
                 if self.server._server:
-                    await self.server._server.shutdown()
-                    print("[SHUTDOWN] uvicorn stopped.", flush=True)
+                    try:
+                        await asyncio.wait_for(
+                            self.server._server.shutdown(),
+                            timeout=10.0,
+                        )
+                        print("[SHUTDOWN] uvicorn stopped.", flush=True)
+                    except (asyncio.TimeoutError, Exception):
+                        print("[SHUTDOWN] uvicorn shutdown timed out/errored, forcing exit.", flush=True)
+                        os._exit(1)
                 else:
                     os._exit(0)
 
