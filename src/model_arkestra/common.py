@@ -161,7 +161,7 @@ def resolve_config_path(config_path: Optional[str] = None) -> Path:
     sample-config.yaml for scaffolding.
     """
     if config_path:
-        return Path(config_path).expanduser()
+        return Path(os.path.expandvars(config_path)).expanduser()
     return DEFAULT_CONFIG_DIR / "config.yaml"
 
 
@@ -175,7 +175,7 @@ def resolve_backends_path(config_dir: Optional[str] = None) -> Optional[Path]:
     Returns None if neither resolves to an existing file (caller should
     treat as "no backends configured" and fall back to Containerfile builds).
     """
-    base = Path(config_dir).expanduser() if config_dir else DEFAULT_CONFIG_DIR
+    base = Path(os.path.expandvars(config_dir)).expanduser() if config_dir else DEFAULT_CONFIG_DIR
     path = base / "backends.yaml"
     return path if path.exists() else None
 
