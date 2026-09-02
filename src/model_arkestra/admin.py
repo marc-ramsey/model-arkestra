@@ -450,6 +450,8 @@ class ArkestraAdmin:
                 "args_schema": self._args_schema(model),
                 "status": status,
                 "tags": available_caps,
+                "backends": global_cfg.get("backends") or {},
+                "runner_types": list(ModelArkestra._RUNNER_CLASSES.keys()),
             }
 
         @self._app.put("/admin/config/{model:path}")
@@ -465,9 +467,22 @@ class ArkestraAdmin:
             snapshot = copy.deepcopy(cfg[model])
 
             try:
+                arg_schema = self._args_schema(model) or {}
                 for key, value in body.items():
-                    if key in MODEL_CONFIG_FIELDS or key in (self._args_schema(model) or {}):
+                    if key in MODEL_CONFIG_FIELDS:
                         cfg[model][key] = value
+                    elif key in arg_schema:
+                        # Coerce to schema type so YAML stays typed (int/float not string)
+                        s = arg_schema[key]
+                        t = s.get("type", "string")
+                        if t == "integer":
+                            try: cfg[model][key] = int(value)
+                            except (ValueError, TypeError): pass
+                        elif t == "float":
+                            try: cfg[model][key] = float(value)
+                            except (ValueError, TypeError): pass
+                        else:
+                            cfg[model][key] = value
                 self.server._arkestra.cm.export(self.server._arkestra.cm.config_path)
                 return {"ok": True, "model": model}
             except Exception as exc:
