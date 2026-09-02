@@ -500,7 +500,7 @@ function checkDirty(modelId, panel) {
     else if (!isDirty && val('backend') !== snap.backend) isDirty = true;
     else if (!isDirty && val('runner') !== snap.runner) isDirty = true;
 
-    const btn = panel.querySelector('#btn-save-' + sanitizeId(modelId));
+    const btn = panel.querySelector('[data-action="save"]');
     if (btn) btn.disabled = !isDirty;
 }
 

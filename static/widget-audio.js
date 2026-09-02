@@ -117,9 +117,6 @@ function formatTime(sec) {
     return m + ':' + String(s).padStart(2, '0');
 }
 
-function escapeHtml(s) {
-    return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
 
 // ── Audio playback engine ────────────────────────────────────────
 function playAudioFromUrl(url) {
@@ -227,6 +224,5 @@ async function sendASR(file) {
 }
 
 // ── Expose on window for app.js and widget.js ─────────────────────
-window._audioStream = new AudioStream();
 window._audio = { playAudioFromUrl, sendTTS, sendASR };
 Object.defineProperty(window, 'audioEl', { get: () => _audioEl, configurable: true });
