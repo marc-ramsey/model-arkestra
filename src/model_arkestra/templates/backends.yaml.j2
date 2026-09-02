@@ -17,7 +17,7 @@ backends:
       ctx-size: ${ctx-size}
   rocm-container:
     description: "ROCm container \u2014 kyuz0 toolbox with bundled ROCm libs"
-    runner: container
+    runner: podman
     source_ref: amd-toolbox-rocm
     entrypoint: /usr/local/bin/llama-server
     devices:

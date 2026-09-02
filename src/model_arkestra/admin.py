@@ -36,8 +36,8 @@ from model_arkestra.types import RunnerState
 from model_arkestra.http_proxy import model_status_for_ctx
 
 # ── Model config field definitions (single source of truth) ─────────────
-MODEL_CONFIG_FIELDS = frozenset({"args", "backend", "runner", "tags", "max_log_lines"})
-INFRA_KEYS = frozenset({"args", "backend", "runner", "max_log_lines"})
+MODEL_CONFIG_FIELDS = frozenset({"backend", "runner", "tags", "max_log_lines"})
+INFRA_KEYS = frozenset({"backend", "runner", "max_log_lines"})
 
 
 

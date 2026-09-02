@@ -405,31 +405,30 @@ class ModelArkestra:
         return self._get_runner_instance(runner_type, model_name)
 
     def _resolve_runner_type(self, model_name: str, env_vars: Dict[str, Any], override_backend: Optional[str] = None) -> str:
-        backends = self._cm.get("backends", {})
-        if isinstance(backends, dict):
-            backend_id = self._resolve_backend_id(
-                model_name, env_vars, override_backend
-            )
-            be = backends.get(backend_id, {})
-            if isinstance(be, dict) and "runner" in be:
-                rtype = str(be["runner"])
-                # Resolve special "container" runner to the top-level default
-                if rtype == "container":
-                    rtype = self._cm.get("default/container_type", "process")
-                return rtype
-        runners_cfg = self._cm.get("runners", {})
-        if isinstance(runners_cfg, dict):
-            default_type = str(runners_cfg.get("default", "process"))
-            # If backend resolution gave us something, verify it exists in runners
-            backends_section = self._cm.get("backends", {})  # type: ignore[assignment]
-            if isinstance(backends_section, dict) and override_backend:
-                be = backends_section.get(override_backend, {})
-                if isinstance(be, dict) and "runner" in be:
-                    rtype = str(be["runner"])
-                    if rtype in runners_cfg:
-                        return rtype
-            return default_type
-        return "process"
+        """Resolve runner type: model → backend → runners.default → process.
+
+        Sentinel value 'container' in the chain resolves to default.container_type.
+        """
+        model_cfg = self._cm.get("models", {}).get(model_name, {})
+        cm = self._cm.data
+
+        if runner := model_cfg.get("runner"):
+            return self._normalize_container(runner)
+
+        backend_id = self._resolve_backend_id(model_name, env_vars, override_backend)
+        be = cm.get("backends", {}).get(backend_id, {}) or {}
+        if runner := be.get("runner"):
+            return self._normalize_container(runner)
+
+        runners_cfg = cm.get("runners", {}) or {}
+        default_type = runners_cfg.get("default", "process")
+        return self._normalize_container(default_type)
+
+    def _normalize_container(self, runner_type: str) -> str:
+        """Normalize 'container' sentinel → default.container_type."""
+        if runner_type == "container":
+            return self._cm.get("default/container_type", "process")
+        return runner_type
 
     # ── cache helpers ────────────────────────────────────────────────
 
@@ -523,9 +522,10 @@ class ModelArkestra:
 
         # Resolve runner type from model config — tag-driven routing
         be_id = self._resolve_backend_id(local_name, {}, backend)
-        resolved_runner = str(be_cfg.get("runner", "process")) if (be_cfg := backends_cfg.get(be_id, {})) else "process"
-        if resolved_runner == "container":
-            resolved_runner = self._cm.get("default/container_type", "process")
+        be_cfg = backends_cfg.get(be_id, {})
+        resolved_runner = self._normalize_container(
+            str(be_cfg.get("runner", "process"))
+        )
 
         model_cfg = self.get_model(local_name) or {}
         tags = _resolve_model_tags(model_cfg, self._cm.data, backend_id=be_id)
@@ -541,7 +541,7 @@ class ModelArkestra:
 
         # runner= selects the transport layer
         if runner_type_override is not None:
-            inst = self._get_runner_instance(runner_type_override, local_name)
+            inst = self._get_runner_instance(self._normalize_container(runner_type_override), local_name)
             await inst.start(local_name, port=port, backend=backend, **inference_kwargs)
             ctx = inst._models[local_name]
             ctx.runner_type = runner_type_override
@@ -552,9 +552,7 @@ class ModelArkestra:
         # Resolve backend + runner type from config
         be_id = self._resolve_backend_id(local_name, {}, backend)
         be_cfg = backends_cfg.get(be_id, {})
-        resolved_runner = str(be_cfg.get("runner", "process"))
-        if resolved_runner == "container":
-            resolved_runner = self._cm.get("default/container_type", "process")
+        resolved_runner = self._normalize_container(str(be_cfg.get("runner", "process")))
 
         if resolved_runner not in runners_cfg and resolved_runner not in ("process", "podman", "docker", "onnx", "remote"):
             raise ValueError(
