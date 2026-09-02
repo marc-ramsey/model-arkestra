@@ -31,19 +31,19 @@ backends:
     args:
       ngl: 999
   cuda:
-    runner: ProcessModelRunner
+    runner: process
     source_ref: official-cuda
     args:
       ngl: 999
       ctx-size: ${ctx-size}
   vulkan-radv:
-    runner: ProcessModelRunner
+    runner: process
     source_ref: official-vulkan-radv
     args:
       ngl: 999
       ctx-size: ${ctx-size}
   cpu:
-    runner: ProcessModelRunner
+    runner: process
     source_ref: ggml-org-cpu
     args:
       threads: ${NPROC}
@@ -79,14 +79,12 @@ models:
   gemma-4-e2b:
     model: unsloth/gemma-4-E2B-it-qat-GGUF:UD-Q4_K_XL
     backend: vulkan-radv
-    args:
-      temp: 0.7
-      top-p: 0.95
-      ctx-size: 2048
+    temp: 0.7
+    top-p: 0.95
+    ctx-size: 2048
   qwen3.5-4b:
     model: bartowski/Llama-3.2-1B-Instruct-GGUF:Q4_K_M
     backend: rocm
-    args:
-      temp: 0.7
-      top-p: 0.95
-      ctx-size: 2048
+    temp: 0.7
+    top-p: 0.95
+    ctx-size: 2048

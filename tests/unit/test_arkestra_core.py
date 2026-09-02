@@ -99,20 +99,20 @@ models:
 class TestPortAllocation:
     def test_first_port_is_start_port(self):
         """worker_port() starts at models-start-port."""
-        arkestra = _make_cm(runner_cfg={"default": "ProcessModelRunner"})
+        arkestra = _make_cm(runner_cfg={"default": "process"})
         assert arkestra._next_port == 18000
         port = arkestra.worker_port("m1")
         assert port == 18000
 
     def test_incrementing_allocation(self):
         """worker_port() increments sequentially."""
-        arkestra = _make_cm(runner_cfg={"default": "ProcessModelRunner"})
+        arkestra = _make_cm(runner_cfg={"default": "process"})
         ports = [arkestra.worker_port(f"m{i}") for i in range(4)]
         assert ports == [18000, 18001, 18002, 18003]
 
     def test_exhaustion_raises(self):
         """worker_port() raises RuntimeError when pool is exhausted."""
-        arkestra = _make_cm(runner_cfg={"default": "ProcessModelRunner"})
+        arkestra = _make_cm(runner_cfg={"default": "process"})
         # pool = 4 ports (18000–18003)
         ports = [arkestra.worker_port(f"m{i}") for i in range(4)]
         assert ports == [18000, 18001, 18002, 18003]
@@ -121,7 +121,7 @@ class TestPortAllocation:
 
     def test_shutdown_resets_port_counter(self):
         """shutdown() resets _next_port to models-start-port."""
-        arkestra = _make_cm(runner_cfg={"default": "ProcessModelRunner"})
+        arkestra = _make_cm(runner_cfg={"default": "process"})
         arkestra.worker_port("m1")  # consume one port → next is 18001
 
         class FakeRunner:
@@ -145,17 +145,11 @@ class TestPortAllocation:
 
 class TestRunnerClassMap:
     def test_built_in_runners_registered(self):
-        """process, podman, docker built-ins are auto-registered."""
-        arkestra = _make_cm(runner_cfg={"default": "ProcessModelRunner"})
-        assert "process" in arkestra._runner_classes
-        assert "podman" in arkestra._runner_classes
-        assert "docker" in arkestra._runner_classes
-
-    def test_config_overrides_built_in(self):
-        """Config runners section can override built-in entries."""
-        arkestra = _make_cm(runner_cfg={"default": "ProcessModelRunner"})
-        # Verify the map is accessible and usable
-        assert len(arkestra._runner_classes) >= 3
+        """process, podman, docker built-ins are registered."""
+        arkestra = _make_cm()
+        assert "process" in ModelArkestra._RUNNER_CLASSES
+        assert "podman" in ModelArkestra._RUNNER_CLASSES
+        assert "docker" in ModelArkestra._RUNNER_CLASSES
 
 
 # ── Tests: Runner instance factory ────────────────────────────────────────
@@ -164,21 +158,21 @@ class TestRunnerClassMap:
 class TestRunnerInstanceFactory:
     def test_same_runner_for_same_key(self):
         """_get_runner_instance returns the same object for the same (type, model) key."""
-        arkestra = _make_cm(runner_cfg={"default": "ProcessModelRunner"})
+        arkestra = _make_cm(runner_cfg={"default": "process"})
         r1 = arkestra._get_runner_instance("process", "model-a")
         r2 = arkestra._get_runner_instance("process", "model-a")
         assert r1 is r2
 
     def test_different_keys_get_different_runners(self):
         """Different model names get separate runner instances."""
-        arkestra = _make_cm(runner_cfg={"default": "ProcessModelRunner"})
+        arkestra = _make_cm(runner_cfg={"default": "process"})
         r_a = arkestra._get_runner_instance("process", "model-a")
         r_b = arkestra._get_runner_instance("process", "model-b")
         assert r_a is not r_b
 
     def test_unknown_runner_raises(self):
         """_get_runner_instance raises ValueError for unknown runner types."""
-        arkestra = _make_cm(runner_cfg={"default": "ProcessModelRunner"})
+        arkestra = _make_cm(runner_cfg={"default": "process"})
         with pytest.raises(ValueError, match="Unknown runner type"):
             arkestra._get_runner_instance("nonexistent")
 
@@ -187,7 +181,7 @@ class TestRunnerInstanceFactory:
 class TestStartValidation:
     def test_unknown_model_raises(self):
         """start() raises ValueError for a model not in config."""
-        arkestra = _make_cm(runner_cfg={"default": "ProcessModelRunner"})
+        arkestra = _make_cm(runner_cfg={"default": "process"})
         async def run():
             await arkestra.start("nonexistent-model")
         import asyncio
@@ -198,7 +192,7 @@ class TestStartValidation:
         """start() raises ValueError for a backend not in config."""
         arkestra = _make_cm(
             backend_cfg={"default": "vulkan-radv"},
-            runner_cfg={"default": "ProcessModelRunner"},
+            runner_cfg={"default": "process"},
         )
         async def run():
             await arkestra.start("test-model", backend="ghost-backend")
@@ -212,7 +206,7 @@ class TestStartValidation:
 class TestBackCompatShims:
     def test_process_runner_property(self):
         """.process_runner creates and caches a process runner."""
-        arkestra = _make_cm(runner_cfg={"default": "ProcessModelRunner"})
+        arkestra = _make_cm(runner_cfg={"default": "process"})
         pr = arkestra.process_runner
         assert pr is not None
         # Same instance on second access
@@ -221,7 +215,7 @@ class TestBackCompatShims:
 
     def test_podman_runner_property(self):
         """.podman_runner creates and caches a podman runner."""
-        arkestra = _make_cm(runner_cfg={"default": "ProcessModelRunner"})
+        arkestra = _make_cm(runner_cfg={"default": "process"})
         pdm = arkestra.podman_runner
         assert pdm is not None
         pdm2 = arkestra.podman_runner
@@ -229,7 +223,7 @@ class TestBackCompatShims:
 
     def test_docker_runner_property(self):
         """.docker_runner creates and caches a docker runner."""
-        arkestra = _make_cm(runner_cfg={"default": "ProcessModelRunner"})
+        arkestra = _make_cm(runner_cfg={"default": "process"})
         dkr = arkestra.docker_runner
         assert dkr is not None
         dkr2 = arkestra.docker_runner
@@ -241,12 +235,12 @@ class TestBackCompatShims:
 class TestRunningModelsProperty:
     def test_empty_when_no_runners(self):
         """running_models returns empty set when no runners exist."""
-        arkestra = _make_cm(runner_cfg={"default": "ProcessModelRunner"})
+        arkestra = _make_cm(runner_cfg={"default": "process"})
         assert arkestra.running_models == set()
 
     def test_aggregates_across_runners(self):
         """running_models aggregates RUNNING models from all runner instances."""
-        arkestra = _make_cm(runner_cfg={"default": "ProcessModelRunner"})
+        arkestra = _make_cm(runner_cfg={"default": "process"})
 
         # Manually create two runners with model contexts in RUNNING state
         r1 = arkestra._get_runner_instance("process", "model-a")
@@ -273,12 +267,12 @@ class TestRunningModelsProperty:
 class TestCmDelegation:
     def test_cm_property_returns_config_manager(self):
         """.cm returns the internal ConfigManager."""
-        arkestra = _make_cm(runner_cfg={"default": "ProcessModelRunner"})
+        arkestra = _make_cm(runner_cfg={"default": "process"})
         assert hasattr(arkestra, "cm")
 
     def test_get_model_delegates(self):
         """.get_model() delegates to ConfigManager."""
-        arkestra = _make_cm(runner_cfg={"default": "ProcessModelRunner"})
+        arkestra = _make_cm(runner_cfg={"default": "process"})
         model = arkestra.get_model("test-model")
         assert model is not None
         assert isinstance(model, dict)
@@ -287,7 +281,7 @@ class TestCmDelegation:
         """.get_backend() delegates to ConfigManager."""
         arkestra = _make_cm(
             backend_cfg={"default": "vulkan-radv", "vulkan-radv": {"args": {}}},
-            runner_cfg={"default": "ProcessModelRunner"},
+            runner_cfg={"default": "process"},
         )
         be = arkestra.get_backend("vulkan-radv")
         assert be is not None

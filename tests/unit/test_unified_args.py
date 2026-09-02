@@ -32,12 +32,11 @@ defaults:
 models:
   small-model:
     backend: vulkan-radv
-    args:
-      repo: hugging-face
-      model: fake/model:Q4
-      temp: 0.7
-      top-p: 0.95
-      flash-attn: true
+    repo: hugging-face
+    model: fake/model:Q4
+    temp: 0.7
+    top-p: 0.95
+    flash-attn: true
 """
 
 

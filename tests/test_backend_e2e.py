@@ -297,7 +297,7 @@ def _build_e2e_config(combos: List[Tuple[str, str]], bin_paths: Dict[str, str]) 
     # Runners section
     has_process = any("process" in cfg for cfg in backend_cfgs.values() if isinstance(cfg, dict))
     if has_process:
-        lines.extend(["runners:", "  default: ProcessModelRunner", ""])
+        lines.extend(["runners:", "  default: process", ""])
 
     # Models section
     lines.append("models:")

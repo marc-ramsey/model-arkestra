@@ -12,7 +12,7 @@ backends:
     args: {}
 
 runners:
-  default: ProcessModelRunner
+  default: process
 
 
 models:

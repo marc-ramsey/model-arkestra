@@ -172,9 +172,7 @@ class TestEjectMethod:
         """Model with no checkpoint → stop only, cache_deleted=false."""
         ma = self._make_arkestra()
         # Add a model that has no checkpoint defined
-        ma._cm.data["models"]["bare-model"] = {
-            "args": {},
-        }
+        ma._cm.data["models"]["bare-model"] = {}
 
         runner = MockRunner()
         ctx = make_ctx("bare-model", 18003, RunnerState.RUNNING)
@@ -210,8 +208,8 @@ class TestEjectMethod:
             shared_cache = ma._cache_dir_for_checkpoint(shared_cache_path)
             shared_cache.mkdir(parents=True, exist_ok=True)
 
-            ma._cm.data["models"]["model-a"] = {"args": {"repo": "hugging-face", "model": shared_checkpoint}}
-            ma._cm.data["models"]["model-b"] = {"args": {"repo": "hugging-face", "model": shared_checkpoint}}
+            ma._cm.data["models"]["model-a"] = {"repo": "hugging-face", "model": shared_checkpoint}
+            ma._cm.data["models"]["model-b"] = {"repo": "hugging-face", "model": shared_checkpoint}
 
             runner_a = MockRunner()
             ctx_a = make_ctx("model-a", 18000, RunnerState.RUNNING)
@@ -243,8 +241,8 @@ class TestEjectMethod:
             shared_cache_path = "shared/same-model"
             shared_cache = ma._cache_dir_for_checkpoint(shared_cache_path)
             shared_cache.mkdir(parents=True, exist_ok=True)
-            ma._cm.data["models"]["model-a"] = {"args": {"repo": "hugging-face", "model": shared_checkpoint}}
-            ma._cm.data["models"]["model-b"] = {"args": {"repo": "hugging-face", "model": shared_checkpoint}}
+            ma._cm.data["models"]["model-a"] = {"repo": "hugging-face", "model": shared_checkpoint}
+            ma._cm.data["models"]["model-b"] = {"repo": "hugging-face", "model": shared_checkpoint}
 
             runner_a = MockRunner()
             ctx_a = make_ctx("model-a", 18000, RunnerState.RUNNING)

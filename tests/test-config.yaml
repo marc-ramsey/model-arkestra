@@ -38,28 +38,25 @@ runners:
 
 models:
   qwen3.5-4b:
-    args:
-      repo: hf
-      model: unsloth/Qwen3.5-4B-GGUF:Q4_K_M
-      temp: 1.0
-      top-p: 0.95
-      presence-penalty: 1.5
-      ctx-size: ${ctx-size}
-      jinja: on
+    repo: hf
+    model: unsloth/Qwen3.5-4B-GGUF:Q4_K_M
+    temp: 1.0
+    top-p: 0.95
+    presence-penalty: 1.5
+    ctx-size: ${ctx-size}
+    jinja: on
 
   gemma-4-e2b:
-    args:
-      repo: hf
-      model: unsloth/gemma-4-E2B-it-GGUF:Q4_K_M
-      temp: 0.7
-      top-p: 0.95
-      ctx-size: ${ctx-size}
-      jinja: on
+    repo: hf
+    model: unsloth/gemma-4-E2B-it-GGUF:Q4_K_M
+    temp: 0.7
+    top-p: 0.95
+    ctx-size: ${ctx-size}
+    jinja: on
 
   voxtral-mini:
-    args:
-      repo: hf
-      model: unsloth/Voxtral-Mini-3B-2507-GGUF:Q4_K_M
-      temp: 0.7
-      top-p: 0.95
-      ctx-size: ${ctx-size}
+    repo: hf
+    model: unsloth/Voxtral-Mini-3B-2507-GGUF:Q4_K_M
+    temp: 0.7
+    top-p: 0.95
+    ctx-size: ${ctx-size}

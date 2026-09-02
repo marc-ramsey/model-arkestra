@@ -56,7 +56,6 @@ class ModelArkestra:
 
         self._runners: Dict[str, BaseModelRunner] = {}
         self._runner_kwargs = runner_kwargs
-        self._build_runner_class_map()
         # ── Cluster topology ───────────────────────────────────────
         self._load_clusters()
         # Extract sources section for binary_downloader compatibility
@@ -343,55 +342,27 @@ class ModelArkestra:
 
         return {"object": "list", "data": data}
 
-    # ── runner class registry (config-driven) ─────────────────────────
+    # ── runner class map — one hop, no magic ─────────────────────────
 
-    def _build_runner_class_map(self) -> None:
-        """Build the mapping from runner type strings to concrete classes.
-
-        Built-in classes are registered first keyed by their lowercase name
-        (e.g. ``ProcessModelRunner`` → ``"process"``).  The ``runners:`` section
-        in config.yaml can then override or extend this map.
-        """
-        self._runner_classes: Dict[str, type] = {}
-        self._runner_kwargs_override: Dict[str, Dict[str, Any]] = {}
-
-        # Built-in concrete runners keyed by their lowercase short name.
-        for _cls in (ProcessModelRunner, PodmanModelRunner, DockerModelRunner, OnnxRunner, RemoteModelRunner):
-            key = _cls.__name__.lower().replace("modelrunner", "")
-            self._runner_classes[key] = _cls
-
-        # Aliases for common runner names.
-        self._runner_classes["onnx"] = OnnxRunner
-
-        # Config can override built-ins or add entirely new ones.
-        runner_cfg = self._cm.get("runners", {})
-        if not runner_cfg:
-            return
-
-        for key, entry in runner_cfg.items():
-            if key == "default":
-                continue
-            class_name = str(entry.get("class-name", "")) if isinstance(entry, dict) else str(entry)
-            target = getattr(sys.modules[__name__], class_name, None)
-            if target is not None:
-                self._runner_classes[key] = target
-                self._runner_kwargs_override[key] = (
-                    {k: v for k, v in entry.items() if k != "class-name"}
-                    if isinstance(entry, dict)
-                    else {}
-                )
+    _RUNNER_CLASSES: Dict[str, type] = {
+        "process": ProcessModelRunner,
+        "podman": PodmanModelRunner,
+        "docker": DockerModelRunner,
+        "onnx": OnnxRunner,
+        "remote": RemoteModelRunner,
+    }
 
     def _get_runner_instance(self, runner_type: str, model_name: Optional[str] = None) -> BaseModelRunner:
         """Instantiate a fresh runner per ``model_name`` (one runner per model)."""
         key = f"{runner_type}:{model_name}" if model_name else runner_type
         if key not in self._runners:
-            cls = self._runner_classes.get(runner_type)
+            cls = self._RUNNER_CLASSES.get(runner_type)
             if cls is None:
                 raise ValueError(
                     f"Unknown runner type '{runner_type}'. "
-                    f"Available: {list(self._runner_classes.keys())}"
+                    f"Available: {list(self._RUNNER_CLASSES.keys())}"
                 )
-            self._runners[key] = cls(self._cm, arkestra=self, **{**self._runner_kwargs, **self._runner_kwargs_override.get(runner_type, {})})
+            self._runners[key] = cls(self._cm, arkestra=self, **self._runner_kwargs)
         return self._runners[key]
 
     # ── backward-compat shims (delegate to unified lazy factory) ─────────
@@ -630,7 +601,7 @@ class ModelArkestra:
             if not model_path_str:
                 default_section = self._cm.get("default", {})
                 resolved = resolve_model_ref(
-                    raw=(model_data or {}).get("args", {}).get("model"),
+                    raw=(model_data or {}).get("model"),
                     default_section=default_section,
                     model_repos=self._cm.get("default/model-repos"),
                 )
@@ -728,8 +699,7 @@ class ModelArkestra:
 
         model_cfg = cfg[model_name]
         default_section = self._cm.get("default", {})
-        # model/repo now live under args: like all other inference params
-        raw = model_cfg.get("args", {}).get("model")
+        raw = model_cfg.get("model")
         resolved = resolve_model_ref(
             raw=raw,
             default_section=default_section,
@@ -764,8 +734,7 @@ class ModelArkestra:
                 if ctx.name == model_name or ctx.state != RunnerState.RUNNING:
                     continue
                 other_cfg = cfg.get(ctx.name, {})
-                # model/repo now live under args: like all other inference params
-                other_raw = other_cfg.get("args", {}).get("model")
+                other_raw = other_cfg.get("model")
                 other_resolved = resolve_model_ref(
                     raw=other_raw,
                     default_section=default_section,

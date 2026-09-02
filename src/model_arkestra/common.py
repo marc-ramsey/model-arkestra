@@ -609,17 +609,17 @@ def _dict_to_cli(args_dict: Dict[str, Any]) -> List[str]:
 
 
 
-def _resolve_arg(args: Dict, backend_cfg: Dict, default_section: Dict,
+def _resolve_arg(model_data: Dict, backend_cfg: Dict, default_section: Dict,
                  key: str):
     """Resolve one key through the unified chain.
 
     Resolution order:
-      1. Model args (``args[key]``)
+      1. Model root field (``model_data[key]``)
       2. Backend args (``backend_args["key"]``)
       3. Default section (``default.key``)
       4. None — caller skips missing values
     """
-    for v in (args.get(key), backend_cfg.get("args", {}).get(key),
+    for v in (model_data.get(key), backend_cfg.get("args", {}).get(key),
               default_section.get(key)):
         if v is not None and v != "":
             return v
@@ -633,8 +633,8 @@ def build_model_args(
 ) -> Optional[Dict[str, Any]]:
     """Merge all config args through unified resolution chain.
 
-    Collects keys from model.args and backend args. Resolves each value from:
-    model.args → backend.args → default section. Runtime inference_kwargs override.
+    Collects keys from model root (excluding infra). Resolves each value from:
+    model root → backend.args → default section. Runtime inference_kwargs override.
 
     Infra keys (``backend``, ``runner``, ``tags``, ``max-log-lines``) are skipped.
 
@@ -661,16 +661,12 @@ def build_model_args(
     if not isinstance(backend_cfg, dict):
         backend_cfg = {}
 
-    # ── Collect all unique keys from args sources ────────────────────
-    model_args = model.get("args") or {}
-    backend_args = backend_cfg.get("args") or {}
-    keys: set[str] = set()
-    for src in (model_args, backend_args):
-        keys.update(k for k in src if k not in INFRA_KEYS)
+    # ── Collect all unique keys from model root (skip infra) ─────────
+    keys: set[str] = {k for k in model if k not in INFRA_KEYS}
 
     # ── Resolve each key through unified chain ───────────────────────
     for key in keys:
-        val = _resolve_arg(model_args, backend_cfg, default_section, key)
+        val = _resolve_arg(model, backend_cfg, default_section, key)
         if val is not None:
             result[key] = val
 

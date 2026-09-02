@@ -419,7 +419,7 @@ class BaseModelRunner(ABC):
             # Resolve cache directory — private attr, never serialized
             default_section = (self.cm.data.get("default") or {})
             resolved = resolve_model_ref(
-                raw=model_data.get("args", {}).get("model"),
+                raw=model_data.get("model"),
                 default_section=default_section,
                 model_repos=self.cm.data.get("model-repos"),
             )

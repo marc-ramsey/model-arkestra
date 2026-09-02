@@ -63,7 +63,7 @@ def worker_server():
         backends:
           default: test-backend
         runners:
-          default: ProcessModelRunner
+          default: process
         models:
           gemma:
             repo: hugging-face

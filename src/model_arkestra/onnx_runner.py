@@ -77,7 +77,7 @@ class OnnxRunner(BaseModelRunner):  # type: ignore[name-defined]
         if not model_path:
             default_section = (self.cm.data.get("default") or {})
             resolved = resolve_model_ref(
-                raw=model_data.get("args", {}).get("model"),
+                raw=model_data.get("model"),
                 default_section=default_section,
                 model_repos=self.cm.data.get("model-repos"),
             )
@@ -103,7 +103,7 @@ class OnnxRunner(BaseModelRunner):  # type: ignore[name-defined]
 
         # ── TTS models: use Kokoro class (manages its own ONNX session) ─
         if inference_type == "tts":
-            voices_path = model_data.get("args", {}).get("voices_path", "")
+            voices_path = model_data.get("voices_path", "")
             resolved_voices = self._resolve_model_path(voices_path, ctx, file_pattern="*.bin")
 
             try:
@@ -216,7 +216,7 @@ class OnnxRunner(BaseModelRunner):  # type: ignore[name-defined]
             # Resolve cache directory via unified resolver
             default_section = (self.cm.data.get("default") or {})
             resolved = resolve_model_ref(
-                raw=model_data.get("args", {}).get("model"),
+                raw=model_data.get("model"),
                 default_section=default_section,
                 model_repos=self.cm.data.get("model-repos"),
             )

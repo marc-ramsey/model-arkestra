@@ -240,19 +240,19 @@ class ArkestraAdmin:
 
                     if ctx:
                         webui_status = model_status_for_ctx(ctx)
-                        model_ref = model_cfg.get("args", {}).get("model", "")
+                        model_ref = model_cfg.get("model", "")
                         entry = {
                             "id": ctx.name,
                             "status": webui_status,
                             "port": ctx.port,
                             "runner_type": ctx.runner_type,
                             "backend_id": ctx.backend_id or self._resolve_model_backend(ctx.name, model_cfg),
-                            "args": model_cfg.get("args", ""),
+                            "args": {},
                             "model": model_ref,
                         }
                     else:
                         default_section = (self.server._arkestra.cm.data.get("default") or {})
-                        raw_model = model_cfg.get("args", {}).get("model", "")
+                        raw_model = model_cfg.get("model", "")
                         resolved = resolve_model_ref(
                             raw=raw_model,
                             default_section=default_section,
@@ -270,8 +270,8 @@ class ArkestraAdmin:
                             "port": None,
                             "runner_type": runner_type,
                             "backend_id": resolved_backend,
-                            "args": model_cfg.get("args", ""),
-                            "model": model_cfg.get("args", {}).get("model", ""),
+                            "args": {},
+                            "model": model_cfg.get("model", ""),
                         }
 
                     # Resolve available capabilities per-model (normal chain)
@@ -285,7 +285,7 @@ class ArkestraAdmin:
 
                 # Top-level metadata for dropdown options (static per-server)
                 backends = self.server._arkestra.cm.data.get("backends") or {}
-                runner_types = list(self.server._arkestra._runner_classes.keys()) if hasattr(self.server._arkestra, "_runner_classes") else []
+                runner_types = list(ModelArkestra._RUNNER_CLASSES.keys())
 
                 return {
                     "models": data,
@@ -408,11 +408,11 @@ class ArkestraAdmin:
                 )
 
             # Build new model entry from body fields (with safe defaults)
-            new_model: Dict[str, Any] = {
-                "args": {"model": model_str},
-            }
+            new_model: Dict[str, Any] = {}
+            if model_str:
+                new_model["model"] = model_str
             if "repo" in body and body["repo"] is not None:
-                new_model["args"]["repo"] = body["repo"]
+                new_model["repo"] = body["repo"]
             for key in MODEL_CONFIG_FIELDS:
                 if key in body and body[key] is not None:
                     new_model[key] = body[key]

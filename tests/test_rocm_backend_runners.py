@@ -130,15 +130,15 @@ class TestRunnerClassRegistry:
 
     def test_process_registered(self):
         mr = ModelArkestra(_write_config("models:\n  m1:\n    repo: hugging-face\n    model: test/x:Q4\n"))
-        assert "process" in mr._runner_classes
+        assert "process" in ModelArkestra._RUNNER_CLASSES
 
     def test_podman_registered(self):
         mr = ModelArkestra(_write_config("models:\n  m1:\n    repo: hugging-face\n    model: test/x:Q4\n"))
-        assert "podman" in mr._runner_classes
+        assert "podman" in ModelArkestra._RUNNER_CLASSES
 
     def test_docker_registered(self):
         mr = ModelArkestra(_write_config("models:\n  m1:\n    repo: hugging-face\n    model: test/x:Q4\n"))
-        assert "docker" in mr._runner_classes
+        assert "docker" in ModelArkestra._RUNNER_CLASSES
 
 
 # ── 3. Unknown runner rejected on start ────────────────────────────────────

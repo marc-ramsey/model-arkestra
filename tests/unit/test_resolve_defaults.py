@@ -28,7 +28,7 @@ def backends_cfg():
 @pytest.fixture
 def runners_cfg():
     return {
-        "default": "ProcessModelRunner",
+        "default": "process",
     }
 
 
@@ -86,7 +86,7 @@ class TestRunnerPriority:
             "stub": {"image": "test"},
         }
         _, runner = BaseModelRunner.resolve_defaults(backends_no_runner, runners_cfg)
-        assert runner == "ProcessModelRunner"
+        assert runner == "process"
 
     def test_hardwired_runner_when_no_backend_runner_and_no_runners_section(
         self, backends_cfg
