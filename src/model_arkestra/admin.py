@@ -451,7 +451,8 @@ class ArkestraAdmin:
                 "status": status,
                 "tags": available_caps,
                 "backends": global_cfg.get("backends") or {},
-                "runner_types": list(self.server._arkestra._RUNNER_CLASSES.keys()),
+                "runner_types": list(ModelArkestra._RUNNER_CLASSES.keys()),
+                "default": global_cfg.get("default") or {},
             }
 
         @self._app.put("/admin/config/{model:path}")

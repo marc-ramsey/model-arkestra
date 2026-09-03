@@ -368,6 +368,24 @@ renderers.ConfigPanel = function({ id, fields }) {
                 o.value = String(opt.value); o.textContent = opt.label || opt.value;
                 input.appendChild(o);
             }
+        } else if (f.widget === 'TagsInput' && f.options) {
+            // Multi-select for tags — use a select with size > 1, preserve current selection
+            input = document.createElement('select');
+            input.multiple = true; input.size = Math.min(f.options.length, 6);
+            const current = f.currentTags || [];
+            for (const opt of f.options) {
+                const o = document.createElement('option');
+                o.value = String(opt.value);
+                o.textContent = opt.value;
+                if (current.includes(opt.value)) o.selected = true;
+                input.appendChild(o);
+            }
+            // Store current tags on the select for save() to read back
+            input.dataset.tagsValue = JSON.stringify(current);
+            input.addEventListener('change', () => {
+                const selected = Array.from(input.selectedOptions).map(o => o.value);
+                input.dataset.tagsValue = JSON.stringify(selected);
+            });
         } else if (f.schema?.type === 'integer') {
             input = document.createElement('input'); input.type = 'number'; input.step = '1';
             f.minimum != null && (input.min = f.minimum);
@@ -447,41 +465,68 @@ function renderModelRow(model) {
             const cp = data.config.checkpoint || '';
 
             const fields = [];
+            const defaults = data.default || {};
 
             // 1. Model identity from schema: name, repo, model (in order)
             for (const k of ['name', 'repo', 'model']) {
                 const schema = data.args_schema[k];
                 if (!schema) continue;
                 let value = resolveArgValue(data.config, k);
-                // Apply schema default if not set in config
+                // Apply schema default when not set
                 if (value === '' && schema.default !== undefined) {
                     value = String(schema.default);
                 }
                 fields.push({ name:k, value, label:k, schema, options:schema.options?.map(v=>({value:v})) || undefined });
             }
 
-            // 2. Infra fields: backend, runner
+            // 2. mmproj — between model identity and infra fields
+            const mmprojSchema = data.args_schema['mmproj'];
+            if (mmprojSchema) {
+                let value = resolveArgValue(data.config, 'mmproj');
+                fields.push({ name:'mmproj', value: value || '', label:'mmproj', schema:mmprojSchema });
+            }
+
+            // 3. Infra fields: backend, runner — resolve from defaults if not set
+            const resolvedBackend = data.config.backend || defaults.backend || '';
             const bkOpts = Object.entries(data.backends||{}).map(([k,v]) => ({
                 value: k, label: (typeof v==='object')?(v.host||k):k
             }));
             if (bkOpts.length) {
-                fields.push({ name:'backend', value:data.config.backend,
+                fields.push({ name:'backend', value:resolvedBackend,
                     options:bkOpts, widget:'SelectInput' });
             }
 
-            // 2b. Runner selector
+            // 3b. Runner selector — resolve from defaults if not set
+            const resolvedRunner = data.config.runner || defaults.runner || '';
             const rnOpts = data.runner_types?.map(t => ({value:t})) || [];
             if (rnOpts.length) {
                 const all = [{value:''}]; for (const r of rnOpts) all.push(r);
-                fields.push({ name:'runner', value:data.config.runner, options:all,
+                fields.push({ name:'runner', value:resolvedRunner, options:all,
                     widget:'SelectInput' });
             }
 
-            // 3. Remaining schema keys (mmproj + inference params)
+            // 5. Tags/capabilities — multi-select from available options
+            const currentTags = data.config.tags || [];
+            const tagOpts = (data.tags || []).map(t => ({value: t}));
+            if (tagOpts.length) {
+                fields.push({
+                    name: 'tags', value: Array.isArray(currentTags) ? currentTags.join(',') : '',
+                    label: 'tags', schema: { type: 'string' },
+                    widget: 'TagsInput', options: tagOpts, currentTags
+                });
+            }
+
+            // 6. Remaining schema keys (inference params: ctx-size, temp, etc.)
             for (const k of Object.keys(data.args_schema || {})) {
-                if (['name','repo','model'].includes(k)) continue;
+                if (['name','repo','model','mmproj'].includes(k)) continue;
                 const schema = data.args_schema[k];
                 let value = resolveArgValue(data.config, k);
+                // Resolve from default config first, then schema default
+                if (value === '' && defaults[k] !== undefined) {
+                    value = String(defaults[k]);
+                } else if (value === '' && schema?.default !== undefined) {
+                    value = String(schema.default);
+                }
                 fields.push({ name:k, value, label:k, schema, options:schema.options?.map(v=>({value:v})) || undefined });
             }
 

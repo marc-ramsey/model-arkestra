@@ -37,7 +37,14 @@ function showToast(msg) {
                 const el = fv.querySelector('input, select');
                 if (!el) continue;
                 const name = el.id;
-                body[name] = el.type === 'number' ? Number(el.value) : el.value;
+                // Handle multi-select tags
+                if (el.multiple) {
+                    body[name] = Array.from(el.selectedOptions).map(o => o.value);
+                } else if (el.type === 'number') {
+                    body[name] = Number(el.value);
+                } else {
+                    body[name] = el.value;
+                }
             }
             try {
                 await window.adminPost('/admin/config/'+encodeURIComponent(id), body);
