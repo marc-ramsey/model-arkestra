@@ -206,7 +206,7 @@ renderers.ChatPane = function() {
 
     const inputBar = document.createElement('div');
     inputBar.className = 'chat-input-bar';
-    inputBar.innerHTML = '<input type="text" id="f-chat-input" placeholder="Type a message...">' +
+    inputBar.innerHTML = '<textarea id="f-chat-input" rows="4" placeholder="Type a message..."></textarea>' +
         '<button id="btn-send-tts" title="Speak (TTS)">🔊</button>' +
         '<button id="btn-send-chat" title="Send">Send</button>' +
         '<span class="chat-status" id="chat-status"></span>';
