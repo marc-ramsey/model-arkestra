@@ -448,7 +448,9 @@ function renderModelRow(model) {
     row.className = 'model-row';
     row.dataset.model = model.id;
     row.innerHTML = '<div class="model-name-bar"><span class="status-dot '+statusClass+'"></span>' +
-        '<span class="model-name">'+esc(name)+'</span></div>';
+        '<span class="model-name">'+esc(name)+'</span>' +
+        (model.runner_type ? '<span class="runner-badge" style="font-size:10px;color:var(--text-dim);margin-left:auto;flex-shrink:0;">('+esc(model.runner_type)+')</span>' : '') +
+        '</div>';
 
     // Click -> expand + fetch config (deferred)
     row.addEventListener('click', async (e) => {
@@ -685,6 +687,11 @@ async function sendChat(modelName, inputEl = null) {
             requestAnimationFrame(() => {
                 if (_streamBubble && !abortCtrl.signal.aborted) {
                     _streamBubble.innerHTML = typeof marked !== 'undefined' ? marked.parse(_streamAcc) : _streamAcc + '<span class="cursor"></span>';
+                }
+                // Auto-scroll if user is at bottom
+                const chatDisplay = document.getElementById('chat-display');
+                if (chatDisplay && chatDisplay.scrollHeight - chatDisplay.scrollTop <= chatDisplay.clientHeight + 40) {
+                    chatDisplay.scrollTop = chatDisplay.scrollHeight;
                 }
             });
         }, { signal: abortCtrl.signal });
