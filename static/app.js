@@ -60,7 +60,6 @@ function showToast(msg) {
         },
 
         async sendTTS(text) { await window._audio?.sendTTS(text); },
-        async sendASR(file) { await window._audio?.sendASR(file); },
     };
 
     wireEvents(actions);
@@ -75,7 +74,6 @@ function showToast(msg) {
         // Populate dropdowns
         window.populateSelect('log-model-select', window._modelsCache, '');
         window.populateSelect('chat-model-select', window._modelsCache, '');
-        window.populateSelect('asr-model-select', window._modelsCache, '');
 
         // Insert model rows into accordion body
         const accBody = document.getElementById('model-accordion-items');

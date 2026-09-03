@@ -3,7 +3,6 @@
     { "widget":"SplitPane", "axis":"v", "ratio":50, "children":[
         { "widget":"LogPane" },
         { "widget":"SplitPane", "axis":"v", "ratio":55, "children":[
-            { "widget":"AudioTranscriber" },
             { "widget":"ChatPane" }
         ]}
     ]}

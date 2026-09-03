@@ -197,44 +197,6 @@ body {
 }
 .audio-playback-bar button:hover { border-color: var(--accent); }
 
-/* ── ASR / Audio Transcriber ───────────────────── */
-.pane-audio { display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
-.asr-upload-area {
-    padding: 8px;
-    background: var(--surface-alt);
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-.asr-btn, .asr-upload-hint {
-    padding: 5px 10px; border-radius: var(--radius-sm);
-    font-size: 12px; cursor: pointer;
-}
-.asr-btn {
-    border: 1px solid var(--border); background: var(--surface);
-    color: var(--text); transition: all 0.15s;
-}
-.asr-btn:hover { border-color: var(--accent); background: var(--accent-light); }
-.asr-hint {
-    font-size: 11px; color: var(--text-dim);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.asr-result {
-    flex: 1; min-height: 0;
-    padding: 10px 8px;
-    overflow-y: auto;
-    font-size: 12.5px;
-    line-height: 1.5;
-}
-.asr-status { color: var(--text-dim); font-style: italic; }
-.asr-text {
-    padding: 8px; background: var(--surface-alt);
-    border-radius: var(--radius-sm);
-    white-space: pre-wrap; word-break: break-word;
-}
-.asr-lang { font-size: 10.5px; color: var(--text-dim); margin-top: 4px; }
-
 /* ── Drag dividers ───────────────────────────── */
 .divider-v, .divider {
     width: 5px;
