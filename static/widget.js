@@ -233,25 +233,11 @@ renderers.ChatPane = function() {
     });
 
     // Send chat button and Enter key
-    const sendBtn = inputBar.querySelector('#btn-send-chat');
-    if (sendBtn) {
-        sendBtn.addEventListener('click', () => {
-            const sel = document.getElementById('chat-model-select');
-            const textEl = document.getElementById('f-chat-input');
-            if (sel?.value && textEl?.value.trim()) window.sendChat(sel.value, textEl);
-        });
-    }
-
-    // Enter to send, Shift+Enter for newline
-    const chatInput = inputBar.querySelector('#f-chat-input');
-    if (chatInput) {
-        chatInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                sendBtn?.click();
-            }
-        });
-    }
+    inputBar.querySelector('#btn-send-chat')?.addEventListener('click', () => {
+        const sel = document.getElementById('chat-model-select');
+        const textEl = document.getElementById('f-chat-input');
+        if (sel?.value && textEl?.value.trim()) window.sendChat(sel.value, textEl);
+    });
 
     // Save chat params to localStorage on change
     inputBar.addEventListener('input', (e) => {
