@@ -198,7 +198,7 @@ renderers.ChatPane = function() {
     paramsPanel.id = 'chat-params-panel';
     paramsPanel.innerHTML = '<div class="chat-params-grid">' +
         '<div class="chat-param"><label>Temp</label><input type="number" id="f-chat-temp" min="0" max="2" step="0.05" value="0.7"></div>' +
-        '<div class="chat-param"><label>Max Tokens</label><input type="number" id="f-chat-max-tokens" min="1" max="8192" step="1" value="512"></div>' +
+        '<div class="chat-param"><label>Max Tokens</label><input type="number" id="f-chat-max-tokens" min="1" max="8192" step="1" value="4096"></div>' +
         '<div class="chat-param"><label>Top-P</label><input type="number" id="f-chat-top-p" min="0" max="1" step="0.05" value="0.95"></div>' +
         '<div class="chat-param"><label>Top-K</label><input type="number" id="f-chat-top-k" min="1" max="256" step="1" value="40"></div>' +
         '</div>';
@@ -720,7 +720,7 @@ async function doStream(text, modelName, onData, options = {}) {
             model: info.id || modelName, messages:chatHistory, stream:true,
             temperature: params.temperature??0.7,
             top_p: params.top_p??0.95,
-            max_tokens: params.max_tokens??512,
+            ...(params.max_tokens ? { max_tokens: params.max_tokens } : {}),
         }),
     });
 
