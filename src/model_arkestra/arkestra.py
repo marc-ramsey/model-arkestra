@@ -400,7 +400,7 @@ class ModelArkestra:
         return self._get_runner_instance(runner_type, model_name)
 
     def _resolve_runner_type(self, model_name: str, env_vars: Dict[str, Any], override_backend: Optional[str] = None) -> str:
-        """Resolve runner type: model → backend.runner → default.container_type → runners.default → process."""
+        """Resolve runner type: model → backend.runner → default.container-type → runners.default → process."""
         model_cfg = self._cm.get("models", {}).get(model_name, {})
         cm = self._cm.data
 
@@ -412,15 +412,15 @@ class ModelArkestra:
         if runner := be.get("runner"):
             return self._normalize_container(runner)
 
-        # Global container_type is a fallback, not an override of backend settings
-        default_type = self._cm.get("default/container_type", None) or (
+        # Global container-type is a fallback, not an override of backend settings
+        default_type = self._cm.get("default/container-type", None) or (
             cm.get("runners", {}) or {}).get("default", "process")
         return self._normalize_container(default_type)
 
     def _normalize_container(self, runner_type: str) -> str:
-        """Normalize 'container' sentinel → default.container_type."""
+        """Normalize 'container' sentinel → default.container-type."""
         if runner_type == "container":
-            return self._cm.get("default/container_type", "process")
+            return self._cm.get("default/container-type", "process")
         return runner_type
 
     # ── cache helpers ────────────────────────────────────────────────
@@ -479,7 +479,7 @@ class ModelArkestra:
           boundary.
 
         Runner values: ``process``, ``podman``, ``docker``, or ``container``
-        (resolves to ``container_type`` from top-level config).
+        (resolves to ``container-type`` from top-level config).
 
         Example::
 
