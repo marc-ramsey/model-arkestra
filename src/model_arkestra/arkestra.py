@@ -400,15 +400,17 @@ class ModelArkestra:
         return self._get_runner_instance(runner_type, model_name)
 
     def _resolve_runner_type(self, model_name: str, env_vars: Dict[str, Any], override_backend: Optional[str] = None) -> str:
-        """Resolve runner type: model → backend → runners.default → process.
-
-        Sentinel value 'container' in the chain resolves to default.container_type.
-        """
+        """Resolve runner type: model → default.container_type → backend.runner → runners.default → process."""
         model_cfg = self._cm.get("models", {}).get(model_name, {})
         cm = self._cm.data
 
         if runner := model_cfg.get("runner"):
             return self._normalize_container(runner)
+
+        # Global default.container_type overrides backend-level runner settings
+        container_default = self._cm.get("default/container_type", "process")
+        if container_default != "process":
+            return container_default
 
         backend_id = self._resolve_backend_id(model_name, env_vars, override_backend)
         be = cm.get("backends", {}).get(backend_id, {}) or {}
@@ -416,7 +418,7 @@ class ModelArkestra:
             return self._normalize_container(runner)
 
         runners_cfg = cm.get("runners", {}) or {}
-        default_type = runners_cfg.get("default", "process")
+        default_type = runners_cfg.get("default") or "process"
         return self._normalize_container(default_type)
 
     def _normalize_container(self, runner_type: str) -> str:
