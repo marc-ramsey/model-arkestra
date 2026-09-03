@@ -13,6 +13,43 @@ INFRA_KEYS = frozenset({
 })
 
 
+def _load_schema_registry(config_path: Optional[str]) -> Dict[str, Any]:
+    """Load named schemas from schemas.yaml in the config directory.
+
+    Falls back to bundled templates/schemas.yaml.j2 if none found.
+    """
+    schemas: Dict[str, Any] = {}
+    try:
+        parent = Path(config_path).parent if config_path else Path().resolve()
+        schema_path = parent / "schemas.yaml"
+    except (AttributeError, TypeError):
+        return schemas
+
+    if schema_path.exists():
+        with open(schema_path) as f:
+            schemas = yaml.safe_load(f) or {}
+    else:
+        try:
+            from importlib.resources import files
+            bundled = (files("model_arkestra.templates") / "schemas.yaml.j2").read_text()
+            import jinja2
+            rendered = jinja2.Template(bundled).render()
+            schemas = yaml.safe_load(rendered) or {}
+        except Exception:
+            pass
+    return schemas
+
+
+def _get_inference_keys(model_data: Dict, backend_cfg: Dict, default_section: Dict,
+                        schema: Dict[str, Any]) -> set[str]:
+    """Collect unique inference keys from model + defaults, filtered to schema whitelist."""
+    default_keys = {k for k in (default_section or {}) if k not in INFRA_KEYS}
+    model_keys = {k for k in model_data if k not in INFRA_KEYS}
+    # Filter to only keys that exist in the engine schema
+    schema_keys = set(schema.keys())
+    return (model_keys | default_keys) & schema_keys
+
+
 # ── Model resolution ────────────────────────────────────────────────────────
 
 @dataclass
@@ -580,9 +617,17 @@ def _resolve_arg(model_data: Dict, backend_cfg: Dict, default_section: Dict,
       3. Default section (``default.key``)
       4. None — caller skips missing values
     """
+    def _is_resolved(v):
+        """Return True if value is resolved (not a macro placeholder)."""
+        if v is None or v == "":
+            return False
+        if isinstance(v, str) and "${" in v:
+            return False  # unresolved macro — skip to next level
+        return True
+
     for v in (model_data.get(key), backend_cfg.get("args", {}).get(key),
               default_section.get(key)):
-        if v is not None and v != "":
+        if _is_resolved(v):
             return v
     return None
 
@@ -622,8 +667,17 @@ def build_model_args(
     if not isinstance(backend_cfg, dict):
         backend_cfg = {}
 
-    # ── Collect all unique keys from model root (skip infra) ─────────
-    keys: set[str] = {k for k in model if k not in INFRA_KEYS}
+    # Load schema registry to whitelist valid inference keys
+    schema = _load_schema_registry(str(cm.config_path) if hasattr(cm, 'config_path') else None)
+    model_args_schema = schema.get("model-args", {})
+    bcfg_engine = backend_cfg.get("engine") if isinstance(backend_cfg, dict) else None
+    default_engine = (default_section or {}).get("engine")
+    engines_cfg = cm.data.get("engines", {}) or {}
+    engine_name = bcfg_engine or default_engine or engines_cfg.get("default-engine", "llama-cpp")
+    engine_schema = model_args_schema.get(engine_name, {})
+
+    # Collect inference keys from model + defaults, filtered to schema whitelist
+    keys = _get_inference_keys(model, backend_cfg, default_section, engine_schema)
 
     # ── Resolve each key through unified chain ───────────────────────
     for key in keys:
@@ -631,10 +685,11 @@ def build_model_args(
         if val is not None:
             result[key] = val
 
-    # ── Runtime kwargs override everything (skip infra) ──────────────
+    # ── Runtime kwargs override everything (skip infra & non-schema) ───
     if inference_kwargs:
+        schema_key_set = set(engine_schema.keys()) | {'name', 'model', 'repo', 'mmproj'}
         for k, v in inference_kwargs.items():
-            if k not in INFRA_KEYS:
+            if k not in INFRA_KEYS and k in schema_key_set:
                 result[k] = v
     return result
 
