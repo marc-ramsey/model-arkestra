@@ -27,6 +27,11 @@ class LlamaCppEngine:
         'rea', 'sps', 'v', 'lv', 'm',
     })
 
+    # Map OpenAI/config key names → llama-server CLI flags.
+    _ALIAS_MAP = {
+        'max-tokens': 'n-predict',
+    }
+
     @staticmethod
     def build_cli_args(merged: Dict[str, Any], port: int) -> List[str]:
         """Convert merged param dict + port into llama-server CLI tokens.
@@ -55,7 +60,8 @@ class LlamaCppEngine:
         for key, value in merged.items():
             if key in ('model', 'repo', 'mmproj', 'port'):
                 continue
-            kebab = key.replace('_', '-')
+            # Resolve aliased keys (e.g. max-tokens → n-predict)
+            kebab = LlamaCppEngine._ALIAS_MAP.get(key, key).replace('_', '-')
             prefix = '-' if kebab in LlamaCppEngine._SINGLE_DASH else '--'
             if isinstance(value, bool):
                 if value:
