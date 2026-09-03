@@ -700,7 +700,10 @@ class ArkestraServer:
         except Exception as e:
             latency_ms = round((time.monotonic() - t0) * 1000)
             self._arkestra.log(f"[action=stream_end model={model_name} duration_ms={latency_ms} tokens={tokens_seen}] status=error")
-            raise HTTPException(status_code=503, detail=f"Stream error: {e}")
+            # Never raise from inside a StreamingResponse generator — headers may already be flushed
+            yield _sse_format({"error": str(e), "model": model_name})
+            yield "data: [DONE]\n\n"
+            return
 
         if not first_chunk_sent:
             latency_ms = round((time.monotonic() - t0) * 1000)
@@ -861,7 +864,7 @@ def main(argv: list[str] | None = None) -> None:
         else:
             args.host = "0.0.0.0"
     if args.ready_timeout is None:
-        cfg_to = _cfg_get("default/warmup-time")
+        cfg_to = _cfg_get("default/ready-timeout")
         if cfg_to is not None:
             try:
                 args.ready_timeout = float(cfg_to)

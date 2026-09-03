@@ -451,7 +451,7 @@ class ArkestraAdmin:
                 "status": status,
                 "tags": available_caps,
                 "backends": global_cfg.get("backends") or {},
-                "runner_types": list(ModelArkestra._RUNNER_CLASSES.keys()),
+                "runner_types": list(self.server._arkestra._RUNNER_CLASSES.keys()),
                 "default": global_cfg.get("default") or {},
             }
 
@@ -463,6 +463,17 @@ class ArkestraAdmin:
                 raise HTTPException(
                     status_code=404, detail=f"Model '{model}' not in config"
                 )
+
+            # Check for name conflicts (another model already uses this name)
+            new_name = body.get("name")
+            if isinstance(new_name, str) and new_name:
+                for other_id, other_cfg in cfg.items():
+                    if other_id == model: continue
+                    if str(other_cfg.get("name", "")) == new_name:
+                        raise HTTPException(
+                            status_code=409,
+                            detail=f"Name '{new_name}' already used by model '{other_id}'"
+                        )
 
             # Snapshot for rollback
             snapshot = copy.deepcopy(cfg[model])

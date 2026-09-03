@@ -409,7 +409,8 @@ renderers.ConfigPanel = function({ id, fields }) {
         valueCell.className = 'field-value' + (isFullWidth ? ' full-width' : '');
         if (input) {
             input.id = f.name;
-            input.value = f.value ?? '';
+            // Multi-select selections are already set by TagsInput renderer
+            if (!input.multiple) input.value = f.value ?? '';
             valueCell.appendChild(input);
         }
         el.appendChild(valueCell);
@@ -476,7 +477,7 @@ function renderModelRow(model) {
                 if (value === '' && schema.default !== undefined) {
                     value = String(schema.default);
                 }
-                fields.push({ name:k, value, label:k, schema, options:schema.options?.map(v=>({value:v})) || undefined });
+                fields.push({ name:k, value: k==='name' ? (value || data.model) : value, label:k, schema, options:schema.options?.map(v=>({value:v})) || undefined });
             }
 
             // 2. mmproj — between model identity and infra fields
@@ -728,18 +729,22 @@ async function doStream(text, modelName, onData, options = {}) {
         buf += decoder.decode(value, { stream:true });
 
         // Process complete lines only — incomplete tail stays in buf for next read.
-        // This handles the edge case where a TCP chunk delivers part of an SSE line.
         let idx;
         while ((idx = buf.indexOf('\n')) >= 0) {
             const line = buf.slice(0, idx).trim();
-            buf = buf.slice(idx + 1); // partial next line preserved
+            buf = buf.slice(idx + 1);
             if (!line || line === '[DONE]') continue;
             let t = line.startsWith('data: ') ? line.slice(6) : line;
             try {
                 const p = JSON.parse(t);
+                if (p.error) {
+                    const err = new Error(p.error); err.streamError = true; throw err;
+                }
                 const d = p.choices?.[0]?.delta?.content;
                 if (d) onData(d);
-            } catch {}
+            } catch (e) {
+                if (e.streamError) throw e;
+            }
         }
     }
 }

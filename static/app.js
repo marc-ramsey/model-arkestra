@@ -25,8 +25,8 @@ function showToast(msg) {
     window._configActions = ['reset','stop','start','save','eject'];
 
     const actions = {
-        async start(id)   { await window.adminPost('/admin/start/'+encodeURIComponent(id), {}); },
-        async stop(id)    { await window.adminPost('/admin/stop/'+encodeURIComponent(id), {}); },
+        async start(id)   { try { await window.adminPost('/admin/start/'+encodeURIComponent(id), {}); } catch(e) { showToast('Start failed: '+e.message); } },
+        async stop(id)    { try { await window.adminPost('/admin/stop/'+encodeURIComponent(id), {}); } catch(e) { showToast('Stop failed: '+e.message); } },
         async eject(id)   { try { await window.adminPost('/admin/eject/'+encodeURIComponent(id), {}); } catch(e) { console.error('[app] eject:',e.message); } },
 
         async save(id) {
