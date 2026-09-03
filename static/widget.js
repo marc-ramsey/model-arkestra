@@ -448,14 +448,28 @@ function renderModelRow(model) {
 
             const fields = [];
 
-            // Backend selector
+            // 1. Model identity from schema: name, repo, model (in order)
+            for (const k of ['name', 'repo', 'model']) {
+                const schema = data.args_schema[k];
+                if (!schema) continue;
+                let value = resolveArgValue(data.config, k);
+                // Apply schema default if not set in config
+                if (value === '' && schema.default !== undefined) {
+                    value = String(schema.default);
+                }
+                fields.push({ name:k, value, label:k, schema, options:schema.options?.map(v=>({value:v})) || undefined });
+            }
+
+            // 2. Infra fields: backend, runner
             const bkOpts = Object.entries(data.backends||{}).map(([k,v]) => ({
                 value: k, label: (typeof v==='object')?(v.host||k):k
             }));
-            if (bkOpts.length) fields.push({ name:'backend', value:data.config.backend,
-                options:bkOpts, widget:'SelectInput' });
+            if (bkOpts.length) {
+                fields.push({ name:'backend', value:data.config.backend,
+                    options:bkOpts, widget:'SelectInput' });
+            }
 
-            // Runner selector
+            // 2b. Runner selector
             const rnOpts = data.runner_types?.map(t => ({value:t})) || [];
             if (rnOpts.length) {
                 const all = [{value:''}]; for (const r of rnOpts) all.push(r);
@@ -463,10 +477,12 @@ function renderModelRow(model) {
                     widget:'SelectInput' });
             }
 
-            // Individual args from backend-provided schema
-            for (const [k, schema] of Object.entries(data.args_schema || {})) {
-                fields.push({ name:k, value: resolveArgValue(data.config, k),
-                    label:k, schema:schema });
+            // 3. Remaining schema keys (mmproj + inference params)
+            for (const k of Object.keys(data.args_schema || {})) {
+                if (['name','repo','model'].includes(k)) continue;
+                const schema = data.args_schema[k];
+                let value = resolveArgValue(data.config, k);
+                fields.push({ name:k, value, label:k, schema, options:schema.options?.map(v=>({value:v})) || undefined });
             }
 
             const panel = renderers.ConfigPanel({ id: model.id, fields });
