@@ -565,8 +565,10 @@ body {
     border-radius: var(--radius-sm);
     font-size: 12px;
     font-family: var(--font);
-    resize: none;
-    height: 36px;
+    resize: vertical;
+    min-height: 54px;
+    max-height: 200px;
+    overflow-y: auto;
     outline: none;
 }
 .chat-form textarea:focus { border-color: var(--accent); }
