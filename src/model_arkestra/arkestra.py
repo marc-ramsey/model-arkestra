@@ -514,6 +514,10 @@ class ModelArkestra:
                 f"Unknown backend '{backend}'. Available: {list(backends_cfg.keys())}"
             )
 
+        # Gate on eligible states
+        if not self.can_start(local_name):
+            raise ValueError("model not available")
+
         # Resolve runner type from model config — tag-driven routing
         be_id = self._resolve_backend_id(local_name, {}, backend)
         be_cfg = backends_cfg.get(be_id, {})

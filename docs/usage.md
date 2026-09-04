@@ -90,19 +90,16 @@ See [Architecture](./architecture.md) for port allocation and runner routing det
 
 Stops the running instance and starts a fresh one on the **same port**. Optional keyword args override backend or runner for the new instance.
 
-Calling `start()` again on a stopped model restarts it in-place on the same port (no need to call `stop()` first). Calling `start()` on an already-running model is idempotent — it checks `/health` and returns immediately if the server responds with 200.
+Calling `start()` again on a stopped model restarts it in-place on the same port. `start()` only accepts models in `STOPPED` or `ERROR` state — use `restart()` for `LOADING` or `RUNNING` models.
 
 ```python
-# Identical restart — same config, same port
+# Restart a running model
 await runner.restart("gpt-oss-20b")
 
-# Switch backend (runner resolves to podman from config)
+# Restart a running model with new backend
 await runner.restart("qwen3-4b", backend="rocm")
 
-# Force a specific container runtime regardless of config
-await runner.restart("qwen3-4b", runner="docker")
-
-# Restart a stopped model via start() (same-port, same-backend)
+# Restart a stopped model (same as start)
 await runner.stop("gpt-oss-20b")
 await runner.start("gpt-oss-20b")  # reuses the original port
 
