@@ -32,7 +32,7 @@ dependencies = [
 onnx = ["onnxruntime>=1.28", "transformers>=4.40", "scipy", "kokoro-onnx>=0.1.2"]
 proxy = ["fastapi>=0.115", "uvicorn[standard]>=0.30"]
 langchain = ["langchain-core>=0.3"]
-test = ["httpx", "pytest-asyncio", "requests", "huggingface-hub"]
+test = ["httpx", "pytest-asyncio", "requests", "huggingface-hub", "jinja2"]
 
 [tool.setuptools.package-data]
 model_arkestra = ["templates/*.j2"]

@@ -46,6 +46,10 @@ def _get_inference_keys(model_data: Dict, backend_cfg: Dict, default_section: Di
     """Collect unique inference keys from model + defaults, filtered to schema whitelist."""
     default_keys = {k for k in (default_section or {}) if k not in INFRA_KEYS}
     model_keys = {k for k in model_data if k not in INFRA_KEYS}
+    # Also flatten nested args dict if present
+    nested_args = model_data.get("args")
+    if isinstance(nested_args, dict):
+        model_keys |= {k for k in nested_args if k not in INFRA_KEYS}
     # Filter to only keys that exist in the engine schema
     schema_keys = set(schema.keys())
     return (model_keys | default_keys) & schema_keys
@@ -722,7 +726,15 @@ def _resolve_arg(model_data: Dict, backend_cfg: Dict, default_section: Dict,
             return False  # unresolved macro — skip to next level
         return True
 
-    for v in (model_data.get(key), backend_cfg.get("args", {}).get(key),
+    # Check model root field (flat keys take priority over nested args)
+    model_val = model_data.get(key) if key in model_data else None
+    # Then check nested model-level args dict
+    nested_args = model_data.get("args")
+    nested_val = nested_args.get(key) if isinstance(nested_args, dict) else None
+    backend_args = backend_cfg.get("args") if isinstance(backend_cfg, dict) else {}
+    backend_val = backend_args.get(key) if isinstance(backend_args, dict) else None
+
+    for v in (model_val, nested_val, backend_val,
               default_section.get(key)):
         if _is_resolved(v):
             return v

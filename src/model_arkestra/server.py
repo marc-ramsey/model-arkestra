@@ -864,7 +864,7 @@ def main(argv: list[str] | None = None) -> None:
         else:
             args.host = "0.0.0.0"
     if args.ready_timeout is None:
-        cfg_to = _cfg_get("default/ready-timeout")
+        cfg_to = _cfg_get("default/warmup-time")
         if cfg_to is not None:
             try:
                 args.ready_timeout = float(cfg_to)

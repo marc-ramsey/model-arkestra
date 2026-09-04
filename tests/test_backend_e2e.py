@@ -388,6 +388,19 @@ def _wait_port_free(port: int, timeout: float = 20.0) -> bool:
     return False
 
 
+def _wait_model_port_free(timeout: float = 20.0) -> bool:
+    """Wait for any model port (18000–18004) to be free."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        result = subprocess.run(["ss", "-tlnp"], capture_output=True, text=True, timeout=5)
+        for p in range(18000, 18005):
+            if f":{p}" not in result.stdout:
+                return True
+        time.sleep(0.3)
+    subprocess.run(["fuser", "-k", "-9", "18000/tcp"], capture_output=True, timeout=5)
+    return False
+
+
 def _start_model(client: httpx.Client, base_url: str, model_name: str) -> bool:
     resp = client.post(f"{base_url}/admin/start/{model_name}", timeout=300)
     if resp.status_code != 200:
@@ -412,6 +425,8 @@ def _stop_model(client: httpx.Client, base_url: str, model_name: str) -> None:
         client.post(f"{base_url}/admin/stop-all", timeout=10)
     except Exception:
         pass
+    # Wait for model port to be free so the next param test doesn't collide
+    _wait_model_port_free(timeout=20.0)
 
 
 # ── Fixture ──────────────────────────────────────────────────────────────────

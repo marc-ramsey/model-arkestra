@@ -33,6 +33,8 @@ model-args:
     batch-size:
       type: integer
       minimum: 1
+    ngl:
+      type: integer
     presence-penalty:
       type: float
       step: 0.1
@@ -42,5 +44,7 @@ model-args:
     max-tokens:
       type: integer
       minimum: 1
+    flash-attn:
+      type: boolean
     chat-template-kwargs:
       type: string

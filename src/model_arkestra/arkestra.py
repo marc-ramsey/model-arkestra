@@ -710,7 +710,7 @@ class ModelArkestra:
 
             download_hf_model(resolved.repo_id, cache_dir, log_progress)
 
-            ctx.state = RunnerState.UNCACHED
+            ctx.state = RunnerState.STOPPED
             self.log(f"[download] model={model_name} complete")
         except asyncio.CancelledError:
             self.log(f"[download] model={model_name} cancelled")
@@ -725,7 +725,8 @@ class ModelArkestra:
         """Check if model is eligible for a fresh start."""
         ctx = self.find_context(model_name)
         if not ctx:
-            return False
+            # No context yet — allowed if model is defined in config (fresh start).
+            return self.get_model(model_name) is not None
         return ctx.state in (RunnerState.STOPPED, RunnerState.ERROR)
 
     def can_restart(self, model_name: str) -> bool:
