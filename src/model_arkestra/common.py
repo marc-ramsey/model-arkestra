@@ -3,11 +3,12 @@ from __future__ import annotations
 import os
 import re
 import subprocess as _subprocess
+import time
 from dataclasses import dataclass, field
 from model_arkestra.gpu_detect import detect_all
 from pathlib import Path
 import yaml
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 INFRA_KEYS = frozenset({
     'backend', 'runner', 'tags', 'max-log-lines',
 })
@@ -321,6 +322,102 @@ def resolve_onnx_model_path(
             f"Install with: pip install 'model-arkestra[onnx]'"
         )
 
+
+class _DownloadProgressTqdm:
+    """tqdm-compatible class that captures progress via a callback.
+
+    Used as ``tqdm_class`` for ``snapshot_download``. Not a subclass of
+    ``tqdm`` so it bypasses HF's TTY/disabled detection and is called
+    directly with progress kwargs.
+    """
+
+    def __init__(self, total=None, desc=None, unit="B", unit_scale=False,
+                 callback=None, **kwargs):
+        self._total = total
+        self._desc = desc
+        self._unit = unit
+        self._unit_scale = unit_scale
+        self._callback = callback
+        self._n = 0
+        self._speed = 0
+        self._start_time = time.monotonic()
+        if total and callback:
+            callback({"event": "total", "total_bytes": total, "desc": desc})
+
+    def update(self, n=1):
+        self._n += n
+        elapsed = time.monotonic() - self._start_time
+        self._speed = self._n / elapsed if elapsed > 0 else 0
+        if self._callback:
+            pct = round(self._n / self._total * 100, 1) if self._total else 0
+            self._callback({
+                "event": "progress",
+                "n": self._n,
+                "total": self._total,
+                "pct": pct,
+                "speed": self._speed,
+            })
+
+    def set_postfix_str(self, postfix="", refresh=False):
+        pass
+
+    def close(self):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+
+def download_hf_model(
+    repo_id: str,
+    cache_dir: Path,
+    log_fn: Callable[[str], None],
+    allow_patterns: Optional[List[str]] = None,
+) -> str:
+    """Download a model checkpoint from HuggingFace with progress callbacks.
+
+    Uses ``huggingface_hub.snapshot_download`` with a custom tqdm class
+    to capture progress events and translate them into log-friendly messages.
+
+    Args:
+        repo_id:      HuggingFace repo ID (e.g. "unsloth/Qwen3-4B-GGUF:Q4_K_M").
+        cache_dir:    Cache directory (e.g. ``~/.cache/huggingface/hub``).
+        log_fn:       Callback for progress messages. Receives formatted strings
+                      like ``"qwen3-4b: 25% (3.55/14.2GB, 180MB/s)"``.
+        allow_patterns: Optional glob patterns to filter which files to download.
+
+    Returns:
+        Path to the downloaded snapshot folder.
+
+    Raises:
+        Exception from huggingface_hub on download failure (repo not found,
+        authentication error, network failure, etc.).
+    """
+    def progress_cb(evt):
+        if evt["event"] == "total":
+            total_gb = evt["total_bytes"] / 1e9
+            log_fn(f"{repo_id}: {evt['desc']} ({total_gb:.1f}GB total)")
+        elif evt["event"] == "progress":
+            pct = evt["pct"]
+            downloaded_gb = evt["n"] / 1e9
+            total_gb = evt["total"] / 1e9 if evt["total"] else 0
+            speed_mbs = evt["speed"] / 1e6
+            if total_gb > 0:
+                log_fn(f"{repo_id}: {pct}% ({downloaded_gb:.2f}/{total_gb:.1f}GB, {speed_mbs:.0f}MB/s)")
+            else:
+                log_fn(f"{repo_id}: {downloaded_gb:.2f}GB, {speed_mbs:.0f}MB/s")
+
+    from huggingface_hub import snapshot_download
+
+    return snapshot_download(
+        repo_id,
+        cache_dir=str(cache_dir),
+        allow_patterns=allow_patterns,
+        tqdm_class=_DownloadProgressTqdm,  # custom progress capture
+    )
 
 
 INSPECT_RE = re.compile(r"^(exited|dead|paused|removing)\s*$", re.IGNORECASE)

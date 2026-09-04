@@ -14,6 +14,9 @@ This document covers the full lifecycle of models from startup through crash det
                               ├─ Yes → sleep(restart_delay) → restart
                               │         (reuses same port)
                               └─ No  → state = "error"
+
+  download(model) ─► "downloading" ─► checkpoint present ─► state = "uncached"
+                                                        └─► state = "error" (on failure)
 ```
 
 ## Crash Detection by Backend
@@ -45,6 +48,32 @@ Identical to stop sequencing with two additions:
 After `stop()` or `stop_all()`, models remain tracked with state `STOPPED`. Calling `start()` again on a stopped model restarts it in-place on the same port. This applies to both the orchestration layer and direct runners.
 
 Full teardown (`shutdown`) is the only operation that clears model entries entirely.
+
+## Model Downloads
+
+Model checkpoints can be downloaded independently from starting the model via
+`POST /admin/download/{model}`. This is useful for large models (10–100GB) where
+the download may take considerably longer than the server startup.
+
+**Lifecycle:**
+
+1. Download request creates a context (if none exists) with state `DOWNLOADING`.
+2. Background task calls `huggingface_hub.snapshot_download` with progress callbacks.
+3. Progress is streamed to the model's log buffer — visible via the log pane.
+4. On success, state transitions to `UNCACHED` (checkpoint present, not started).
+5. On failure, state transitions to `ERROR` with error message in `last_error`.
+6. `POST /admin/download/stop/{model}` cancels the download task.
+
+**Cancellation:**
+
+Cancelling a download task stops the background coroutine. Partially downloaded
+files may remain in the cache. On the next download attempt, `snapshot_download`
+resumes from the existing cache.
+
+**Shutdown:**
+
+All active download tasks are cancelled during `shutdown()`. On server restart,
+models revert to their config-defined state (UNCACHED if checkpoint missing).
 
 ## Error States
 

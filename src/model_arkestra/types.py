@@ -15,6 +15,7 @@ class RunnerState(Enum):
     ERROR = auto()
     STOPPING = auto()  # stop() called — do not restart
     UNCACHED = auto()  # checkpoint not yet downloaded
+    DOWNLOADING = auto()  # model checkpoint actively being downloaded
 
     @property
     def is_terminal(self) -> bool:
@@ -45,6 +46,7 @@ class _ModelContext:
         self.last_error: Optional[str] = None
         self.broadcast_addr: str = "0.0.0.0"
         self._remote_base_url: Optional[str] = None  # actual URL for remote models (callers can bypass proxy)
+        self.download_task: Optional[asyncio.Task] = None  # background download task
 
         # Line sequence counter
         self._log_seq: int = 0

@@ -84,6 +84,7 @@ def model_status(state: RunnerState, error_message: str | None = None) -> Dict[s
         RunnerState.STOPPED:  {"value": "sleeping"},
         RunnerState.STOPPING: {"value": "sleeping"},
         RunnerState.UNCACHED: {"value": "unloaded"},
+        RunnerState.DOWNLOADING: {"value": "downloading"},
     }
     entry = state_map.get(state, {})
     if state == RunnerState.ERROR:

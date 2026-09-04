@@ -13,6 +13,7 @@ from model_arkestra.base import BaseModelRunner
 from model_arkestra.common import (
     _resolve_backend, default_cache_root, resolve_config_path,
     resolve_model_ref, resolve_tags as _resolve_model_tags,
+    download_hf_model,
 )
 from model_arkestra.docker import DockerModelRunner
 from model_arkestra.onnx_runner import OnnxRunner
@@ -678,6 +679,67 @@ class ModelArkestra:
                     pass
                 return
 
+    async def _download_model(self, ctx: _ModelContext) -> None:
+        """Background task: download model checkpoint from HuggingFace.
+
+        Resolves the model reference, calls ``snapshot_download`` with
+        progress callbacks, and transitions the context state on
+        completion (UNCACHED) or failure (ERROR).
+        """
+        model_name = ctx.name
+        try:
+            model_data = self.get_model(model_name) or {}
+            raw = model_data.get("model", "")
+            resolved = resolve_model_ref(
+                raw,
+                default_section=(self._cm.data.get("default") or {}),
+                model_repos=self._cm.data.get("model-repos"),
+            )
+            if not resolved.cache_path:
+                raise ValueError(f"No cacheable model ref: {raw}")
+
+            cache_dir = self._cache_dir_for_checkpoint(resolved.cache_path)
+            cache_dir.mkdir(parents=True, exist_ok=True)
+
+            def log_progress(line: str) -> None:
+                ctx._append_log_line(f"[download] {model_name}: {line}")
+
+            download_hf_model(resolved.repo_id, cache_dir, log_progress)
+
+            ctx.state = RunnerState.UNCACHED
+            self.log(f"[download] model={model_name} complete")
+        except asyncio.CancelledError:
+            self.log(f"[download] model={model_name} cancelled")
+            ctx.state = RunnerState.STOPPED
+            raise
+        except Exception as e:
+            ctx.state = RunnerState.ERROR
+            ctx.last_error = str(e)
+            self.log(f"[download] model={model_name} FAILED: {e}", level="ERROR")
+
+    def can_start(self, model_name: str) -> bool:
+        """Check if model is eligible for a fresh start."""
+        ctx = self.find_context(model_name)
+        if not ctx:
+            return False
+        return ctx.state in (RunnerState.STOPPED, RunnerState.ERROR)
+
+    def can_restart(self, model_name: str) -> bool:
+        """Check if model is eligible for a restart."""
+        ctx = self.find_context(model_name)
+        if not ctx:
+            return False
+        return ctx.state in (RunnerState.STOPPED, RunnerState.ERROR,
+                             RunnerState.LOADING, RunnerState.RUNNING)
+
+    def can_stop(self, model_name: str) -> bool:
+        """Check if model is in a state that can be stopped."""
+        ctx = self.find_context(model_name)
+        if not ctx:
+            return False
+        return ctx.state in (RunnerState.LOADING, RunnerState.RUNNING,
+                             RunnerState.STOPPING, RunnerState.DOWNLOADING)
+
     async def eject(self, model_name: str) -> Dict[str, Any]:
         """Stop a model and delete its cached checkpoint files.
 
@@ -775,6 +837,12 @@ class ModelArkestra:
     async def shutdown(self) -> None:
         """Full teardown — stop models, clear runners, reset port allocator."""
         self.log(f"[action=shutdown]")
+        # Cancel any active download tasks
+        for r in self._runners.values():
+            models = getattr(r, '_models', {})
+            for ctx in models.values():
+                if ctx.download_task and not ctx.download_task.done():
+                    ctx.download_task.cancel()
         for r in self._runners.values():
             await r.shutdown()
         self._runners.clear()

@@ -32,6 +32,7 @@ from model_arkestra.common import (
     resolve_tags as _resolve_tags,
 )
 from model_arkestra.http_proxy import model_status_for_ctx
+from model_arkestra.types import RunnerState, _ModelContext
 
 # ── Model config field definitions (single source of truth) ─────────────
 MODEL_CONFIG_FIELDS = frozenset({"backend", "runner", "tags", "max_log_lines"})
@@ -90,10 +91,13 @@ class ArkestraAdmin:
         self._add_stop_all_route()
         self._add_shutdown_route()
         self._add_start_route()
+        self._add_restart_route()
         self._add_eject_route()
         self._add_log_route()
         self._add_global_log_route()
         self._add_images_route()
+        self._add_download_route()
+        self._add_download_stop_route()
         self._installed = True
         return self
 
@@ -247,6 +251,7 @@ class ArkestraAdmin:
                             "backend_id": ctx.backend_id or self._resolve_model_backend(ctx.name, model_cfg),
                             "args": {},
                             "model": model_ref,
+                            "downloading": ctx.state == RunnerState.DOWNLOADING,
                         }
                     else:
                         default_section = (self.server._arkestra.cm.data.get("default") or {})
@@ -270,6 +275,7 @@ class ArkestraAdmin:
                             "backend_id": resolved_backend,
                             "args": {},
                             "model": model_cfg.get("model", ""),
+                            "downloading": False,
                         }
 
                     # Resolve available capabilities per-model (normal chain)
@@ -508,6 +514,9 @@ class ArkestraAdmin:
             if model not in cfg:
                 raise HTTPException(status_code=404, detail=f"Model '{model}' not in config")
 
+            if not self.server._arkestra.can_start(model):
+                raise HTTPException(status_code=409, detail="model not available")
+
             # Build raw kwargs — infra keys handled by ModelArkestra, rest are inference params
             kw = {}
             for key in INFRA_KEYS:
@@ -525,10 +534,6 @@ class ArkestraAdmin:
                     if key not in INFRA_KEYS and value is not None:
                         kw[key] = value
 
-            # If model is already running with overrides, stop first then start fresh
-            if kw and self.server._arkestra.find_context(model):
-                await self.server._arkestra.stop(model)
-
             try:
                 await self.server._arkestra.start(model, **kw)
                 ctx = self.server._arkestra.find_context(model)
@@ -536,6 +541,49 @@ class ArkestraAdmin:
                 return {"ok": True, "model": model, "port": port}
             except Exception as exc:
                 raise HTTPException(status_code=503, detail=f"Start failed: {exc}")
+
+    def _add_restart_route(self) -> None:
+        @self._app.post("/admin/restart/{model:path}")
+        async def admin_restart(model: str, body: Dict[str, Any] | None = None):
+            cfg = self._models_cfg
+            if model not in cfg:
+                raise HTTPException(status_code=404, detail=f"Model '{model}' not in config")
+
+            if not self.server._arkestra.can_restart(model):
+                raise HTTPException(status_code=409, detail="model not available")
+
+            # Build raw kwargs — infra keys handled by ModelArkestra, rest are inference params
+            kw = {}
+            for key in INFRA_KEYS:
+                if body and key in body and body[key] is not None:
+                    val = body[key]
+                    if key == "max_log_lines":
+                        try:
+                            val = int(val)
+                        except (ValueError, TypeError):
+                            continue
+                    kw[key] = val
+            # Any other keys in body are inference params — pass through as-is
+            if body:
+                for key, value in body.items():
+                    if key not in INFRA_KEYS and value is not None:
+                        kw[key] = value
+
+            # Stop current instance if running/loading, then start fresh
+            ctx = self.server._arkestra.find_context(model)
+            if ctx and ctx.state in (RunnerState.RUNNING, RunnerState.LOADING):
+                try:
+                    await self.server._arkestra.stop(model)
+                except Exception:
+                    pass
+
+            try:
+                await self.server._arkestra.start(model, **kw)
+                ctx = self.server._arkestra.find_context(model)
+                port = ctx.port if ctx else None
+                return {"ok": True, "model": model, "port": port}
+            except Exception as exc:
+                raise HTTPException(status_code=503, detail=f"Restart failed: {exc}")
 
     def _add_log_route(self) -> None:
         @self._app.get("/admin/log/{model:path}")
@@ -721,6 +769,79 @@ class ArkestraAdmin:
                 raise HTTPException(status_code=status, detail=detail)
             except Exception as exc:
                 raise HTTPException(status_code=503, detail=f"Eject failed: {exc}")
+
+    def _add_download_route(self) -> None:
+        @self._app.post("/admin/download/{model:path}")
+        async def admin_download(model: str):
+            """Start downloading a model's checkpoint from HuggingFace."""
+            cfg = self._models_cfg
+            if model not in cfg:
+                raise HTTPException(status_code=404, detail=f"Model '{model}' not in config")
+
+            ctx = self.server._arkestra.find_context(model)
+
+            # If already downloading, return existing task
+            if ctx and ctx.state == RunnerState.DOWNLOADING and ctx.download_task:
+                return {"ok": True, "model": model, "already_downloading": True}
+
+            # If model is running or stopping, reject
+            if ctx and ctx.state in (RunnerState.RUNNING, RunnerState.STOPPING):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Cannot download: model is {ctx.state.name.lower()}"
+                )
+
+            # If already uncached, nothing to download
+            if ctx and ctx.state == RunnerState.UNCACHED:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Model '{model}' is already uncached (checkpoint present)"
+                )
+
+            # Create context if it doesn't exist yet
+            if not ctx:
+                model_cfg = cfg.get(model, {})
+                be_id = self._resolve_model_backend(model, model_cfg)
+                cm_data = self.server._arkestra.cm.data
+                _, runner_type = image_and_runner_for_backend(cm_data, be_id)
+                runner = self.server._arkestra._get_runner_instance(runner_type, model)
+                ctx = _ModelContext(model, 0, max_log_lines=2000)
+                ctx.backend_id = be_id
+                ctx.state = RunnerState.DOWNLOADING
+                runner._models[model] = ctx
+
+            # Spawn download task
+            task = asyncio.create_task(
+                self.server._arkestra._download_model(ctx)
+            )
+            ctx.download_task = task
+            return {"ok": True, "model": model}
+
+    def _add_download_stop_route(self) -> None:
+        @self._app.post("/admin/download/stop/{model:path}")
+        async def admin_download_stop(model: str):
+            """Cancel an in-progress model download."""
+            cfg = self._models_cfg
+            if model not in cfg:
+                raise HTTPException(status_code=404, detail=f"Model '{model}' not in config")
+
+            ctx = self.server._arkestra.find_context(model)
+            if not ctx or ctx.state != RunnerState.DOWNLOADING:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No active download for '{model}'"
+                )
+
+            task = ctx.download_task
+            if task:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+            ctx.download_task = None
+            return {"ok": True, "model": model}
 
 
 # Type hints — resolved at runtime via string ref

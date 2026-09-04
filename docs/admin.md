@@ -45,7 +45,10 @@ Missing or incorrect keys return `401 Unauthorized`. Public paths (`/`, `/index.
 | `POST` | `/admin/images/build` | Yes | Build a single backend's image (body: `{"backend": "rocm"}`) |
 | `DELETE` | `/admin/images/{image_tag}` | Yes | Remove an image from the local store |
 | `POST` | `/admin/stop-all` | Yes | Stop all running models — models restart implicitly on next inference request |
-| `POST` | `/admin/shutdown` | Yes | Full server teardown — stops uvicorn and all models
+| `POST` | `/admin/shutdown` | Yes | Full server teardown — stops uvicorn and all models |
+| `POST` | `/admin/restart/{model}` | Yes | Stop and restart a running/loading model (accepts override params) |
+| `POST` | `/admin/download/{model}` | Yes | Start downloading a model checkpoint from HuggingFace |
+| `POST` | `/admin/download/stop/{model}` | Yes | Cancel an in-progress model download |
 
 ### GET /admin/models
 
@@ -98,6 +101,20 @@ Returns a list of all configured models with their full runtime context. Models 
 - `running`, `loading`, `error`, `stopping` — real states from active runner contexts
 - `stopped` — model was previously started but is now stopped; its weights **are** in the HF cache
 - `uncached` — model exists in config but is not currently downloaded
+- `downloading` — model checkpoint is actively being downloaded from HuggingFace
+
+| Field | Source |
+|---|---|
+| `id` | Model name from config |
+| `status` | One of the status values above |
+| `port` | Allocated port (null if not running) |
+| `runner_type` | Runner type string (null if not running) |
+| `backend_id` | Resolved backend (from context or config fallback) |
+| `args` | Model args from config |
+| `repo` | Model repo identifier |
+| `model` | Model path within repo |
+| `tags` | Capability tags for the model |
+| `downloading` | `true` if a checkpoint download is in progress, `false` otherwise |
 
 Top-level metadata (`backends`, `runner_types`) is static for the lifetime of the server.
 
@@ -174,16 +191,16 @@ Returns `404` if the model does not exist. Returns `500` on write failure (confi
 
 ### POST /admin/start/{model}
 
-Start or restart a model. Returns the port assigned.
+Start a model from a stopped or error state. Returns the port assigned.
 
-For an already-running model with transient overrides, this will stop and restart the model:
+**State gate:** Only accepts models in `STOPPED` or `ERROR` state. Models in `LOADING`, `RUNNING`, `STOPPING`, `UNCACHED`, or `DOWNLOADING` return `409 model not available` — use `POST /restart/{model}` for those states.
 
 ```bash
 # Start a stopped model
 curl -X POST 'http://localhost:8080/admin/start/qwen3.5-4b' \
      -H 'X-Admin-Key: your-secret-key'
 
-# Restart with transient overrides (no config change)
+# Start with transient overrides (no config change)
 curl -X POST 'http://localhost:8080/admin/start/qwen3.5-4b' \
      -H 'Content-Type: application/json' \
      -H 'X-Admin-Key: your-secret-key' \
@@ -202,6 +219,23 @@ Infra keys (resolved by ``ModelArkestra.start()``):
 Any other keys are treated as inference parameters for llama.cpp. Only those present in the engine's ``LLAMA_INFER_ARGS`` whitelist (e.g. `temp`, `top-p`, `reasoning-budget`) reach CLI construction; unknown keys are silently dropped to prevent subprocess crashes.
 
 Returns `503` if the model fails to start within `ready_timeout`.
+
+### POST /admin/restart/{model}
+
+Restart a model from a running or loading state. Stops the current instance, then starts fresh with optional override params.
+
+**State gate:** Only accepts models in `STOPPED`, `ERROR`, `LOADING`, or `RUNNING` state. Models in `STOPPING`, `UNCACHED`, or `DOWNLOADING` return `409 model not available`.
+
+```bash
+curl -X POST 'http://localhost:8080/admin/restart/qwen3.5-4b' \
+     -H 'X-Admin-Key: your-secret-key'
+
+# Restart with new params
+curl -X POST 'http://localhost:8080/admin/restart/qwen3.5-4b' \
+     -H 'Content-Type: application/json' \
+     -H 'X-Admin-Key: your-secret-key' \
+     -d '{"temp": 0.7, "top-p": 0.95}'
+```
 
 ### POST /admin/stop/{model}
 
@@ -281,6 +315,54 @@ Returns `200 OK` with a detail report on success:
 }
 ```
 If the model has no model configured, or the cache directory doesn't exist, `cache_deleted` is `false`. Returns `404` if the model doesn't exist in config. Returns `409 Conflict` when a shared-cache conflict prevents eject.
+
+### POST /admin/download/{model}
+
+Start downloading a model's checkpoint from HuggingFace. Returns immediately with `200 OK` — the download runs as a background task. Progress is streamed to the model's log buffer (poll via `GET /admin/log/{model}`).
+
+```bash
+curl -X POST 'http://localhost:8080/admin/download/qwen3.5-4b' \
+     -H 'X-Admin-Key: your-secret-key'
+```
+
+Returns on success:
+```json
+{"ok": true, "model": "qwen3.5-4b"}
+```
+
+Returns `200` with `{"already_downloading": true}` if a download is already in progress for this model.
+
+Returns `409 Conflict` if:
+- Model is already running (`"Cannot download: model is running"`)
+- Model is stopping (`"Cannot download: model is stopping"`)
+- Model is already uncached (`"Model 'qwen3.5-4b' is already uncached"`)
+
+Returns `404` if the model is not in config.
+
+**Progress via log endpoint:**
+```json
+{"lines": [
+  {"seq": 1, "text": "[download] qwen3.5-4b: Fetching 3 files (14.2GB total)"},
+  {"seq": 2, "text": "[download] qwen3.5-4b: 25% (3.55/14.2GB, 180MB/s)"},
+  {"seq": 3, "text": "[download] qwen3.5-4b: 100% (14.2/14.2GB)"}
+]}
+```
+
+### POST /admin/download/stop/{model}
+
+Cancel an in-progress model download. The download task is cancelled and partially downloaded files may remain in cache (subsequent downloads resume from cache).
+
+```bash
+curl -X POST 'http://localhost:8080/admin/download/stop/qwen3.5-4b' \
+     -H 'X-Admin-Key: your-secret-key'
+```
+
+Returns on success:
+```json
+{"ok": true, "model": "qwen3.5-4b"}
+```
+
+Returns `404` if no active download exists for the model.
 
 ### GET /admin/log/{model}?since=N&lines=M
 
@@ -553,6 +635,7 @@ arkestra-admin --server http://localhost:8080 --api-key SECRET <command>
 |---|---|
 | `arkestra-admin models` | List all configured models with status, port, backend |
 | `arkestra-admin start <name>` | Start a model (supports `--port`, `--backend`, `--runner`, `key=value` params) |
+| `arkestra-admin restart <name>` | Restart a running/loading model (supports override params) |
 | `arkestra-admin stop <name>` | Stop a running model |
 | `arkestra-admin stop-all` | Stop all running models |
 | `arkestra-admin config list` | List model names in config |
@@ -565,6 +648,8 @@ arkestra-admin --server http://localhost:8080 --api-key SECRET <command>
 | `arkestra-admin images list` | Show OCI image availability per backend |
 | `arkestra-admin images build <backend> [--tag TAG]` | Build an OCI container image |
 | `arkestra-admin images rm <image_tag>` | Remove a container image |
+| `arkestra-admin download <name>` | Download model checkpoint from HuggingFace |
+| `arkestra-admin download stop <name>` | Cancel an in-progress download |
 | `arkestra-admin shutdown` | Gracefully stop the server |
 
 ### Examples
