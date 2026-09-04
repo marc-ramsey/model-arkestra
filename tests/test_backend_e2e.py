@@ -23,6 +23,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -36,10 +37,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 # ── Models ───────────────────────────────────────────────────────────────────
 
-# CPU models — small enough to run quickly on any machine
+# CPU models — small enough to run quickly on any machine (~1-2 GB)
 _CPU_MODELS = [
-    ("qwen3.5-4b", "unsloth/Qwen3.5-4B-GGUF:Q4_K_M"),
-    ("gemma-4-e2b", "unsloth/gemma-4-E2B-it-qat-GGUF:UD-Q4_K_XL"),
+    ("qwen3.5-4b", "bartowski/Llama-3.2-1B-Instruct-GGUF:Q4_K_M"),
+    ("gemma-4-e2b", "bartowski/SmolLM2-1.7B-Instruct-GGUF:Q4_K_M"),
 ]
 
 # GPU models — use bartowski repos (open, no license gate)
@@ -309,7 +310,66 @@ def _build_e2e_config(combos: List[Tuple[str, str]], bin_paths: Dict[str, str]) 
     return "\n".join(lines)
 
 
-# ── Fixture helpers ──────────────────────────────────────────────────────────
+# ── Test-scoped HF cache ─────────────────────────────────────────────────────
+
+E2E_HF_CACHE: str | None = None
+
+
+def _ensure_e2e_cache() -> str:
+    """Create an isolated HF cache for e2e tests. Returns path."""
+    global E2E_HF_CACHE
+    if E2E_HF_CACHE is not None:
+        return E2E_HF_CACHE
+    cache_dir = tempfile.mkdtemp(prefix="arkestra-e2e-cache-")
+    E2E_HF_CACHE = cache_dir
+    os.environ["HF_HUB_CACHE"] = cache_dir
+    return cache_dir
+
+
+def _download_models_for_combos(combos: List[Tuple[str, str]]) -> None:
+    """Download every unique model ref used by combos into the e2e cache.
+
+    Idempotent — skips refs whose GGUF files already exist in the cache.
+    Called once per test session before any server starts.
+    """
+    cache_dir = _ensure_e2e_cache()
+
+    # Reuse the same mapping logic as _build_e2e_config to find unique refs
+    model_refs: set[str] = set()
+    for combo_id, model_name in combos:
+        if combo_id.startswith("process-vulkan-"):
+            model_key = combo_id.split("-", 2)[-1]
+            entry = next((m for m in _CPU_MODELS if m[0] == model_key), (_GPU_TEST_MODEL_REF,))
+            model_refs.add(entry[1])
+        elif "roc-m" in combo_id or combo_id.startswith("docker-") or combo_id.startswith("podman-"):
+            model_refs.add(_GPU_TEST_MODEL_REF)
+
+    from huggingface_hub import snapshot_download
+
+    for ref in sorted(model_refs):
+        # The :Q4_K_M part is a quant tag, not a git revision — download the repo.
+        hf_repo = ref.split(":", 1)[0]
+        expected_gguf_pattern = ref.split(":")[-1] if ":" in ref else None
+
+        hf_path = Path(str(cache_dir)) / ("models--" + hf_repo.replace("/", "--"))
+        already_cached = (
+            any(f.suffix == ".gguf" for f in sorted(hf_path.rglob("*.gguf")))
+            if hf_path.exists() else False
+        )
+        if already_cached:
+            print(f"  [e2e] Skipped (already cached): {ref}")
+            continue
+        print(f"  [e2e] Downloading {ref} into {cache_dir}")
+        snapshot_download(hf_repo, cache_dir=cache_dir,
+                          local_files_only=False)
+
+
+def _cleanup_e2e_cache() -> None:
+    """Remove the isolated e2e HF cache."""
+    global E2E_HF_CACHE
+    if E2E_HF_CACHE and os.path.isdir(E2E_HF_CACHE):
+        shutil.rmtree(E2E_HF_CACHE)
+        E2E_HF_CACHE = None
 
 E2E_PORT = 18005
 
@@ -429,10 +489,16 @@ def _stop_model(client: httpx.Client, base_url: str, model_name: str) -> None:
     _wait_model_port_free(timeout=20.0)
 
 
-# ── Fixture ──────────────────────────────────────────────────────────────────
+@pytest.fixture(scope="session")
+def e2e_cache():
+    """Session-scope fixture: create isolated HF cache, download all needed models."""
+    _download_models_for_combos(BACKEND_COMBOS)
+    yield E2E_HF_CACHE
+    _cleanup_e2e_cache()
+
 
 @pytest.fixture()
-def e2e_server(request):
+def e2e_server(e2e_cache, request):
     """Per-test self-contained server + client with guaranteed cleanup."""
     admin_key = "test-e2e-key"
     base_url = f"http://127.0.0.1:{E2E_PORT}"
@@ -528,3 +594,121 @@ class TestFullLifecycle:
             "messages": [{"role": "user", "content": "hi"}],
         }, timeout=5)
         assert resp.status_code == 503
+
+    @pytest.mark.e2e
+    def test_e2e_download_pipeline(self, e2e_server, e2e_cache):
+        """Download a model via admin endpoint and verify checkpoint lands on disk."""
+        client = e2e_server["client"]
+        base_url = e2e_server["base_url"]
+
+        # Use the first process-vulkan combo — deterministic from COMBO_IDS
+        download_model_id = "process-vulkan-qwen3.5-4b"
+        if download_model_id not in COMBO_IDS:
+            pytest.skip("Vulkan backend not available")
+
+        # Trigger download
+        resp = client.post(f"{base_url}/admin/download/{download_model_id}", timeout=10)
+        assert resp.status_code == 200, f"Download start failed: {resp.text}"
+
+        # Poll until state becomes STOPPED (download complete) or ERROR
+        deadline = time.time() + 600
+        while time.time() < deadline:
+            r = client.get(f"{base_url}/admin/models", timeout=10)
+            for m in r.json()["models"]:
+                if m["id"] == download_model_id:
+                    state = m.get("status", {}).get("value")
+                    if state == "stopped":
+                        break
+                    elif state == "error":
+                        # Fetch logs to surface the error
+                        log_r = client.get(f"{base_url}/admin/log/{download_model_id}",
+                                           params={"since": 0, "lines": 20}, timeout=10)
+                        logs = [l["text"] for l in log_r.json().get("lines", [])]
+                        pytest.fail(f"Download failed: {logs[-5:] if logs else 'no logs'}")
+                    time.sleep(1)
+        else:
+            pytest.fail("Download did not complete within 600s")
+
+        # Verify the GGUF file exists on disk in the e2e cache
+        hf_cache = _ensure_e2e_cache()
+        from model_arkestra.common import resolve_model_ref
+        cm_data = {}
+        resolved = resolve_model_ref("bartowski/Llama-3.2-1B-Instruct-GGUF:Q4_K_M", cm_data)
+        cache_path = Path(hf_cache) / "models--" + resolved.cache_path
+        # snapshot_download stores files under snapshots/<commit_hash>/
+        found = False
+        for gguf in sorted(cache_path.rglob("*.gguf")):
+            assert gguf.exists(), f"GGUF not found: {gguf}"
+            print(f"  [e2e] Found cached checkpoint: {gguf.name}")
+            found = True
+            break
+        if not found:
+            pytest.fail(
+                f"No GGUF found in cache. Contents of {cache_path}: "
+                f"{list(cache_path.rglob('*'))[:10]}"
+            )
+
+    @pytest.mark.e2e
+    def test_e2e_eject_running_model(self, e2e_server, e2e_cache):
+        """Eject a model while it is running — verify clean stop + cache deletion."""
+        client = e2e_server["client"]
+        base_url = e2e_server["base_url"]
+
+        eject_model_id = "process-vulkan-gemma-4-e2b"
+        if eject_model_id not in COMBO_IDS:
+            pytest.skip("Vulkan backend not available")
+
+        # Start the model so it is RUNNING
+        ok = _start_model(client, base_url, eject_model_id)
+        assert ok, f"{eject_model_id} failed to start"
+
+        # Confirm running state
+        r = client.get(f"{base_url}/admin/models", timeout=10)
+        model_state = None
+        for m in r.json()["models"]:
+            if m["id"] == eject_model_id:
+                model_state = m.get("status", {}).get("value")
+        assert model_state == "loaded", f"Model not loaded (state={model_state})"
+
+        # Eject while running — should stop + delete cache
+        resp = client.post(f"{base_url}/admin/eject/{eject_model_id}", timeout=120)
+        assert resp.status_code == 200, f"Eject failed: {resp.text}"
+        body = resp.json()
+        assert body.get("ok") is True
+
+        # Verify model no longer in context list
+        r = client.get(f"{base_url}/admin/models", timeout=10)
+        remaining = [m["id"] for m in r.json()["models"]]
+        assert eject_model_id not in remaining, \
+            f"Model still in context after eject: {remaining}"
+
+        # Verify cache directory is gone from the e2e temp cache
+        hf_cache = _ensure_e2e_cache()
+        from model_arkestra.common import resolve_model_ref
+        cm_data = {}
+        resolved = resolve_model_ref(
+            "bartowski/SmolLM2-1.7B-Instruct-GGUF:Q4_K_M", cm_data
+        )
+        cache_path = Path(hf_cache) / "models--" + resolved.cache_path
+        assert not cache_path.exists(), \
+            f"Cache directory still exists after eject: {cache_path}"
+
+    @pytest.mark.e2e
+    def test_e2e_eject_stopped_model(self, e2e_server, e2e_cache):
+        """Eject a model that is already stopped — basic cleanup path."""
+        client = e2e_server["client"]
+        base_url = e2e_server["base_url"]
+
+        eject_model_id = "gfx1151-roc-m-process"
+        if eject_model_id not in COMBO_IDS:
+            # Fall back to a docker/podman combo if available
+            for cid in COMBO_IDS:
+                if cid.startswith("docker-") or cid.startswith("podman-"):
+                    eject_model_id = cid
+                    break
+            else:
+                pytest.skip("No process-model combo available for eject test")
+
+        # Eject without ever starting — the stop call is a no-op on STOPPED models
+        resp = client.post(f"{base_url}/admin/eject/{eject_model_id}", timeout=120)
+        assert resp.status_code == 200, f"Eject failed: {resp.text}"
