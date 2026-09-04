@@ -227,7 +227,7 @@ class ArkestraAdmin:
         async def admin_models():
             try:
                 cfg = self._models_cfg
-                contexts_by_name = {ctx.name: ctx for ctx in self.server._arkestra._get_model_contexts()}
+                contexts_by_name = {ctx.name: ctx for ctx in self.server._arkestra.get_model_contexts()}
 
                 data = []
 
@@ -329,7 +329,7 @@ class ArkestraAdmin:
     def _add_stop_all_route(self) -> None:
         @self._app.post("/admin/stop-all")
         async def admin_stop_all():
-            ctxs = list(self.server._arkestra._get_model_contexts())
+            ctxs = list(self.server._arkestra.get_model_contexts())
             running = [c.name for c in ctxs if not c.state.is_terminal]
             if not running:
                 return JSONResponse(
@@ -437,7 +437,7 @@ class ArkestraAdmin:
                     status_code=404, detail=f"Model '{model}' not in config"
                 )
             # Also resolve current runtime status if the model is loaded
-            contexts = {ctx.name: ctx for ctx in self.server._arkestra._get_model_contexts()}
+            contexts = {ctx.name: ctx for ctx in self.server._arkestra.get_model_contexts()}
             ctx = contexts.get(model)
             status = model_status_for_ctx(ctx)
 
@@ -804,7 +804,7 @@ class ArkestraAdmin:
                 be_id = self._resolve_model_backend(model, model_cfg)
                 cm_data = self.server._arkestra.cm.data
                 _, runner_type = image_and_runner_for_backend(cm_data, be_id)
-                runner = self.server._arkestra._get_runner_instance(runner_type, model)
+                runner = self.server._arkestra.get_runner_instance(runner_type, model)
                 ctx = _ModelContext(model, 0, max_log_lines=2000)
                 ctx.backend_id = be_id
                 ctx.state = RunnerState.DOWNLOADING
@@ -812,7 +812,7 @@ class ArkestraAdmin:
 
             # Spawn download task
             task = asyncio.create_task(
-                self.server._arkestra._download_model(ctx)
+                self.server._arkestra.download_model(ctx)
             )
             ctx.download_task = task
             return {"ok": True, "model": model}

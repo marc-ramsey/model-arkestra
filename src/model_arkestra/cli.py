@@ -43,7 +43,7 @@ async def chat_direct(config_path: Optional[str], model_name: str, broadcast_add
         await runner.start(model_name)
 
         # Grab the allocated port for display
-        ctx = runner._get_model_contexts()[0] if runner._get_model_contexts() else None
+        ctx = runner.get_model_contexts()[0] if runner.get_model_contexts() else None
         port_str = f" (port {ctx.port})" if ctx else ""
         print(f"\nChatting with {model_name}{port_str}")
         print("Type /help for commands, /quit to exit.\n")

@@ -315,7 +315,7 @@ class ArkestraServer:
         async def chat_completions(req: ChatCompletionRequest):
             model_name = self.openai_aliases.get(req.model, req.model)
             # Only start if not already running — avoid consuming extra ports
-            if not any(ctx.name == model_name for ctx in self._arkestra._get_model_contexts()):
+            if not any(ctx.name == model_name for ctx in self._arkestra.get_model_contexts()):
                 try:
                     await self._arkestra.start(model_name)
                 except Exception as e:

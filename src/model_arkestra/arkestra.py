@@ -296,7 +296,7 @@ class ModelArkestra:
 
     # ── model introspection (runtime state) ────────────────────────────
 
-    def _get_model_contexts(self) -> list[_ModelContext]:
+    def get_model_contexts(self) -> list[_ModelContext]:
         """Return all tracked _ModelContext objects across every runner."""
         contexts: list[_ModelContext] = []
         for r in self._runners.values():
@@ -306,7 +306,7 @@ class ModelArkestra:
     def find_context(self, model_name: str) -> Optional[_ModelContext]:
         """Return the _ModelContext for *model_name*, or None."""
         _, _, local_name = self.resolve_model_cluster_addr(model_name)
-        for ctx in self._get_model_contexts():
+        for ctx in self.get_model_contexts():
             if ctx.name == local_name:
                 return ctx
         return None
@@ -315,7 +315,7 @@ class ModelArkestra:
         """OpenAI-compatible ``/v1/models`` response with WebUI status fields."""
         from time import time
 
-        contexts_by_name = {ctx.name: ctx for ctx in self._get_model_contexts()}
+        contexts_by_name = {ctx.name: ctx for ctx in self.get_model_contexts()}
         data = []
         for model_name in self.get_models():
             # Skip remote-cluster models (not tracked locally)
@@ -348,7 +348,7 @@ class ModelArkestra:
         "remote": RemoteModelRunner,
     }
 
-    def _get_runner_instance(self, runner_type: str, model_name: Optional[str] = None) -> BaseModelRunner:
+    def get_runner_instance(self, runner_type: str, model_name: Optional[str] = None) -> BaseModelRunner:
         """Instantiate a fresh runner per ``model_name`` (one runner per model)."""
         key = f"{runner_type}:{model_name}" if model_name else runner_type
         if key not in self._runners:
@@ -366,23 +366,23 @@ class ModelArkestra:
     @property
     def process_runner(self) -> ProcessModelRunner:
         if "process" not in self._runners:
-            self._get_runner_instance("process")
+            self.get_runner_instance("process")
         return self._runners["process"]  # type: ignore[return-value]
 
     @property
     def podman_runner(self) -> PodmanModelRunner:
         if "podman" not in self._runners:
-            self._get_runner_instance("podman")
+            self.get_runner_instance("podman")
         return self._runners["podman"]  # type: ignore[return-value]
 
     @property
     def docker_runner(self) -> DockerModelRunner:
         if "docker" not in self._runners:
-            self._get_runner_instance("docker")
+            self.get_runner_instance("docker")
         return self._runners["docker"]  # type: ignore[return-value]
 
     # ── backend resolution ─────────────────────────────────────────────
-    def _resolve_backend_id(self, model_name: str, env_vars: Dict[str, Any], override: Optional[str] = None) -> str:
+    def resolve_backend_id(self, model_name: str, env_vars: Dict[str, Any], override: Optional[str] = None) -> str:
         if override:
             return override
         ctx = self.find_context(model_name)
@@ -397,10 +397,10 @@ class ModelArkestra:
         for r in self._runners.values():
             if model_name in r._models and r._models[model_name].state == RunnerState.RUNNING:
                 return r
-        runner_type = self._resolve_runner_type(model_name, env_vars, backend)
-        return self._get_runner_instance(runner_type, model_name)
+        runner_type = self.resolve_runner_type(model_name, env_vars, backend)
+        return self.get_runner_instance(runner_type, model_name)
 
-    def _resolve_runner_type(self, model_name: str, env_vars: Dict[str, Any], override_backend: Optional[str] = None) -> str:
+    def resolve_runner_type(self, model_name: str, env_vars: Dict[str, Any], override_backend: Optional[str] = None) -> str:
         """Resolve runner type: model → backend.runner → default.container-type → runners.default → process."""
         model_cfg = self._cm.get("models", {}).get(model_name, {})
         cm = self._cm.data
@@ -408,7 +408,7 @@ class ModelArkestra:
         if runner := model_cfg.get("runner"):
             return self._normalize_container(runner)
 
-        backend_id = self._resolve_backend_id(model_name, env_vars, override_backend)
+        backend_id = self.resolve_backend_id(model_name, env_vars, override_backend)
         be = cm.get("backends", {}).get(backend_id, {}) or {}
         if runner := be.get("runner"):
             return self._normalize_container(runner)
@@ -519,7 +519,7 @@ class ModelArkestra:
             raise ValueError("model not available")
 
         # Resolve runner type from model config — tag-driven routing
-        be_id = self._resolve_backend_id(local_name, {}, backend)
+        be_id = self.resolve_backend_id(local_name, {}, backend)
         be_cfg = backends_cfg.get(be_id, {})
         resolved_runner = self._normalize_container(
             str(be_cfg.get("runner", "process"))
@@ -539,7 +539,7 @@ class ModelArkestra:
 
         # runner= selects the transport layer
         if runner_type_override is not None:
-            inst = self._get_runner_instance(self._normalize_container(runner_type_override), local_name)
+            inst = self.get_runner_instance(self._normalize_container(runner_type_override), local_name)
             await inst.start(local_name, port=port, backend=backend, **inference_kwargs)
             ctx = inst._models[local_name]
             ctx.runner_type = runner_type_override
@@ -548,7 +548,7 @@ class ModelArkestra:
             return
 
         # Resolve backend + runner type from config
-        be_id = self._resolve_backend_id(local_name, {}, backend)
+        be_id = self.resolve_backend_id(local_name, {}, backend)
         be_cfg = backends_cfg.get(be_id, {})
         resolved_runner = self._normalize_container(str(be_cfg.get("runner", "process")))
 
@@ -558,7 +558,7 @@ class ModelArkestra:
                 f"Available runners: {list(runners_cfg.keys())}"
             )
 
-        runner = self._get_runner_instance(resolved_runner, local_name)
+        runner = self.get_runner_instance(resolved_runner, local_name)
         await runner.start(local_name, port=port, backend=backend, **inference_kwargs)
         ctx = runner._models[local_name]
         ctx.runner_type = resolved_runner
@@ -585,7 +585,7 @@ class ModelArkestra:
         run in-process. The runner manages the InferenceSession lifecycle.
         """
         # Find or create the onnx runner for this model
-        runner = self._get_runner_instance("onnx", model_name)
+        runner = self.get_runner_instance("onnx", model_name)
 
         # Create context manually — no port allocation needed
         ctx = self.find_context(model_name)
@@ -641,7 +641,7 @@ class ModelArkestra:
             ctx.backend_id = "remote"
             ctx.cluster = cluster_name
             ctx._remote_base_url = base_url
-            runner = self._get_runner_instance("remote")
+            runner = self.get_runner_instance("remote")
             runner._models[local_name] = ctx  # noqa: SLF001
             ctx._runner = runner
 
@@ -683,7 +683,7 @@ class ModelArkestra:
                     pass
                 return
 
-    async def _download_model(self, ctx: _ModelContext) -> None:
+    async def download_model(self, ctx: _ModelContext) -> None:
         """Background task: download model checkpoint from HuggingFace.
 
         Resolves the model reference, calls ``snapshot_download`` with
@@ -788,7 +788,7 @@ class ModelArkestra:
         # Safety check: other running contexts sharing this cache?
         if cache_dir.exists():
             targets = []
-            for ctx in self._get_model_contexts():
+            for ctx in self.get_model_contexts():
                 if ctx.name == model_name or ctx.state != RunnerState.RUNNING:
                     continue
                 other_cfg = cfg.get(ctx.name, {})

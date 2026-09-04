@@ -159,22 +159,22 @@ class TestRunnerInstanceFactory:
     def test_same_runner_for_same_key(self):
         """_get_runner_instance returns the same object for the same (type, model) key."""
         arkestra = _make_cm(runner_cfg={"default": "process"})
-        r1 = arkestra._get_runner_instance("process", "model-a")
-        r2 = arkestra._get_runner_instance("process", "model-a")
+        r1 = arkestra.get_runner_instance("process", "model-a")
+        r2 = arkestra.get_runner_instance("process", "model-a")
         assert r1 is r2
 
     def test_different_keys_get_different_runners(self):
         """Different model names get separate runner instances."""
         arkestra = _make_cm(runner_cfg={"default": "process"})
-        r_a = arkestra._get_runner_instance("process", "model-a")
-        r_b = arkestra._get_runner_instance("process", "model-b")
+        r_a = arkestra.get_runner_instance("process", "model-a")
+        r_b = arkestra.get_runner_instance("process", "model-b")
         assert r_a is not r_b
 
     def test_unknown_runner_raises(self):
         """_get_runner_instance raises ValueError for unknown runner types."""
         arkestra = _make_cm(runner_cfg={"default": "process"})
         with pytest.raises(ValueError, match="Unknown runner type"):
-            arkestra._get_runner_instance("nonexistent")
+            arkestra.get_runner_instance("nonexistent")
 
 
 
@@ -243,8 +243,8 @@ class TestRunningModelsProperty:
         arkestra = _make_cm(runner_cfg={"default": "process"})
 
         # Manually create two runners with model contexts in RUNNING state
-        r1 = arkestra._get_runner_instance("process", "model-a")
-        r2 = arkestra._get_runner_instance("podman", "model-b")
+        r1 = arkestra.get_runner_instance("process", "model-a")
+        r2 = arkestra.get_runner_instance("podman", "model-b")
         arkestra._runners["process:model-a"] = r1
         arkestra._runners["podman:model-b"] = r2
 

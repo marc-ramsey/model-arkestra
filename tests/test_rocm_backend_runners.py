@@ -112,15 +112,15 @@ class TestRunnerTypeFromConfig:
 
     def test_rocm_process_resolves_to_process(self):
         mr = ModelArkestra(cfg_rocm_process())
-        assert mr._resolve_runner_type("test-rocm-process", {}, None) == "process"
+        assert mr.resolve_runner_type("test-rocm-process", {}, None) == "process"
 
     def test_rocm_podman_resolves_to_podman(self):
         mr = ModelArkestra(cfg_rocm_podman())
-        assert mr._resolve_runner_type("test-rocm-podman", {}, None) == "podman"
+        assert mr.resolve_runner_type("test-rocm-podman", {}, None) == "podman"
 
     def test_rocm_docker_resolves_to_docker(self):
         mr = ModelArkestra(cfg_rocm_docker())
-        assert mr._resolve_runner_type("test-rocm-docker", {}, None) == "docker"
+        assert mr.resolve_runner_type("test-rocm-docker", {}, None) == "docker"
 
 
 # ── 2. Runner class registry ───────────────────────────────────────────────
@@ -175,7 +175,7 @@ class TestBackendResolution:
         cfg = _write_config("models:\n  m1:\n    repo: hugging-face\n    model: test/x:Q4\n")
         mr = ModelArkestra(cfg)
         # Falls back to BaseModelRunner._DEFAULT_BACKEND when no backend set
-        assert mr._resolve_backend_id("m1", {}, None) == "cpu"
+        assert mr.resolve_backend_id("m1", {}, None) == "cpu"
 
     def test_flat_backend_default_key(self):
         """backend-default at top level is respected."""
@@ -184,7 +184,7 @@ class TestBackendResolution:
             "models:\n  m1:\n    repo: hugging-face\n    model: test/x:Q4\n"
         )
         mr = ModelArkestra(cfg)
-        assert mr._resolve_backend_id("m1", {}, None) == "my-custom-backend"
+        assert mr.resolve_backend_id("m1", {}, None) == "my-custom-backend"
 
 
 # ── 5. Backend args are resolved correctly ────────────────────────────────
@@ -244,8 +244,8 @@ class TestMixedBackendsInConfig:
                 backend: rocm-podman
         """))
         mr = ModelArkestra(cfg)
-        assert mr._resolve_runner_type("fast-model", {}, None) == "process"
-        assert mr._resolve_runner_type("gpu-model", {}, None) == "podman"
+        assert mr.resolve_runner_type("fast-model", {}, None) == "process"
+        assert mr.resolve_runner_type("gpu-model", {}, None) == "podman"
 
     def test_all_three_runners_in_one_config(self):
         cfg = _write_config(textwrap.dedent("""\
@@ -274,9 +274,9 @@ class TestMixedBackendsInConfig:
                 backend: gpu-docker
         """))
         mr = ModelArkestra(cfg)
-        assert mr._resolve_runner_type("m-proc", {}, None) == "process"
-        assert mr._resolve_runner_type("m-pod", {}, None) == "podman"
-        assert mr._resolve_runner_type("m-docker", {}, None) == "docker"
+        assert mr.resolve_runner_type("m-proc", {}, None) == "process"
+        assert mr.resolve_runner_type("m-pod", {}, None) == "podman"
+        assert mr.resolve_runner_type("m-docker", {}, None) == "docker"
 
 
 # ── 8. Env vars from config are dicts (not _Environ) ─────────────────
