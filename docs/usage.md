@@ -204,7 +204,7 @@ These three methods expose live model state tracked at runtime (port, backend, r
 ### List all tracked model contexts
 
 ```python
-contexts = runner._get_model_contexts()
+contexts = runner.get_model_contexts()
 for ctx in contexts:
     print(f"{ctx.name}: port={ctx.port}, state={ctx.state}")
 # → qwen3-4b: port=18000, state=RunnerState.RUNNING

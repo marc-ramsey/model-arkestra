@@ -12,7 +12,7 @@ The `ModelArkestra` class is the centralized entry point for orchestrating multi
 
 ### Backward-compat shims
 
-The properties `.process_runner`, `.podman_runner`, and `.docker_runner` still exist for backward compatibility. Each delegates to the unified lazy factory (`_get_runner_instance`) so they behave identically to the config-driven path.
+The properties `.process_runner`, `.podman_runner`, and `.docker_runner` still exist for backward compatibility. Each delegates to the unified lazy factory (`get_runner_instance`) so they behave identically to the config-driven path.
 
 ## Methods
 
@@ -31,7 +31,7 @@ Infra keys (`port`, `backend`, `runner`) control routing and lifecycle. Everythi
 
 Runner type resolution follows precedence: explicit `runner=` arg → `backends.<id>.runner` → `runners:` config → default "process".
 
-If the model already exists and is in a STOPPED state, it restarts in-place on the same port. If it is already RUNNING, `/health` is polled — 200 returns immediately, anything else continues startup. Polls `/health` until ready or timeout. Raises `ServerReadyTimeout` on health-check failure (not on intermediate 502/504; those raise `RunnerError`).
+If the model already exists and is in `STOPPED` or `ERROR` state, it restarts in-place on the same port. If it is already RUNNING, `/health` is polled — 200 returns immediately, anything else continues startup. Polls `/health` until ready or timeout. Raises `ServerReadyTimeout` on health-check failure (not on intermediate 502/504; those raise `RunnerError`).
 
 ```python
 # Simple — use config as-is
@@ -171,7 +171,7 @@ Read-only property returning the names of all models currently in `"running"` st
 
 ## Model Introspection
 
-### `_get_model_contexts() -> list[_ModelContext]`
+### `get_model_contexts() -> list[_ModelContext]`
 
 Internal aggregation: returns every tracked `_ModelContext` across all runners. Each context carries `name`, `port`, `state` (`RunnerState` enum), `backend_id`, `runner_type`, `restart_count`, and `last_error`. Callers who need detailed runtime info should use this.
 

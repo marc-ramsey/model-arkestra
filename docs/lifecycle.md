@@ -15,7 +15,7 @@ This document covers the full lifecycle of models from startup through crash det
                               │         (reuses same port)
                               └─ No  → state = "error"
 
-  download(model) ─► "downloading" ─► checkpoint present ─► state = "uncached"
+  download(model) ─► "downloading" ─► checkpoint present ─► state = "stopped"
                                                         └─► state = "error" (on failure)
 ```
 
@@ -60,7 +60,7 @@ the download may take considerably longer than the server startup.
 1. Download request creates a context (if none exists) with state `DOWNLOADING`.
 2. Background task calls `huggingface_hub.snapshot_download` with progress callbacks.
 3. Progress is streamed to the model's log buffer — visible via the log pane.
-4. On success, state transitions to `UNCACHED` (checkpoint present, not started).
+4. On success, state transitions to `STOPPED` (checkpoint present, ready to start).
 5. On failure, state transitions to `ERROR` with error message in `last_error`.
 6. `POST /admin/download/stop/{model}` cancels the download task.
 
@@ -73,7 +73,7 @@ resumes from the existing cache.
 **Shutdown:**
 
 All active download tasks are cancelled during `shutdown()`. On server restart,
-models revert to their config-defined state (UNCACHED if checkpoint missing).
+models revert to their config-defined state; models with a checkpoint will be STOPPED.
 
 ## Error States
 

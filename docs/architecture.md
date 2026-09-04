@@ -11,7 +11,7 @@ Model Arkestra handles port allocation and backend→runner routing.
 │                                                  │
 │  __build__runner_class_map() → config-driven     │
 │  runners: section maps type → class              │
-│  _get_runner_instance(type, model) → lazy factory│
+│  get_runner_instance(type, model) → lazy factory│
 └──────┬──────────────────┬───────────────────────┘
        │                  │
        ▼                  ▼
