@@ -504,7 +504,7 @@ class BaseModelRunner(ABC):
         ctx = self._models.get(model_name)
         if not ctx:
             return
-        # Cancel any active download task
+        # Cancel any active pull task
         if ctx.download_task and not ctx.download_task.done():
             ctx.download_task.cancel()
         # Cancel any active log-capture task (containers only — no-op for processes)

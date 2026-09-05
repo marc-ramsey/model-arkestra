@@ -14,8 +14,8 @@ class RunnerState(Enum):
     RUNNING = auto()
     ERROR = auto()
     STOPPING = auto()  # stop() called — do not restart
-    UNCACHED = auto()  # checkpoint not yet downloaded
-    DOWNLOADING = auto()  # model checkpoint actively being downloaded
+    UNCACHED = auto()  # checkpoint not yet pulled
+    DOWNLOADING = auto()  # model checkpoint actively being pulled
 
     @property
     def is_terminal(self) -> bool:

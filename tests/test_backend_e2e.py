@@ -90,25 +90,28 @@ _E2E_HF_CACHE: str | None = None
 
 
 def _ensure_e2e_cache() -> str:
-    """Create an isolated HF cache in /tmp. Returns path."""
+    """Create an isolated HF cache in /tmp. Returns path.
+
+    Uses a stable temp dir name so prior e2e runs are reused across sessions.
+    """
     global _E2E_HF_CACHE
     if _E2E_HF_CACHE is not None:
         return _E2E_HF_CACHE
-    cache_dir = tempfile.mkdtemp(prefix="arkestra-e2e-cache-")
-    os.environ["HF_HUB_CACHE"] = cache_dir
-    _E2E_HF_CACHE = cache_dir
-    return cache_dir
+    cache_dir = Path("/tmp/arkestra-e2e-cache")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    _E2E_HF_CACHE = str(cache_dir)
+    return _E2E_HF_CACHE
 
 
 def _download_models_for_e2e() -> None:
-    """Ensure every model ref has GGUF files in the e2e cache.
+    """Ensure every model ref has GGUF files in the isolated e2e cache.
 
-    Priority: prior e2e run (valid HF structure) → copy from default HF cache →
-    fresh download with allow_patterns. Runs once per session via the ``e2e_cache`` fixture.
+    Reuses prior e2e run if valid. Otherwise pulls via snapshot_download,
+    which checks disk caches automatically before hitting the network.
+    Runs once per session via the ``e2e_cache`` fixture.
     """
-    import huggingface_hub as _hf_hub
-    default_cache = os.path.expanduser("~/.cache/huggingface/hub")
     cache_dir = _ensure_e2e_cache()
+    os.environ["HF_HUB_CACHE"] = cache_dir
     from huggingface_hub import snapshot_download
 
     refs: set[str] = {"bartowski/Llama-3.2-1B-Instruct-GGUF:Q4_K_M",
@@ -117,12 +120,9 @@ def _download_models_for_e2e() -> None:
     for ref in sorted(refs):
         hf_repo = ref.split(":", 1)[0]
         tag = ref.split(":", 1)[1] if ":" in ref else "*"
-        repo_dir = "models--" + hf_repo.replace("/", "--")
-        e2e_path = Path(cache_dir) / repo_dir
-        default_path = Path(default_cache) / repo_dir
+        e2e_path = Path(cache_dir) / ("models--" + hf_repo.replace("/", "--"))
 
-        # Check valid HF structure with snapshots dirs
-        has_valid_e2e = (
+        has_valid = (
             e2e_path.exists()
             and any(
                 f.name.endswith(".gguf") and "/snapshots/" in str(f)
@@ -130,27 +130,20 @@ def _download_models_for_e2e() -> None:
             )
         )
 
-        if has_valid_e2e:
+        if has_valid:
             print(f"[e2e] Reused (cached): {ref}")
             continue
 
-        # Try copying from default HF cache — faster than downloading
-        tag_files = [f for f in default_path.rglob("*.gguf") if tag in f.name]
-        if not tag_files:
-            # Fall back to snapshot_download with allow_patterns
-            lock_dir = e2e_path / ".locks"
-            if lock_dir.exists():
-                shutil.rmtree(lock_dir, ignore_errors=True)
-            print(f"[e2e] Downloading {ref} ...")
-            snapshot_download(
-                hf_repo,
-                cache_dir=cache_dir,
-                allow_patterns=[f"*{tag}*.gguf"] if tag != "*" else ["*.gguf"],
-                local_files_only=False,
-            )
-        elif not e2e_path.exists():
-            print(f"[e2e] Copying {ref} from default cache")
-            shutil.copytree(default_path, e2e_path, symlinks=True)
+        lock_dir = e2e_path / ".locks"
+        if lock_dir.exists():
+            shutil.rmtree(lock_dir, ignore_errors=True)
+        print(f"[e2e] Downloading {ref} ...")
+        snapshot_download(
+            hf_repo,
+            cache_dir=cache_dir,
+            allow_patterns=[f"*{tag}*.gguf"] if tag != "*" else ["*.gguf"],
+            local_files_only=False,
+        )
 
 
 def _cleanup_e2e_cache() -> None:
@@ -158,7 +151,7 @@ def _cleanup_e2e_cache() -> None:
     global _E2E_HF_CACHE
     if _E2E_HF_CACHE and os.path.isdir(_E2E_HF_CACHE):
         shutil.rmtree(_E2E_HF_CACHE)
-        _E2E_HF_CACHE = None
+    _E2E_HF_CACHE = None
 
 
 @pytest.fixture(scope="session")
@@ -292,8 +285,13 @@ def _start_server(port: int, config_yaml: str) -> Tuple[Any, httpx.Client]:
         f.write(config_yaml)
         config_path = f.name
 
+    if combo_id.startswith("docker") or combo_id.startswith("podman"):
+        ready_timeout = 240
+    else:
+        ready_timeout = 60
+
     try:
-        proxy = ArkestraServer(config_path=config_path, port=port, ready_timeout=60)
+        proxy = ArkestraServer(config_path=config_path, port=port, ready_timeout=ready_timeout)
         app = proxy.get_app()
         server_obj = uvicorn.Server(
             uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
@@ -487,8 +485,8 @@ class TestFullLifecycle:
 
 
 @pytest.mark.e2e
-class TestDownloadAndEject:
-    """Model download via admin endpoint + eject cleanup."""
+class TestPullAndEject:
+    """Model pull via admin endpoint + eject cleanup."""
 
     @pytest.fixture()
     def e2e_cache_only(self, e2e_cache):
@@ -496,13 +494,13 @@ class TestDownloadAndEject:
         yield _E2E_HF_CACHE
 
     @pytest.mark.parametrize("e2e_single", [("process-vulkan", "vulkan-process")], indirect=True)
-    def test_e2e_download_pipeline(self, e2e_single, e2e_cache_only):
-        """Download a model via admin endpoint and verify checkpoint lands on disk."""
+    def test_e2e_pull_pipeline(self, e2e_single, e2e_cache_only):
+        """Pull a model via admin endpoint and verify checkpoint lands on disk."""
         client = e2e_single["client"]
         base_url = e2e_single["base_url"]
-        download_model_id = e2e_single["combo_id"]
+        pull_model_id = e2e_single["combo_id"]
 
-        resp = client.post(f"{base_url}/admin/download/{download_model_id}", timeout=10)
+        resp = client.post(f"{base_url}/admin/pull/{pull_model_id}", timeout=10)
         assert resp.status_code == 200, f"Download start failed: {resp.text}"
 
         # Verify the GGUF file exists on disk in the e2e cache
@@ -516,13 +514,13 @@ class TestDownloadAndEject:
         while time.time() < deadline:
             r = client.get(f"{base_url}/admin/models", timeout=10)
             for m in r.json()["models"]:
-                if m["id"] == download_model_id:
+                if m["id"] == pull_model_id:
                     state = m.get("status", {}).get("value")
                     if state == "stopped":
                         break
                     elif state == "error":
                         log_r = client.get(
-                            f"{base_url}/admin/log/{download_model_id}",
+                            f"{base_url}/admin/log/{pull_model_id}",
                             params={"since": 0, "lines": 20}, timeout=10)
                         logs = [l["text"] for l in log_r.json().get("lines", [])]
                         if logs:

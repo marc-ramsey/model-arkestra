@@ -47,8 +47,8 @@ Missing or incorrect keys return `401 Unauthorized`. Public paths (`/`, `/index.
 | `POST` | `/admin/stop-all` | Yes | Stop all running models — models restart implicitly on next inference request |
 | `POST` | `/admin/shutdown` | Yes | Full server teardown — stops uvicorn and all models |
 | `POST` | `/admin/restart/{model}` | Yes | Stop and restart a running/loading model (accepts override params) |
-| `POST` | `/admin/download/{model}` | Yes | Start downloading a model checkpoint from HuggingFace |
-| `POST` | `/admin/download/stop/{model}` | Yes | Cancel an in-progress model download |
+| `POST` | `/admin/pull/{model}` | Yes | Start pulling a model checkpoint from HuggingFace |
+| `POST` | `/admin/pull/stop/{model}` | Yes | Cancel an in-progress model pull |
 
 ### GET /admin/models
 
@@ -100,8 +100,8 @@ Returns a list of all configured models with their full runtime context. Models 
 **Status values:**
 - `running`, `loading`, `error`, `stopping` — real states from active runner contexts
 - `stopped` — model was previously started but is now stopped; its weights **are** in the HF cache
-- `uncached` — model exists in config but is not currently downloaded
-- `downloading` — model checkpoint is actively being downloaded from HuggingFace
+- `uncached` — model exists in config but is not yet pulled
+- `downloading` — model checkpoint is actively being pulled from HuggingFace
 
 | Field | Source |
 |---|---|
@@ -316,12 +316,12 @@ Returns `200 OK` with a detail report on success:
 ```
 If the model has no model configured, or the cache directory doesn't exist, `cache_deleted` is `false`. Returns `404` if the model doesn't exist in config. Returns `409 Conflict` when a shared-cache conflict prevents eject.
 
-### POST /admin/download/{model}
+### POST /admin/pull/{model}
 
-Start downloading a model's checkpoint from HuggingFace. Returns immediately with `200 OK` — the download runs as a background task. Progress is streamed to the model's log buffer (poll via `GET /admin/log/{model}`).
+Start pulling a model's checkpoint from HuggingFace. Returns immediately with `200 OK` — the pull runs as a background task. Progress is streamed to the model's log buffer (poll via `GET /admin/log/{model}`).
 
 ```bash
-curl -X POST 'http://localhost:8080/admin/download/qwen3.5-4b' \
+curl -X POST 'http://localhost:8080/admin/pull/qwen3.5-4b' \
      -H 'X-Admin-Key: your-secret-key'
 ```
 
@@ -330,11 +330,11 @@ Returns on success:
 {"ok": true, "model": "qwen3.5-4b"}
 ```
 
-Returns `200` with `{"already_downloading": true}` if a download is already in progress for this model.
+Returns `200` with `{"already_pulling": true}` if a pull is already in progress for this model.
 
 Returns `409 Conflict` if:
-- Model is already running (`"Cannot download: model is running"`)
-- Model is stopping (`"Cannot download: model is stopping"`)
+- Model is already running (`"Cannot pull: model is running"`)
+- Model is stopping (`"Cannot pull: model is stopping"`)
 - Model is already uncached (`"Model 'qwen3.5-4b' is already uncached"`)
 
 Returns `404` if the model is not in config.
@@ -342,18 +342,18 @@ Returns `404` if the model is not in config.
 **Progress via log endpoint:**
 ```json
 {"lines": [
-  {"seq": 1, "text": "[download] qwen3.5-4b: Fetching 3 files (14.2GB total)"},
-  {"seq": 2, "text": "[download] qwen3.5-4b: 25% (3.55/14.2GB, 180MB/s)"},
-  {"seq": 3, "text": "[download] qwen3.5-4b: 100% (14.2/14.2GB)"}
+  {"seq": 1, "text": "[pull] qwen3.5-4b: Fetching 3 files (14.2GB total)"},
+  {"seq": 2, "text": "[pull] qwen3.5-4b: 25% (3.55/14.2GB, 180MB/s)"},
+  {"seq": 3, "text": "[pull] qwen3.5-4b: 100% (14.2/14.2GB)"}
 ]}
 ```
 
-### POST /admin/download/stop/{model}
+### POST /admin/pull/stop/{model}
 
-Cancel an in-progress model download. The download task is cancelled and partially downloaded files may remain in cache (subsequent downloads resume from cache).
+Cancel an in-progress model pull. The pull task is cancelled and partially downloaded files may remain in cache (subsequent pulls resume from cache).
 
 ```bash
-curl -X POST 'http://localhost:8080/admin/download/stop/qwen3.5-4b' \
+curl -X POST 'http://localhost:8080/admin/pull/stop/qwen3.5-4b' \
      -H 'X-Admin-Key: your-secret-key'
 ```
 
@@ -362,7 +362,7 @@ Returns on success:
 {"ok": true, "model": "qwen3.5-4b"}
 ```
 
-Returns `404` if no active download exists for the model.
+Returns `404` if no active pull exists for the model.
 
 ### GET /admin/log/{model}?since=N&lines=M
 
@@ -648,8 +648,8 @@ arkestra-admin --server http://localhost:8080 --api-key SECRET <command>
 | `arkestra-admin images list` | Show OCI image availability per backend |
 | `arkestra-admin images build <backend> [--tag TAG]` | Build an OCI container image |
 | `arkestra-admin images rm <image_tag>` | Remove a container image |
-| `arkestra-admin download <name>` | Download model checkpoint from HuggingFace |
-| `arkestra-admin download stop <name>` | Cancel an in-progress download |
+| `arkestra-admin pull <name>` | Pull model checkpoint from HuggingFace |
+| `arkestra-admin pull stop <name>` | Cancel an in-progress pull |
 | `arkestra-admin shutdown` | Gracefully stop the server |
 
 ### Examples

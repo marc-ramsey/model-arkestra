@@ -96,8 +96,8 @@ class ArkestraAdmin:
         self._add_log_route()
         self._add_global_log_route()
         self._add_images_route()
-        self._add_download_route()
-        self._add_download_stop_route()
+        self._add_pull_route()
+        self._add_pull_stop_route()
         self._installed = True
         return self
 
@@ -770,17 +770,17 @@ class ArkestraAdmin:
             except Exception as exc:
                 raise HTTPException(status_code=503, detail=f"Eject failed: {exc}")
 
-    def _add_download_route(self) -> None:
-        @self._app.post("/admin/download/{model:path}")
-        async def admin_download(model: str):
-            """Start downloading a model's checkpoint from HuggingFace."""
+    def _add_pull_route(self) -> None:
+        @self._app.post("/admin/pull/{model:path}")
+        async def admin_pull(model: str):
+            """Start pulling a model's checkpoint from HuggingFace."""
             cfg = self._models_cfg
             if model not in cfg:
                 raise HTTPException(status_code=404, detail=f"Model '{model}' not in config")
 
             ctx = self.server._arkestra.find_context(model)
 
-            # If already downloading, return existing task
+            # If already pulling, return existing task
             if ctx and ctx.state == RunnerState.DOWNLOADING and ctx.download_task:
                 return {"ok": True, "model": model, "already_downloading": True}
 
@@ -810,17 +810,17 @@ class ArkestraAdmin:
                 ctx.state = RunnerState.DOWNLOADING
                 runner._models[model] = ctx
 
-            # Spawn download task
+            # Spawn pull task
             task = asyncio.create_task(
-                self.server._arkestra.download_model(ctx)
+                self.server._arkestra.pull_model(ctx)
             )
             ctx.download_task = task
             return {"ok": True, "model": model}
 
-    def _add_download_stop_route(self) -> None:
-        @self._app.post("/admin/download/stop/{model:path}")
-        async def admin_download_stop(model: str):
-            """Cancel an in-progress model download."""
+    def _add_pull_stop_route(self) -> None:
+        @self._app.post("/admin/pull/stop/{model:path}")
+        async def admin_pull_stop(model: str):
+            """Cancel an in-progress model pull."""
             cfg = self._models_cfg
             if model not in cfg:
                 raise HTTPException(status_code=404, detail=f"Model '{model}' not in config")

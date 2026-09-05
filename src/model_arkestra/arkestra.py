@@ -684,8 +684,8 @@ class ModelArkestra:
                     pass
                 return
 
-    async def download_model(self, ctx: _ModelContext) -> None:
-        """Background task: download model checkpoint from HuggingFace.
+    async def pull_model(self, ctx: _ModelContext) -> None:
+        """Background task: pull model checkpoint from HuggingFace.
 
         Resolves the model reference, calls ``snapshot_download`` with
         progress callbacks, and transitions the context state on
@@ -707,23 +707,23 @@ class ModelArkestra:
             cache_dir.mkdir(parents=True, exist_ok=True)
 
             def log_progress(line: str) -> None:
-                ctx._append_log_line(f"[download] {model_name}: {line}")
+                ctx._append_log_line(f"[pull] {model_name}: {line}")
 
-            download_task = asyncio.to_thread(
+            pull_task = asyncio.to_thread(
                 download_hf_model, resolved.ref.split(":", 1)[0], cache_dir, log_progress
             )
-            await download_task
+            await pull_task
 
             ctx.state = RunnerState.STOPPED
-            self.log(f"[download] model={model_name} complete")
+            self.log(f"[pull] model={model_name} complete")
         except asyncio.CancelledError:
-            self.log(f"[download] model={model_name} cancelled")
+            self.log(f"[pull] model={model_name} cancelled")
             ctx.state = RunnerState.STOPPED
             raise
         except Exception as e:
             ctx.state = RunnerState.ERROR
             ctx.last_error = str(e)
-            self.log(f"[download] model={model_name} FAILED: {e}", level="ERROR")
+            self.log(f"[pull] model={model_name} FAILED: {e}", level="ERROR")
 
     def can_start(self, model_name: str) -> bool:
         """Check if model is eligible for a fresh start."""
@@ -846,7 +846,7 @@ class ModelArkestra:
     async def shutdown(self) -> None:
         """Full teardown — stop models, clear runners, reset port allocator."""
         self.log(f"[action=shutdown]")
-        # Cancel any active download tasks
+        # Cancel any active pull tasks
         for r in self._runners.values():
             models = getattr(r, '_models', {})
             for ctx in models.values():
