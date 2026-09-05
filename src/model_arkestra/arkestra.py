@@ -1,5 +1,6 @@
 """Single entry point for all model operations — wraps ConfigManager + lazy runners."""
 from __future__ import annotations
+import asyncio
 import logging
 import os
 import shutil
@@ -708,7 +709,10 @@ class ModelArkestra:
             def log_progress(line: str) -> None:
                 ctx._append_log_line(f"[download] {model_name}: {line}")
 
-            download_hf_model(resolved.repo_id, cache_dir, log_progress)
+            download_task = asyncio.to_thread(
+                download_hf_model, resolved.ref.split(":", 1)[0], cache_dir, log_progress
+            )
+            await download_task
 
             ctx.state = RunnerState.STOPPED
             self.log(f"[download] model={model_name} complete")

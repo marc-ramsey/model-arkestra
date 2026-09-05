@@ -4,6 +4,7 @@ import os
 import re
 import subprocess as _subprocess
 import time
+import tqdm
 from dataclasses import dataclass, field
 from model_arkestra.gpu_detect import detect_all
 from pathlib import Path
@@ -327,52 +328,48 @@ def resolve_onnx_model_path(
         )
 
 
-class _DownloadProgressTqdm:
-    """tqdm-compatible class that captures progress via a callback.
+class _DownloadProgressTqdm(tqdm.tqdm):
+    """tqdm subclass that captures progress via a callback.
 
-    Used as ``tqdm_class`` for ``snapshot_download``. Not a subclass of
-    ``tqdm`` so it bypasses HF's TTY/disabled detection and is called
-    directly with progress kwargs.
+    Inherits from ``tqdm.tqdm`` so HF hub's internal attribute access
+    (e.g. ``.total``) works correctly, while suppressing UI output
+    via ``file=/dev/null`` and setting ``mininterval=0`` for real-time
+    progress callbacks.
     """
 
-    def __init__(self, total=None, desc=None, unit="B", unit_scale=False,
-                 callback=None, **kwargs):
-        self._total = total
-        self._desc = desc
-        self._unit = unit
-        self._unit_scale = unit_scale
+    def __init__(self, *args, callback=None, **kwargs):
+        kwargs.setdefault("disable", False)
+        kwargs.setdefault("file", open(os.devnull, "w"))
+        kwargs.setdefault("mininterval", 0)
+        kwargs.setdefault("miniters", 1)
+        # HF hub injects `name` which vanilla tqdm rejects
+        kwargs.pop("name", None)
+        super().__init__(*args, **kwargs)
         self._callback = callback
-        self._n = 0
-        self._speed = 0
-        self._start_time = time.monotonic()
-        if total and callback:
-            callback({"event": "total", "total_bytes": total, "desc": desc})
 
     def update(self, n=1):
-        self._n += n
-        elapsed = time.monotonic() - self._start_time
-        self._speed = self._n / elapsed if elapsed > 0 else 0
+        super().update(n)
         if self._callback:
-            pct = round(self._n / self._total * 100, 1) if self._total else 0
+            try:
+                elapsed = self._time() - self.start_t
+            except (AttributeError, TypeError):
+                elapsed = 0
+            speed = self.n / elapsed if elapsed > 0 else 0
+            total = self.total if self.total else 0
+            pct = round(self.n / total * 100, 1) if total else 0
             self._callback({
                 "event": "progress",
-                "n": self._n,
-                "total": self._total,
+                "n": self.n,
+                "total": total,
                 "pct": pct,
-                "speed": self._speed,
+                "speed": speed,
             })
 
     def set_postfix_str(self, postfix="", refresh=False):
         pass
 
     def close(self):
-        pass
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        pass
+        super().close()
 
 
 def download_hf_model(
