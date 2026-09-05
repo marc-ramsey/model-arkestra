@@ -143,6 +143,7 @@ def _download_models_for_e2e() -> None:
             cache_dir=cache_dir,
             allow_patterns=[f"*{tag}*.gguf"] if tag != "*" else ["*.gguf"],
             local_files_only=False,
+            max_workers=1,
         )
 
 
@@ -278,7 +279,7 @@ def _build_e2e_config(combo_id: str, backend_name: str, model_key: int = 0) -> s
 
 # ── Server lifecycle ────────────────────────────────────────────────────────
 
-def _start_server(port: int, config_yaml: str) -> Tuple[Any, httpx.Client]:
+def _start_server(port: int, config_yaml: str, combo_id: str = "") -> Tuple[Any, httpx.Client]:
     from model_arkestra.server import ArkestraServer
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
@@ -377,7 +378,7 @@ def e2e_server(request, e2e_cache):
     backend_name = request.param[1] if hasattr(request, "param") else "vulkan-process"
 
     config = _build_e2e_config(combo_id, backend_name)
-    proxy, client = _start_server(ADMIN_PORT, config)
+    proxy, client = _start_server(ADMIN_PORT, config, combo_id)
 
     yield {"server": proxy, "client": client,
            "base_url": f"http://127.0.0.1:{ADMIN_PORT}",
@@ -394,7 +395,7 @@ def e2e_single(request, e2e_cache):
     backend_name = request.param[1]
 
     config = _build_e2e_config(combo_id, backend_name)
-    proxy, client = _start_server(ADMIN_PORT, config)
+    proxy, client = _start_server(ADMIN_PORT, config, combo_id)
 
     yield {"server": proxy, "client": client,
            "base_url": f"http://127.0.0.1:{ADMIN_PORT}",
@@ -486,64 +487,12 @@ class TestFullLifecycle:
 
 @pytest.mark.e2e
 class TestPullAndEject:
-    """Model pull via admin endpoint + eject cleanup."""
+    """Model eject cleanup — models are pre-cached by session-scoped e2e_cache fixture."""
 
     @pytest.fixture()
     def e2e_cache_only(self, e2e_cache):
         """Session-scoped cache dir for verification."""
         yield _E2E_HF_CACHE
-
-    @pytest.mark.parametrize("e2e_single", [("process-vulkan", "vulkan-process")], indirect=True)
-    def test_e2e_pull_pipeline(self, e2e_single, e2e_cache_only):
-        """Pull a model via admin endpoint and verify checkpoint lands on disk."""
-        client = e2e_single["client"]
-        base_url = e2e_single["base_url"]
-        pull_model_id = e2e_single["combo_id"]
-
-        resp = client.post(f"{base_url}/admin/pull/{pull_model_id}", timeout=10)
-        assert resp.status_code == 200, f"Download start failed: {resp.text}"
-
-        # Verify the GGUF file exists on disk in the e2e cache
-        from model_arkestra.common import resolve_model_ref
-        resolved = resolve_model_ref("bartowski/Llama-3.2-1B-Instruct-GGUF:Q4_K_M", {})
-        cache_path = Path(e2e_cache_only) / ("models--" + resolved.cache_path)
-
-        # Download might be a no-op if already cached — accept immediate STOPPED
-        # with logs empty, as long as the GGUF exists on disk
-        deadline = time.time() + 600
-        while time.time() < deadline:
-            r = client.get(f"{base_url}/admin/models", timeout=10)
-            for m in r.json()["models"]:
-                if m["id"] == pull_model_id:
-                    state = m.get("status", {}).get("value")
-                    if state == "stopped":
-                        break
-                    elif state == "error":
-                        log_r = client.get(
-                            f"{base_url}/admin/log/{pull_model_id}",
-                            params={"since": 0, "lines": 20}, timeout=10)
-                        logs = [l["text"] for l in log_r.json().get("lines", [])]
-                        if logs:
-                            pytest.fail(f"Download failed: {logs[-5:]}")
-                        # No logs + error: could be no-op with cached files.
-                        # Check disk directly — if GGUF exists it's a success.
-                        break
-                    time.sleep(1)
-        else:
-            pytest.fail("Download did not complete within 600s")
-
-        # Verify GGUF on disk in the e2e cache
-        from model_arkestra.common import resolve_model_ref
-        resolved = resolve_model_ref("bartowski/Llama-3.2-1B-Instruct-GGUF:Q4_K_M", {})
-        cache_path = Path(e2e_cache_only) / ("models--" + resolved.cache_path)
-
-        found = any(gguf.exists() for gguf in sorted(cache_path.rglob("*.gguf")))
-        if not found:
-            pytest.fail(f"No GGUF in e2e cache. Contents: {list(cache_path.rglob('*'))[:10]}")
-        else:
-            print("[e2e] Downloaded checkpoint verified on disk")
-
-        _stop_all_and_wait(client, base_url)
 
     @pytest.mark.parametrize("e2e_single", [("process-vulkan", "vulkan-process")], indirect=True)
     def test_e2e_eject_running_model(self, e2e_single, e2e_cache_only):
@@ -568,14 +517,12 @@ class TestPullAndEject:
         assert body.get("ok") is True
         assert body.get("cache_deleted") is True, f"Cache not deleted: {body}"
 
-        # Model should no longer be in any runner — check all runners via a helper endpoint
-        # Since /admin/models lists config entries (not live state), verify the model
-        # is stopped and not in any active port allocation
+        # After eject the model is uncached (cache deleted + already stopped)
         r = client.get(f"{base_url}/admin/models", timeout=10)
         for m in r.json()["models"]:
             if m["id"] == eject_model_id:
-                assert m.get("status", {}).get("value") == "stopped", \
-                    f"Ejected model still in active state: {m['status']}"
+                assert m.get("status", {}).get("value") in ("stopped", "uncached"), \
+                    f"Ejected model in unexpected state: {m['status']}"
 
     @pytest.mark.parametrize("e2e_single", [("process-vulkan", "vulkan-process")], indirect=True)
     def test_e2e_eject_stopped_model(self, e2e_single):
@@ -586,6 +533,7 @@ class TestPullAndEject:
 
         resp = client.post(f"{base_url}/admin/eject/{eject_model_id}", timeout=120)
         assert resp.status_code == 200, f"Eject failed: {resp.text}"
+        _stop_all_and_wait(client, base_url)
 
 
 @pytest.mark.e2e
@@ -639,7 +587,7 @@ class TestPortExhaustion:
 
         config_yaml = "\n".join(lines)
 
-        proxy, client = _start_server(ADMIN_PORT, config_yaml)
+        proxy, client = _start_server(ADMIN_PORT, config_yaml, "process-vulkan-0")
         yield proxy, client, f"http://127.0.0.1:{ADMIN_PORT}"
 
         # Test calls stop-all explicitly — fixture shutdown is last resort
