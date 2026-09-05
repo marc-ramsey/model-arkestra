@@ -3,7 +3,7 @@
  * Pattern: data (JSON tree) -> render() -> DOM. Conventions wire events.
  */
 
-// EventBus - simple pub/sub
+// ── Pub/sub bus ────────────────────────────────────────────────
 const EventBus = {
     _h: new Map(),
     on(e, fn)  { const l = this._h.get(e)||[]; l.push(fn); this._h.set(e,l); return () => this.off(e,fn); },
@@ -11,7 +11,7 @@ const EventBus = {
     emit(e, d)  { for(const fn of this._h.get(e)||[]) fn(d); },
 };
 
-// Config constants
+// ── Config constants ───────────────────────────────────────────
 const CFG = {
     STORAGE_CHAT_PARAMS: 'arkestra-chat-params',
     DEFAULT_TTS:        'default-tts',
@@ -19,29 +19,21 @@ const CFG = {
     POLL_INTERVAL:      2000,
 };
 
-// ── Shared utilities ────────────────────────────────────────────
+// ── Shared utilities ───────────────────────────────────────────
 function esc(s)  { return (s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function sanitizeId(n) { return (n||'').replace(/[^a-zA-Z0-9_-]/g, '_'); }
 function normalizeStatus(s) { return (s?.value || s || '').replace('runnerstate.','').toLowerCase(); }
 function keyToLabel(key) {
     return key.replace(/[-_](.)/g, (_, c) => c.toUpperCase());
 }
-function formatTime(sec) {
-    if (!sec || isNaN(sec)) return '0:00';
-    const m = Math.floor(sec / 60);
-    const s = Math.floor(sec % 60);
-    return m + ':' + String(s).padStart(2, '0');
-}
 
-// Read inference param from model config — root level (flat) first,
-// then .args for legacy nested configs.
 function resolveArgValue(cfg, key) {
     if (cfg[key] !== undefined && cfg[key] !== '') return String(cfg[key]);
     if (cfg.args?.[key] !== undefined) return String(cfg.args[key]);
     return '';
 }
 
-// render() - walks JSON tree -> DOM. Returns element.
+// ── render() — walks JSON tree -> DOM ─────────────────────────
 function render(node) {
     if (!node?.widget) return null;
     const key = node.widget.charAt(0).toUpperCase() + node.widget.slice(1);
@@ -58,7 +50,7 @@ renderers.SplitPane = function({ axis, ratio, children }) {
     const el = document.createElement('div');
     el.style.display = 'flex';
     el.style.overflow = 'hidden';
-    if (axis === 'v') { el.style.flexDirection = 'column'; }
+    if (axis === 'v') el.style.flexDirection = 'column';
 
     for (let i = 0; i < children.length; i++) {
         const c = render(children[i]);
@@ -84,8 +76,7 @@ renderers.SplitPane = function({ axis, ratio, children }) {
             if (d.dataset.dragWired) continue;
             d.dataset.dragWired = '1';
             const isH = d.classList.contains('divider-v');
-            let dragging = false;
-            let val = 0;
+            let dragging = false, val = 0;
             const onMove = (ev) => {
                 if (!dragging) return;
                 const rect = d.parentElement.getBoundingClientRect();
@@ -124,24 +115,41 @@ renderers.AccordionContainer = function() {
     const el = document.createElement('div');
     el.className = 'accordion';
     el.id = 'left-accordion';
-
     const header = document.createElement('h3');
     header.textContent = 'Model Cluster';
     el.appendChild(header);
-
     const body = document.createElement('div');
     body.className = 'acc-body';
     body.id = 'model-accordion-items';
     el.appendChild(body);
 
-    // Toggle collapse
     let collapsed = false;
     header.addEventListener('click', () => {
         collapsed = !collapsed;
         body.style.display = collapsed ? 'none' : '';
     });
-
     return el;
+};
+
+renderers.AccGroup = function({ title, group }) {
+    const el = document.createElement('div');
+    el.className = 'acc-group';
+    el.dataset.group = group;
+    const header = document.createElement('h3');
+    header.className = 'acc-group-header';
+    header.innerHTML = '<span>' + esc(title) + '</span><span class="acc-group-count">' + (group === 'ready' ? 0 : 0) + '</span><span></span>';
+    const body = document.createElement('div');
+    body.className = 'acc-body';
+    body.id = 'models-' + group + '-items';
+    el.appendChild(header);
+    el.appendChild(body);
+
+    let collapsed = false;
+    header.addEventListener('click', () => {
+        collapsed = !collapsed;
+        body.style.display = collapsed ? 'none' : '';
+    });
+    return { element: el, body: body, header: header };
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -151,24 +159,20 @@ renderers.AccordionContainer = function() {
 renderers.LogPane = function() {
     const el = document.createElement('div');
     el.className = 'pane pane-logs';
-
     const header = document.createElement('div');
     header.className = 'pane-header';
     header.innerHTML = '<span class="pane-title">Log</span><label>Select Model:</label><select id="log-model-select"></select>';
     el.appendChild(header);
-
     const display = document.createElement('pre');
     display.className = 'log-container';
     display.id = 'log-display';
     el.appendChild(display);
-
     return el;
 };
 
 renderers.ChatPane = function() {
     const el = document.createElement('div');
     el.className = 'pane pane-chat';
-
     const header = document.createElement('div');
     header.className = 'pane-header';
     header.innerHTML = '<span class="pane-title">Chat</span><label>Select Model:</label><select id="chat-model-select"></select>' +
@@ -226,7 +230,7 @@ renderers.ChatPane = function() {
         document.getElementById('chat-params-panel')?.classList.toggle('open');
     });
 
-    // TTS speak button — delegates to widget-audio.js with current input text
+    // TTS speak button
     inputBar.querySelector('#btn-send-tts')?.addEventListener('click', () => {
         const textEl = document.getElementById('f-chat-input');
         window._audio?.sendTTS(textEl?.value?.trim() || '');
@@ -260,7 +264,6 @@ renderers.ChatPane = function() {
     return el;
 };
 
-// ═══════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════
 // ConfigPanel - per-model edit form
 // ═══════════════════════════════════════════════════════════
@@ -273,17 +276,13 @@ renderers.ConfigPanel = function({ id, fields }) {
 
     (fields||[]).forEach(f => {
         const isFullWidth = f.widget === 'TextArea';
-
-        // Label cell — direct child of config-panel (grid column 1)
         const label = document.createElement('label');
         label.className = 'field-label' + (isFullWidth ? ' full-width' : '');
         label.textContent = f.label || keyToLabel(f.name);
         el.appendChild(label);
 
-        // Input cell — direct child of config-panel (grid column 2)
         let input;
         if (f.options) {
-            // SelectInput — schema.type is ignored, explicit options provided
             input = document.createElement('select');
             for (const opt of f.options) {
                 const o = document.createElement('option');
@@ -291,7 +290,6 @@ renderers.ConfigPanel = function({ id, fields }) {
                 input.appendChild(o);
             }
         } else if (f.widget === 'TagsInput' && f.options) {
-            // Multi-select for tags — use a select with size > 1, preserve current selection
             input = document.createElement('select');
             input.multiple = true; input.size = Math.min(f.options.length, 6);
             const current = f.currentTags || [];
@@ -302,7 +300,6 @@ renderers.ConfigPanel = function({ id, fields }) {
                 if (current.includes(opt.value)) o.selected = true;
                 input.appendChild(o);
             }
-            // Store current tags on the select for save() to read back
             input.dataset.tagsValue = JSON.stringify(current);
             input.addEventListener('change', () => {
                 const selected = Array.from(input.selectedOptions).map(o => o.value);
@@ -331,7 +328,6 @@ renderers.ConfigPanel = function({ id, fields }) {
         valueCell.className = 'field-value' + (isFullWidth ? ' full-width' : '');
         if (input) {
             input.id = f.name;
-            // Multi-select selections are already set by TagsInput renderer
             if (!input.multiple) input.value = f.value ?? '';
             valueCell.appendChild(input);
         }
@@ -369,12 +365,24 @@ function renderModelRow(model) {
     const row = document.createElement('div');
     row.className = 'model-row';
     row.dataset.model = model.id;
+
+    // Build inline action buttons HTML
+    let btns = '';
+    (window._configActions||[]).forEach(a => {
+        btns += '<button type="button" data-action="'+a+'" data-model="'+esc(model.id)+'" title="'+a.charAt(0).toUpperCase()+a.slice(1)+'"></button>';
+    });
+
     row.innerHTML = '<div class="model-name-bar"><span class="status-dot '+statusClass+'"></span>' +
         '<span class="model-name">'+esc(name)+'</span>' +
         (model.runner_type ? '<span class="runner-badge" style="font-size:10px;color:var(--text-dim);margin-left:auto;flex-shrink:0;">('+esc(model.runner_type)+')</span>' : '') +
-        '</div>';
+        '<div class="model-actions-inline">'+btns+'</div></div>';
+    
+    // Pull progress bar (hidden until downloading)
+    const prog = document.createElement('div');
+    prog.className = 'pull-progress hidden';
+    prog.innerHTML = '<span class="pull-status"></span><span class="pull-pct"></span>';
+    row.appendChild(prog);
 
-    // Click -> expand + fetch config (deferred)
     row.addEventListener('click', async (e) => {
         if (row.querySelector('.config-panel')?.contains(e.target)) return;
         if (e.target.tagName === 'BUTTON') return;
@@ -383,81 +391,60 @@ function renderModelRow(model) {
         if (row.querySelector('.config-panel')) return;
 
         try {
-            const data = await adminGet('/admin/config/' + encodeURIComponent(model.id));
+            const data = await window.adminGet('/admin/config/' + encodeURIComponent(model.id));
             if (!data?.config) return;
             window._argSchema = data.args_schema || {};
 
             const cp = data.config.checkpoint || '';
-
             const fields = [];
             const defaults = data.default || {};
 
-            // 1. Model identity from schema: name, repo, model (in order)
             for (const k of ['name', 'repo', 'model']) {
                 const schema = data.args_schema[k];
                 if (!schema) continue;
                 let value = resolveArgValue(data.config, k);
-                // Apply schema default when not set
-                if (value === '' && schema.default !== undefined) {
-                    value = String(schema.default);
-                }
+                if (value === '' && schema.default !== undefined) value = String(schema.default);
                 fields.push({ name:k, value: k==='name' ? (value || data.model) : value, label:k, schema, options:schema.options?.map(v=>({value:v})) || undefined });
             }
 
-            // 2. mmproj — between model identity and infra fields
             const mmprojSchema = data.args_schema['mmproj'];
             if (mmprojSchema) {
                 let value = resolveArgValue(data.config, 'mmproj');
                 fields.push({ name:'mmproj', value: value || '', label:'mmproj', schema:mmprojSchema });
             }
 
-            // 3. Infra fields: backend, runner — resolve from defaults if not set
             const resolvedBackend = data.config.backend || defaults.backend || '';
             const bkOpts = Object.entries(data.backends||{}).map(([k,v]) => ({
                 value: k, label: (typeof v==='object')?(v.host||k):k
             }));
             if (bkOpts.length) {
-                fields.push({ name:'backend', value:resolvedBackend,
-                    options:bkOpts, widget:'SelectInput' });
+                fields.push({ name:'backend', value:resolvedBackend, options:bkOpts, widget:'SelectInput' });
             }
 
-            // 3b. Runner selector — resolve from defaults if not set
             const resolvedRunner = data.config.runner || defaults.runner || '';
             const rnOpts = data.runner_types?.map(t => ({value:t})) || [];
             if (rnOpts.length) {
                 const all = [{value:''}]; for (const r of rnOpts) all.push(r);
-                fields.push({ name:'runner', value:resolvedRunner, options:all,
-                    widget:'SelectInput' });
+                fields.push({ name:'runner', value:resolvedRunner, options:all, widget:'SelectInput' });
             }
 
-            // 5. Tags/capabilities — multi-select from available options
             const currentTags = data.config.tags || [];
             const tagOpts = (data.tags || []).map(t => ({value: t}));
             if (tagOpts.length) {
-                fields.push({
-                    name: 'tags', value: Array.isArray(currentTags) ? currentTags.join(',') : '',
-                    label: 'tags', schema: { type: 'string' },
-                    widget: 'TagsInput', options: tagOpts, currentTags
-                });
+                fields.push({ name: 'tags', value: Array.isArray(currentTags) ? currentTags.join(',') : '',
+                    label: 'tags', schema: { type: 'string' }, widget: 'TagsInput', options: tagOpts, currentTags });
             }
 
-            // 6. Remaining schema keys (inference params: ctx-size, temp, etc.)
             for (const k of Object.keys(data.args_schema || {})) {
                 if (['name','repo','model','mmproj'].includes(k)) continue;
                 const schema = data.args_schema[k];
                 let value = resolveArgValue(data.config, k);
-                // Resolve from default config first, then schema default
-                if (value === '' && defaults[k] !== undefined) {
-                    value = String(defaults[k]);
-                } else if (value === '' && schema?.default !== undefined) {
-                    value = String(schema.default);
-                }
+                if (value === '' && defaults[k] !== undefined) value = String(defaults[k]);
+                else if (value === '' && schema?.default !== undefined) value = String(schema.default);
                 fields.push({ name:k, value, label:k, schema, options:schema.options?.map(v=>({value:v})) || undefined });
             }
 
             const panel = renderers.ConfigPanel({ id: model.id, fields });
-
-            // Snapshot for dirty detection
             _configSnapshots[model.id] = JSON.parse(JSON.stringify(data.config));
             panel.querySelectorAll('input, select, textarea').forEach(el => {
                 el.addEventListener('input', () => checkDirty(model.id, panel));
@@ -471,10 +458,149 @@ function renderModelRow(model) {
     return row;
 }
 
-// ═══════════════════════════════════════════════════════════
-// Dirty detection
-// ═══════════════════════════════════════════════════════════
+// ── Pull helpers ───────────────────────────────────────────────
+async function startPull(modelId) {
+    const row = document.querySelector('.model-row[data-model="'+escapeSelector(modelId)+'"]');
+    if (!row) return;
+    try {
+        await window.adminPost('/admin/pull/'+encodeURIComponent(modelId), {});
+        updateRowForState(row, { state: 'downloading', statusClass: 'loading' });
+        const progEl = row.querySelector('.pull-progress');
+        if (progEl) progEl.classList.remove('hidden');
+        pollPullProgress(modelId);
+    } catch(e) {
+        console.error('[widget] pull failed:', e.message);
+    }
+}
 
+async function cancelPull(modelId) {
+    const row = document.querySelector('.model-row[data-model="'+escapeSelector(modelId)+'"]');
+    if (!row) return;
+    try {
+        await window.adminPost('/admin/pull/stop/'+encodeURIComponent(modelId), {});
+        updateRowForState(row, { state: 'uncached', statusClass: 'uncached' });
+        const progEl = row.querySelector('.pull-progress');
+        if (progEl) progEl.classList.add('hidden');
+        stopPullProgress(modelId);
+    } catch(e) {
+        console.error('[widget] cancel failed:', e.message);
+    }
+}
+
+function escapeSelector(id) {
+    return id.replace(/["'#%&*,/:<=>?@[\\]^`{|}~]/g, '\\$&');
+}
+
+function updateRowForState(row, info) {
+    const modelId = row.dataset.model;
+    if (info.statusClass !== undefined) {
+        const dot = row.querySelector('.status-dot');
+        if (dot) { dot.className = 'status-dot ' + info.statusClass; }
+    }
+    syncRowButtons(row, info);
+    if (info.moveToGroup) {
+        const group = document.getElementById('models-'+info.moveToGroup+'-items');
+        if (group) group.appendChild(row);
+    }
+}
+
+// ── Progress polling for downloads ─────────────────────────────
+let _pullProgressTimers = {};
+
+function pollPullProgress(modelId) {
+    const row = document.querySelector('.model-row[data-model="'+escapeSelector(modelId)+'"]');
+    if (!row) return;
+    let lastPct = '', lastMsg = '';
+
+    const poll = async () => {
+        try {
+            const data = await window.adminGet('/admin/log/'+encodeURIComponent(modelId), { lines: 10 });
+            if (!data?.lines?.length) return;
+            const progEl = row.querySelector('.pull-progress');
+            const statusEl = progEl?.querySelector('.pull-status');
+            const pctEl = progEl?.querySelector('.pull-pct');
+            
+            for (let i = data.lines.length - 1; i >= 0; i--) {
+                const line = data.lines[i].text;
+                if (!line.includes('[pull]')) continue;
+                const m = line.match(/:\s*(\d+)%?/);
+                if (m) {
+                    lastPct = m[1];
+                    pctEl.textContent = m[1] + '%';
+                    statusEl.textContent = '';
+                } else {
+                    statusEl.textContent = line.trim();
+                }
+            }
+        } catch {}
+    };
+
+    poll();
+    _pullProgressTimers[modelId] = setInterval(poll, 2000);
+}
+
+function stopPullProgress(modelId) {
+    clearInterval(_pullProgressTimers[modelId]);
+    delete _pullProgressTimers[modelId];
+}
+
+// ── Row button state sync ──────────────────────────────────────
+const BTN_MAP = { start:'▶', stop:'■', eject:'⏏', cancel:'✕', save:'✓', reset:'↺' };
+
+function syncRowButtons(row, info) {
+    const btns = row.querySelectorAll('.model-actions-inline button');
+    if (!btns.length) return;
+    
+    const state = info?.state || 'stopped'; // stopped, running, error, uncached, downloading
+    for (const btn of btns) {
+        const action = btn.dataset.action;
+        btn.disabled = false;
+        let text = BTN_MAP[action] || action;
+
+        switch(state) {
+            case 'downloading':
+                if (action === 'eject') { btn.textContent = '⏏'; btn.title = 'Pulling...'; btn.disabled = true; }
+                else if (!['start','stop','save','reset'].includes(action)) { text = ''; }
+                break;
+            case 'running':
+                if (action === 'start') btn.disabled = true;
+                if (action === 'eject') btn.disabled = true;
+                if (action === 'save') btn.disabled = false; // can save config while running
+                if (action === 'reset') btn.disabled = false;
+                break;
+            case 'stopped':
+                if (action === 'stop') btn.disabled = true;
+                if (action === 'eject') btn.disabled = false;
+                if (action === 'save') btn.disabled = true; // nothing changed
+                break;
+            case 'error':
+                if (action === 'stop') btn.disabled = true;
+                if (action === 'eject') btn.disabled = false;
+                if (action === 'save') btn.disabled = true;
+                break;
+            case 'uncached':
+                // Replace eject icon with pull for uncached models
+                if (action === 'eject') { text = '⏏'; btn.title = 'Pull model checkpoint'; }
+                else if (!['start','stop','save','reset'].includes(action)) { text = ''; }
+                break;
+        }
+
+        // For downloading state, hide non-pull buttons from visible space
+        if (state === 'downloading' && !['start','stop','save','reset'].includes(action)) {
+            btn.style.display = action === 'eject' ? '' : 'none';
+        } else {
+            btn.style.display = '';
+        }
+
+        // Update text content and add danger/success classes
+        btn.textContent = text;
+        btn.className = '';
+        if (action === 'stop' || action === 'eject') btn.classList.add('btn-danger');
+        if (action === 'start') btn.classList.add('btn-success');
+    }
+}
+
+// ── Dirty detection ────────────────────────────────────────────
 function checkDirty(modelId, panel) {
     const snap = _configSnapshots?.[modelId];
     if (!snap) return;
@@ -498,19 +624,14 @@ function checkDirty(modelId, panel) {
     if (btn) btn.disabled = !isDirty;
 }
 
-// ═══════════════════════════════════════════════════════════
-// Event wiring conventions
-// ═══════════════════════════════════════════════════════════
-
+// ── Event wiring conventions ───────────────────────────────────
 function wireEvents(actions) {
-    // Click delegation on buttons with data-action + data-model
     document.addEventListener('click', (e) => {
         const btn = e.target.closest('[data-action]');
         if (!btn) return;
         actions[btn.dataset.action]?.(btn.dataset.model);
     });
 
-    // Field change: id="{name}" -> fires CustomEvent('field.change')
     document.addEventListener('input', (e) => {
         const input = e.target;
         if (!input.id) return;
@@ -531,21 +652,17 @@ function populateSelect(selectId, models, current) {
     sel.innerHTML = html;
 }
 
-// ═══════════════════════════════════════════════════════════
-// Log polling - delta fetch with cursor
-// ═══════════════════════════════════════════════════════════
-
+// ── Log polling - delta fetch with cursor ──────────────────────
 let logTimer = null, logSince = 0;
 
 function startLogPoll(modelId) {
     stopLogPoll();
-
     const poll = async () => {
         try {
             if (!modelId) return;
             const params = { lines: 200 };
             if (logSince) params.since = logSince;
-            const data = await adminGet('/admin/log/' + encodeURIComponent(modelId), params);
+            const data = await window.adminGet('/admin/log/' + encodeURIComponent(modelId), params);
             if (!data?.lines?.length) return;
 
             const display = document.getElementById('log-display');
@@ -558,125 +675,20 @@ function startLogPoll(modelId) {
                 display.appendChild(div);
             }
 
-            // Auto-scroll if near bottom
             if (display.scrollHeight - display.scrollTop <= display.clientHeight + 60) {
                 display.scrollTop = display.scrollHeight;
             }
-
             logSince = data.since ?? logSince;
         } catch {}
     };
-
     poll();
     logTimer = setInterval(poll, CFG.POLL_INTERVAL);
 }
 
 function stopLogPoll() { if (logTimer) clearInterval(logTimer); logTimer=null; logSince=0; }
 
-// ═══════════════════════════════════════════════════════════
-// Chat streaming - SSE to model's port /v1/chat/completions
-// Handles internal 'chat.send' event for self-contained operation
-// ═══════════════════════════════════════════════════════════
-
+// ── Chat streaming - SSE to model's port /v1/chat/completions ─
 let _streamAcc = '', _streamBubble = null;
-
-// Start streaming chat for a given model - called by EventBus or externally
-async function sendChat(modelName, inputEl = null) {
-    const el = inputEl ?? document.getElementById('f-chat-input');
-    if (!el) return;
-    const text = el.value.trim();
-    if (!text || !modelName) return;
-
-    appendBubble('user', text);
-    chatHistory.push({ role:'user', content:text });
-    el.value = '';
-
-    // Clean up any in-flight stream from a previous message
-    if (_streamBubble && _streamBubble.classList.contains('streaming')) {
-        _streamBubble.classList.remove('streaming');
-    }
-    const bubble = appendBubble('assistant', '', true);
-    _streamAcc = '';
-    _streamBubble = bubble;
-
-    stopLogPoll();  // pause logs during stream
-
-    const abortCtrl = new AbortController();
-    try {
-        await doStream(text, modelName, (delta) => {
-            if (abortCtrl.signal.aborted) return; // cancelled by new message
-            _streamAcc += delta;
-            requestAnimationFrame(() => {
-                if (_streamBubble && !abortCtrl.signal.aborted) {
-                    _streamBubble.innerHTML = typeof marked !== 'undefined' ? marked.parse(_streamAcc) : _streamAcc + '<span class="cursor"></span>';
-                }
-                // Auto-scroll if user is at bottom
-                const chatDisplay = document.getElementById('chat-display');
-                if (chatDisplay && chatDisplay.scrollHeight - chatDisplay.scrollTop <= chatDisplay.clientHeight + 40) {
-                    chatDisplay.scrollTop = chatDisplay.scrollHeight;
-                }
-            });
-        }, { signal: abortCtrl.signal });
-
-        // Done streaming
-        _streamBubble?.classList.remove('streaming');
-        const final = _streamAcc || (_streamBubble?.textContent||'').replace(/\u200B/g,'').trim();
-        if (typeof marked !== 'undefined') _streamBubble.innerHTML = marked.parse(final);
-        chatHistory.push({ role:'assistant', content:final });
-    } catch(e) {
-        if (e.name !== 'AbortError') appendBubble('assistant', '\u26a0 ' + e.message);
-    }
-}
-
-// Internal SSE streaming logic
-async function doStream(text, modelName, onData, options = {}) {
-    const { signal } = options;
-    const info = window._modelsCache?.find(m => m.id === modelName);
-    if (!info?.port) throw new Error('Model not running');
-
-    const params = JSON.parse(localStorage.getItem(CFG.STORAGE_CHAT_PARAMS)||'{}')[modelName] || {};
-    const resp = await fetch('/v1/chat/completions', {
-        method: 'POST', headers:{'Content-Type':'application/json'},
-        signal,
-        body: JSON.stringify({
-            model: info.id || modelName, messages:chatHistory, stream:true,
-            temperature: params.temperature??0.7,
-            top_p: params.top_p??0.95,
-            ...(params.max_tokens ? { max_tokens: params.max_tokens } : {}),
-        }),
-    });
-
-    if (!resp.ok) throw new Error('Chat API ' + resp.status);
-
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
-
-    while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream:true });
-
-        // Process complete lines only — incomplete tail stays in buf for next read.
-        let idx;
-        while ((idx = buf.indexOf('\n')) >= 0) {
-            const line = buf.slice(0, idx).trim();
-            buf = buf.slice(idx + 1);
-            if (!line || line === '[DONE]') continue;
-            let t = line.startsWith('data: ') ? line.slice(6) : line;
-            try {
-                const p = JSON.parse(t);
-                if (p.error) {
-                    const err = new Error(p.error); err.streamError = true; throw err;
-                }
-                const d = p.choices?.[0]?.delta?.content;
-                if (d) onData(d);
-            } catch (e) {
-                if (e.streamError) throw e;
-            }
-        }
-    }
-}
 
 function appendBubble(role, content, streaming) {
     const el = document.getElementById('chat-display');
@@ -690,16 +702,92 @@ function appendBubble(role, content, streaming) {
     return div;
 }
 
-// Collapse all button (document-wide)
-const collapseBtn = document.getElementById('btn-collapse-all');
-if (collapseBtn) collapseBtn.addEventListener('click', () => {
-    document.querySelectorAll('.accordion').forEach(a => a.classList.add('collapsed'));
-});
+async function doStream(text, modelName, onData, options = {}) {
+    const { signal } = options;
+    const info = window._modelsCache?.find(m => m.id === modelName);
+    if (!info?.port) throw new Error('Model not running');
 
-// ═══════════════════════════════════════════════════════════
-// API helpers - fetch with X-Admin-Key header
-// ═══════════════════════════════════════════════════════════
+    const params = JSON.parse(localStorage.getItem(CFG.STORAGE_CHAT_PARAMS)||'{}')[modelName] || {};
+    const resp = await fetch('/v1/chat/completions', {
+        method: 'POST', headers:{'Content-Type':'application/json'}, signal,
+        body: JSON.stringify({
+            model: info.id || modelName, messages:chatHistory, stream:true,
+            temperature: params.temperature??0.7,
+            top_p: params.top_p??0.95,
+            ...(params.max_tokens ? { max_tokens: params.max_tokens } : {}),
+        }),
+    });
+    if (!resp.ok) throw new Error('Chat API ' + resp.status);
 
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream:true });
+        let idx;
+        while ((idx = buf.indexOf('\n')) >= 0) {
+            const line = buf.slice(0, idx).trim();
+            buf = buf.slice(idx + 1);
+            if (!line || line === '[DONE]') continue;
+            let t = line.startsWith('data: ') ? line.slice(6) : line;
+            try {
+                const p = JSON.parse(t);
+                if (p.error) { const err = new Error(p.error); err.streamError = true; throw err; }
+                const d = p.choices?.[0]?.delta?.content;
+                if (d) onData(d);
+            } catch (e) {
+                if (e.streamError) throw e;
+            }
+        }
+    }
+}
+
+async function sendChat(modelName, inputEl = null) {
+    const el = inputEl ?? document.getElementById('f-chat-input');
+    if (!el) return;
+    const text = el.value.trim();
+    if (!text || !modelName) return;
+
+    appendBubble('user', text);
+    chatHistory.push({ role:'user', content:text });
+    el.value = '';
+
+    if (_streamBubble && _streamBubble.classList.contains('streaming')) {
+        _streamBubble.classList.remove('streaming');
+    }
+    const bubble = appendBubble('assistant', '', true);
+    _streamAcc = '';
+    _streamBubble = bubble;
+    stopLogPoll();
+
+    const abortCtrl = new AbortController();
+    try {
+        await doStream(text, modelName, (delta) => {
+            if (abortCtrl.signal.aborted) return;
+            _streamAcc += delta;
+            requestAnimationFrame(() => {
+                if (_streamBubble && !abortCtrl.signal.aborted) {
+                    _streamBubble.innerHTML = typeof marked !== 'undefined' ? marked.parse(_streamAcc) : _streamAcc + '<span class="cursor"></span>';
+                }
+                const chatDisplay = document.getElementById('chat-display');
+                if (chatDisplay && chatDisplay.scrollHeight - chatDisplay.scrollTop <= chatDisplay.clientHeight + 40) {
+                    chatDisplay.scrollTop = chatDisplay.scrollHeight;
+                }
+            });
+        }, { signal: abortCtrl.signal });
+
+        _streamBubble?.classList.remove('streaming');
+        const final = _streamAcc || (_streamBubble?.textContent||'').replace(/\u200B/g,'').trim();
+        if (typeof marked !== 'undefined') _streamBubble.innerHTML = marked.parse(final);
+        chatHistory.push({ role:'assistant', content:final });
+    } catch(e) {
+        if (e.name !== 'AbortError') appendBubble('assistant', '\u26a0 ' + e.message);
+    }
+}
+
+// ── API helpers ────────────────────────────────────────────────
 function _adminKey() { return document.querySelector('meta[name="arkestra-admin-key"]')?.content||''; }
 
 async function adminGet(path, params) {
@@ -719,9 +807,11 @@ async function adminPost(path, body) {
     return r.json();
 }
 
-let chatHistory = [];
+// ── Module-scoped state (closed over by deferred handlers) ────
 let _configSnapshots = {};
+let chatHistory = [];
 
+// ── Expose public API ──────────────────────────────────────────
 window.EventBus = EventBus;
 window.CFG = CFG;
 window.esc = esc;

@@ -4,8 +4,8 @@
 class AudioStream {
     constructor() {
         this._ws = null;
-        this.onPartialTranscript = null;  // partial text from streaming ASR
-        this.onFinalTranscript = null;    // final sentence transcription
+        this.onPartialTranscript = null;
+        this.onFinalTranscript = null;
         this._pcmBuffer = [];
         this._audioCtx = null;
     }
@@ -47,7 +47,6 @@ class AudioStream {
         this._mediaStream = mediaStream;
         this._sampleRate = 16000;
 
-        // Sample audio at 16kHz for sherpa-ai
         const ctx = new AudioContext();
         const source = ctx.createMediaStreamSource(mediaStream);
         const processor = ctx.createScriptProcessor(4096, 1, 1);
@@ -62,7 +61,6 @@ class AudioStream {
 
             while (buffer.length >= FRAME_SAMPLES) {
                 const chunk = buffer.splice(0, FRAME_SAMPLES);
-                // Send as base64-encoded JSON frame (uniform protocol)
                 let base64 = '';
                 for (let j = 0; j < chunk.length; j += 128) {
                     const slice = chunk.slice(j, j + 128);
@@ -72,23 +70,19 @@ class AudioStream {
             }
         };
 
-        source.connect(processor); // Don't connect to destination — we only need input
+        source.connect(processor);
     }
 
     async stopRecording() {
-        // Wait briefly for any in-flight results
         await new Promise(r => setTimeout(r, 200));
         if (this._audioCtx) { this._audioCtx.close(); this._audioCtx = null; }
         this._mediaStream?.getTracks().forEach(t => t.stop());
     }
 
-    // ── PCM playback queue ────────────────────────────────────────
-
     _drainPCM() {
         if (this._pcmBuffer.length === 0) return;
-
         const buffer = this._pcmBuffer.shift();
-        if (!buffer || buffer.length < 78) return; // WAV header is 44 bytes + min audio
+        if (!buffer || buffer.length < 78) return;
 
         try {
             if (!this._audioCtx) this._audioCtx = new AudioContext();
@@ -117,10 +111,8 @@ function formatTime(sec) {
     return m + ':' + String(s).padStart(2, '0');
 }
 
-
 // ── Audio playback engine ────────────────────────────────────────
 function playAudioFromUrl(url) {
-    // Stop existing playback — detach handlers to prevent stale fire
     if (_audioEl) { _audioEl.pause(); URL.revokeObjectURL(_audioEl.src); }
     if (_audioEl && typeof _audioEl.removeEventListener === 'function') {
         if (_onLoadedMetadata) _audioEl.removeEventListener('loadedmetadata', _onLoadedMetadata);
@@ -149,7 +141,6 @@ function playAudioFromUrl(url) {
     _audioEl.addEventListener('timeupdate',     _onTimeUpdate);
     _audioEl.addEventListener('ended',         _onEnded);
 
-    // Bind playback controls once on first call
     if (!playAudioFromUrl._controlsBound) {
         playAudioFromUrl._controlsBound = true;
         prog.addEventListener('input', () => {
@@ -169,14 +160,13 @@ function playAudioFromUrl(url) {
     _audioEl.play();
 }
 
-// ── TTS action (uses streaming AudioStream when available) ──────
+// ── TTS action ───────────────────────────────────────────────────
 async function sendTTS(text) {
     if (!text?.trim()) return;
 
     try {
         await window._audioStream.speak(text.trim());
     } catch(e) {
-        // Fallback: original batch POST
         const chatModelSel = document.getElementById('chat-model-select');
         const modelName = chatModelSel?.value || window.CFG?.DEFAULT_TTS;
         const statusEl = document.getElementById('chat-status');
@@ -223,6 +213,6 @@ async function sendASR(file) {
     }
 }
 
-// ── Expose on window for app.js and widget.js ─────────────────────
+// ── Expose on window for app.js and widget.js ────────────────────
 window._audio = { playAudioFromUrl, sendTTS, sendASR };
 Object.defineProperty(window, 'audioEl', { get: () => _audioEl, configurable: true });

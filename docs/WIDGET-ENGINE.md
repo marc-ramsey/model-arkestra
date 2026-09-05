@@ -16,9 +16,9 @@ ModelArkestra admin UI is driven by a single JSON tree rendered into DOM at runt
 
 Render it:
 ```js
-import render from '/static/widget.js'; // exports window.render
+// widget.js exposes window.render and all public helpers on the global scope.
 const tree = await fetch('/static/app.json').then(r => r.json());
-document.getElementById('app-root').replaceWith(render(tree));
+document.getElementById('app-root').replaceWith(window.render(tree));
 ```
 
 ## Tree Structure

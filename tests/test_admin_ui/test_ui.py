@@ -194,16 +194,27 @@ class TestInteractions:
         assert btn is not None, "Chat send button not found"
 
     def test_action_buttons_in_config(self, page):
-        # Ensure a model row has been clicked
-        rows = page.query_selector_all(".model-row")
-        if len(rows) >= 1:
-            rows[0].click()
-            time.sleep(1.5)
-
-        btn_ids = page.evaluate(
-            "() => [...document.querySelectorAll('.config-panel button')].map(b => b.id)"
+        # Action buttons are now inline on the model row header
+        btns = page.evaluate(
+            "() => [...document.querySelectorAll('.model-name-bar .model-actions-inline button')].map(b => b.dataset.action)"
         )
-        assert len(btn_ids) >= 3, f"Expected action buttons (got {len(btn_ids)}: {btn_ids})"
+        assert len(btns) >= 3, f"Expected action buttons in row (got {len(btns)}: {btns})"
+
+    def test_model_row_inline_buttons(self, page):
+        """Model rows have inline action buttons with data-action/data-model attrs."""
+        btn_data = page.evaluate(
+            "() => [...document.querySelectorAll('.model-name-bar .model-actions-inline button')].map(b => ({ action: b.dataset.action || '', model: b.dataset.model || '' }))"
+        )
+        for btn in btn_data:
+            assert btn['action'], f"Button missing data-action attribute"
+            assert btn['model'], f"Button missing data-model attribute"
+
+    def test_group_headers_exist(self, page):
+        """Two sub-group headers exist: Ready and Needs Download."""
+        ready = page.evaluate("!!document.getElementById('models-ready-items')")
+        download = page.evaluate("!!document.getElementById('models-download-items')")
+        assert ready is True, "Ready group container not found"
+        assert download is True, "Needs Download group container not found"
 
     def test_field_wrappers_in_config(self, page):
         field_count = page.evaluate(
