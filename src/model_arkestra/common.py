@@ -377,6 +377,7 @@ def download_hf_model(
     cache_dir: Path,
     log_fn: Callable[[str], None],
     allow_patterns: Optional[List[str]] = None,
+    progress_callback: Optional[Callable[[str, dict], None]] = None,
 ) -> str:
     """Download a model checkpoint from HuggingFace with progress callbacks.
 
@@ -401,6 +402,8 @@ def download_hf_model(
         if evt["event"] == "total":
             total_gb = evt["total_bytes"] / 1e9
             log_fn(f"{repo_id}: {evt['desc']} ({total_gb:.1f}GB total)")
+            if progress_callback:
+                progress_callback("total", evt)
         elif evt["event"] == "progress":
             pct = evt["pct"]
             downloaded_gb = evt["n"] / 1e9
@@ -410,6 +413,8 @@ def download_hf_model(
                 log_fn(f"{repo_id}: {pct}% ({downloaded_gb:.2f}/{total_gb:.1f}GB, {speed_mbs:.0f}MB/s)")
             else:
                 log_fn(f"{repo_id}: {downloaded_gb:.2f}GB, {speed_mbs:.0f}MB/s")
+            if progress_callback:
+                progress_callback("progress", evt)
 
     from huggingface_hub import snapshot_download
 
@@ -914,3 +919,52 @@ def _get_device_profile_env(
 
     prof = profiles.get(matched_key, {})
     return prof.get("env") or {}
+
+
+def hf_model_info(repo_id: str) -> dict | None:
+    """Query HuggingFace for model size and checkpoint version (no download)."""
+    try:
+        from huggingface_hub import model_info
+    except ImportError:
+        return None
+
+    # Parse repo_id:tag format — tag is a variant shorthand (e.g. Q4_K_M)
+    parts = repo_id.split(":", 1)
+    repo = parts[0]
+    tag = parts[1] if len(parts) == 2 else ""
+
+    try:
+        info = model_info(repo, files_metadata=True)
+    except Exception:
+        return None
+
+    sha = info.sha or ""
+
+    # Filter GGUF files: match tag against .gguf filename basename
+    if tag:
+        def _match(s):
+            name = s.rfilename
+            if not name.endswith(".gguf") or s.size is None:
+                return False
+            base = Path(name).stem  # e.g. "Qwen3-4B-Q4_K_M"
+            return tag in base
+        ggufs = [s for s in (info.siblings or []) if _match(s)]
+    else:
+        ggufs = [s for s in (info.siblings or [])
+                 if s.rfilename.endswith(".gguf") and s.size is not None]
+
+    total_bytes = sum(s.size for s in ggufs)
+
+    checkpoint_id = None
+    if ggufs:
+        checkpoint_id = ggufs[0].blob_id
+    elif tag:
+        # Tag didn't match any file — use sha as fallback
+        checkpoint_id = sha
+    else:
+        checkpoint_id = sha
+
+    return {
+        "size_gb": round(total_bytes / 1e9, 2) if total_bytes else 0,
+        "checkpoint_id": checkpoint_id or sha,
+    }

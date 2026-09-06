@@ -451,6 +451,17 @@ class ModelArkestra:
         """Return the cache directory path for a given HuggingFace repo string."""
         return self._cache_root() / f"models--{repo.replace('/', '--')}"
 
+    def _cleanup_partial_cache(self, cache_path: Optional[str]) -> None:
+        """Remove partial download artifacts from a cancelled pull."""
+        if not cache_path:
+            return
+        try:
+            cache_dir = self._cache_dir_for_checkpoint(cache_path)
+            if cache_dir.exists():
+                shutil.rmtree(cache_dir)
+        except Exception as e:
+            self.log(f"[pull] cleanup error: {e}", level="WARNING")
+
     # ── context manager ────────────────────────────────────────
 
     async def __aenter__(self) -> "ModelArkestra":
@@ -689,7 +700,8 @@ class ModelArkestra:
 
         Resolves the model reference, calls ``snapshot_download`` with
         progress callbacks, and transitions the context state on
-        completion (UNCACHED) or failure (ERROR).
+        completion (STOPPED) or failure (ERROR). On cancel,
+        returns to UNCACHED and cleans partial cache files.
         """
         model_name = ctx.name
         try:
@@ -709,16 +721,24 @@ class ModelArkestra:
             def log_progress(line: str) -> None:
                 ctx._append_log_line(f"[pull] {model_name}: {line}")
 
+            def progress_hook(event_type: str, evt: dict) -> None:
+                if event_type == "progress":
+                    ctx.download_pct = evt.get("pct")
+                    ctx.download_downloaded = evt.get("n", 0)
+                    ctx.download_speed_mbps = evt.get("speed", 0) / 1e6
+
             pull_task = asyncio.to_thread(
-                download_hf_model, resolved.ref.split(":", 1)[0], cache_dir, log_progress
+                download_hf_model, resolved.ref.split(":", 1)[0], cache_dir, log_progress,
+                progress_callback=progress_hook,
             )
             await pull_task
 
             ctx.state = RunnerState.STOPPED
             self.log(f"[pull] model={model_name} complete")
         except asyncio.CancelledError:
+            self._cleanup_partial_cache(resolved.cache_path)
+            ctx.state = RunnerState.UNCACHED
             self.log(f"[pull] model={model_name} cancelled")
-            ctx.state = RunnerState.STOPPED
             raise
         except Exception as e:
             ctx.state = RunnerState.ERROR

@@ -47,6 +47,7 @@ class _ModelContext:
         self.broadcast_addr: str = "0.0.0.0"
         self._remote_base_url: Optional[str] = None  # actual URL for remote models (callers can bypass proxy)
         self.download_task: Optional[asyncio.Task] = None  # background download task
+        self._last_progress_event: Optional[str] = None  # last progress callback event type
 
         # Line sequence counter
         self._log_seq: int = 0

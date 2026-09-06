@@ -25,6 +25,7 @@ from model_arkestra.common import (
     build_image,
     containerfile_for_backend,
     default_cache_root,
+    hf_model_info,
     image_and_runner_for_backend,
     image_exists as _image_exists,
     remove_image,
@@ -98,6 +99,7 @@ class ArkestraAdmin:
         self._add_images_route()
         self._add_pull_route()
         self._add_pull_stop_route()
+        self._add_model_route()
         self._installed = True
         return self
 
@@ -780,9 +782,14 @@ class ArkestraAdmin:
 
             ctx = self.server._arkestra.find_context(model)
 
-            # If already pulling, return existing task
+            # If already pulling, cancel and restart
             if ctx and ctx.state == RunnerState.DOWNLOADING and ctx.download_task:
-                return {"ok": True, "model": model, "already_downloading": True}
+                ctx.download_task.cancel()
+                try:
+                    await ctx.download_task
+                except asyncio.CancelledError:
+                    pass
+                ctx.download_task = None
 
             # If model is running or stopping, reject
             if ctx and ctx.state in (RunnerState.RUNNING, RunnerState.STOPPING):
@@ -841,7 +848,131 @@ class ArkestraAdmin:
                     pass
 
             ctx.download_task = None
+            # Clean up partial cache and return to UNCACHED
+            model_cfg = cfg.get(model, {})
+            raw = model_cfg.get("model", "")
+            resolved = resolve_model_ref(
+                raw,
+                default_section=self.server._arkestra.cm.data.get("default") or {},
+            )
+            if resolved.cache_path:
+                self.server._arkestra._cleanup_partial_cache(resolved.cache_path)
+            ctx.state = RunnerState.UNCACHED
             return {"ok": True, "model": model}
+
+    def _add_model_route(self) -> None:
+        @self._app.get("/model/{name:path}")
+        async def get_model(name: str):
+            """Public endpoint: model status info, any lifecycle state."""
+            cfg = self._models_cfg
+            if name not in cfg:
+                raise HTTPException(status_code=404, detail=f"Model '{name}' not found")
+
+            ctx = self.server._arkestra.find_context(name)
+            model_cfg = cfg.get(name, {})
+            default_section = self.server._arkestra.cm.data.get("default") or {}
+            resolved = resolve_model_ref(
+                model_cfg.get("model", ""),
+                default_section=default_section,
+                model_repos=self.server._arkestra.cm.data.get("model-repos"),
+            )
+
+            # Base fields from ctx or config resolution
+            if ctx:
+                state = ctx.state
+                port = ctx.port
+                runner_type = ctx.runner_type or ""
+                backend_id = ctx.backend_id or self._resolve_model_backend(name, model_cfg)
+            else:
+                state = RunnerState.UNCACHED
+                port = None
+                resolved_be = self._resolve_model_backend(name, model_cfg)
+                _, runner_type = image_and_runner_for_backend(self.server._arkestra.cm.data, resolved_be)
+                backend_id = resolved_be
+
+            # Size and checkpoint ID from HuggingFace metadata
+            info = hf_model_info(resolved.ref) or {}
+            size_gb = info.get("size_gb", 0) or 0
+            checkpoint_id = info.get("checkpoint_id") or model_cfg.get("model", name)
+
+            # Live download progress if downloading
+            progress: Dict[str, Any] = {}
+            if ctx and state == RunnerState.DOWNLOADING:
+                pct = getattr(ctx, "download_pct", None)
+                downloaded = getattr(ctx, "download_downloaded", None) or 0
+                speed = getattr(ctx, "download_speed_mbps", None)
+                progress.update({
+                    "pct": round(pct, 1) if pct is not None else 0,
+                    "downloaded_gb": round(downloaded / 1e9, 2),
+                    "speed_mbps": round(speed, 0) if speed is not None else 0,
+                })
+
+            return {
+                "state": state.name.lower(),
+                "size_gb": size_gb,
+                "checkpoint_id": checkpoint_id,
+                "port": port,
+                "backend_id": backend_id,
+                "runner_type": runner_type or "",
+                **progress,
+            }
+
+        @self._app.get("/model")
+        async def get_models():
+            """Public endpoint: all models, same format as /admin/models but no auth."""
+            cfg = self._models_cfg
+            contexts_by_name = {ctx.name: ctx for ctx in self.server._arkestra.get_model_contexts()}
+            data = []
+
+            hf_cache = self.server._arkestra.resolve_config("HF_HUB_CACHE")
+            if not hf_cache:
+                hf_cache = str(default_cache_root())
+
+            for model_name in self.server._arkestra.get_models():
+                ctx = contexts_by_name.get(model_name)
+                model_cfg = cfg.get(model_name, {})
+                default_section = self.server._arkestra.cm.data.get("default") or {}
+                resolved = resolve_model_ref(
+                    model_cfg.get("model", ""),
+                    default_section=default_section,
+                    model_repos=self.server._arkestra.cm.data.get("model-repos"),
+                )
+
+                hf = hf_model_info(resolved.ref) or {}
+                size_gb = hf.get("size_gb", 0) or 0
+                checkpoint_id = hf.get("checkpoint_id") or model_cfg.get("model", model_name)
+
+                if ctx:
+                    webui_status = model_status_for_ctx(ctx)
+                    entry = {
+                        "id": ctx.name,
+                        "status": webui_status,
+                        "port": ctx.port,
+                        "runner_type": ctx.runner_type or "",
+                        "backend_id": ctx.backend_id or self._resolve_model_backend(model_name, model_cfg),
+                        "size_gb": size_gb,
+                        "checkpoint_id": checkpoint_id,
+                    }
+                else:
+                    cache_path = None
+                    if resolved.cache_path:
+                        cache_path = Path(hf_cache).expanduser() / f"models--{resolved.cache_path}"
+                    is_cached = cache_path.exists() if cache_path else False
+                    resolved_be = self._resolve_model_backend(model_name, model_cfg)
+                    _, runner_type = image_and_runner_for_backend(self.server._arkestra.cm.data, resolved_be)
+                    entry = {
+                        "id": model_name,
+                        "status": {"value": "cached"} if is_cached else {"value": "uncached"},
+                        "port": None,
+                        "runner_type": runner_type,
+                        "backend_id": resolved_be,
+                        "size_gb": size_gb,
+                        "checkpoint_id": checkpoint_id,
+                    }
+
+                data.append(entry)
+
+            return {"models": data}
 
 
 # Type hints — resolved at runtime via string ref
