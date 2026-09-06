@@ -4,18 +4,28 @@ Model Arkestra ships an administrative panel that integrates into the same FastA
 
 ## Public Endpoints (No Auth)
 
-The `/api/*` namespace exposes read and safe lifecycle operations without requiring authentication:
+The `/api/*` namespace exposes read and safe lifecycle operations without requiring authentication. When `API_KEY` is set in config.yaml (under `env:`), these endpoints require the `X-Api-Key` header instead — enabling gradual rollout of API-level auth.
 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/models` | List all configured models with full runtime status |
 | `GET` | `/api/model/{name}` | Single model info (state, size_gb, port, checkpoint_id) |
-| `POST` | `/api/start/{model}` | Start a model |
+| `POST` | `/api/start/{model}` | Start a model (full body param mirror of admin start) |
 | `POST` | `/api/stop/{model}` | Stop a running model |
 
-These endpoints accept the same parameters as their authenticated equivalents but skip the admin key gate.
+## Configuring Auth
 
-## Endpoints Requiring Auth
+## Configuring Auth
+
+Both namespaces gate independently. Set the keys in `config.yaml`:
+
+```yaml
+env:
+  ADMIN_KEY: supersecret    # gates /admin/* — header: X-Admin-Key
+  API_KEY: apipublic        # gates /api/* — header: X-Api-Key
+```
+
+Neither key is required unless configured. With both keys set, `/admin/*` requires `X-Admin-Key` and `/api/*` requires `X-Api-Key` independently.
 
 ## Initialization
 
