@@ -1,9 +1,12 @@
-"""Arkestra CLI — chat client and init scaffolding.
+"""Arkestra CLI — user-facing chat and model management.
 
 Usage:
-    arkestra-cli --config config.yaml --model qwen3-4b          # direct (connects to model ports)
-    arkestra-cli --server http://localhost:8080 --model gpt-4     # via server
-    arkestra-cli init                                           # scaffold default config files
+    arkestra chat -m qwen3-4b          # interactive chat (starts if stopped)
+    arkestra pull qwen3-4b             # download checkpoint from HF
+    arkestra unload qwen3-4b           # stop and delete cache
+    arkestra status                    # list all model statuses
+    arkestra status -m qwen3-4b        # single model status
+
 
 Chat client types ``/help`` for commands, ``/quit`` or ``Ctrl+D`` to exit.
 
@@ -291,6 +294,88 @@ def _load_sources(config_dir: Path) -> tuple[dict, dict]:
         return sources, defaults
     except Exception:
         return {}, {}
+
+
+# ── Server-mode helpers (arkestra subcommands) ─────────────
+async def _request(server_url: str, path: str, method: str = "GET",
+                   json_body: dict | None = None) -> dict:
+    headers = {"Accept": "application/json"}
+    url = server_url.rstrip("/") + path
+    try:
+        async with aiohttp.ClientSession() as session:
+            kwargs: dict = {"headers": headers}
+            if json_body is not None:
+                kwargs["json"] = json_body
+            async with session.request(method, url, **kwargs) as resp:
+                return await resp.json()
+    except Exception as exc:
+        print(f"Server error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _resolve_server_url() -> str | None:
+    """Try config then env, returns server URL or None."""
+    config_path = os.environ.get("ARKESTRA_CONFIG") or \
+                  os.path.expanduser("~/.config/arkestra/config.yaml")
+    try:
+        import yaml
+        data = yaml.safe_load(open(config_path)) or {}
+    except Exception:
+        data = {}
+    default = data.get("default") or {}
+    port = (default.get("admin-port") or data.get("admin-port")
+            or (data.get("env") or {}).get("PORT"))
+    if port:
+        return f"http://127.0.0.1:{port}"
+    return None
+
+
+async def cmd_status(args):
+    server = _resolve_server_url()
+    if not server:
+        print("No server URL found. Set ARKESTRA_CONFIG or config.yaml default.admin-port", file=sys.stderr)
+        sys.exit(1)
+    data = await _request(server, "/admin/models")
+    models = data.get("models", [])
+    if not models:
+        print("No models configured.")
+        return
+    header = f"{'NAME':<30} {'STATUS':<12} {'PORT':<8} {'BACKEND'}"
+    print(header)
+    print("-" * len(header))
+    for m in models:
+        mid = args.model if hasattr(args, "model") and args.model else m["id"]
+        if hasattr(args, "model") and args.model and m["id"] != mid:
+            continue
+        status_val = m.get("status", {})
+        val = status_val.get("value", "stopped") if isinstance(status_val, dict) else str(status_val)
+        print(f"{m['id']:<30} {val:<12} {str(m['port']) or '-':<8} {m.get('backend_id', '-')}")
+
+
+async def cmd_pull(args):
+    server = _resolve_server_url()
+    if not server:
+        print("No server URL found.", file=sys.stderr)
+        sys.exit(1)
+    result = await _request(server, f"/admin/pull/{args.model}", "POST")
+    ok = result.get("ok") or result.get("already_downloading")
+    if ok:
+        print(f"Download started for '{args.model}'")
+    else:
+        print(result.get("detail", "Failed to pull"), file=sys.stderr)
+
+
+async def cmd_unload(args):
+    server = _resolve_server_url()
+    if not server:
+        print("No server URL found.", file=sys.stderr)
+        sys.exit(1)
+    result = await _request(server, f"/admin/eject/{args.model}", "POST")
+    ok = result.get("ok")
+    if ok:
+        print(f"Model '{args.model}' unloaded — cache deleted")
+    else:
+        print(result.get("detail", "Failed to unload"), file=sys.stderr)
 
 
 def cmd_download_backend(backend_name: str, version: str = "latest") -> int:
@@ -816,6 +901,27 @@ def main(argv: list[str] | None = None) -> None:
         help="Download primary + fallback backends based on detected hardware",
     )
 
+    # ── pull (via server) ─────────────────────────────────────────────
+    pull_parser = subparsers.add_parser(
+        "pull",
+        help="Download model checkpoint from HuggingFace (requires running server)",
+    )
+    pull_parser.add_argument("model", help="Model name")
+
+    # ── unload (via server) ───────────────────────────────────────────
+    unload_parser = subparsers.add_parser(
+        "unload",
+        help="Stop model and delete its checkpoint cache (requires running server)",
+    )
+    unload_parser.add_argument("model", help="Model name")
+
+    # ── status (via server) ───────────────────────────────────────────
+    status_parser = subparsers.add_parser(
+        "status",
+        help="Show model status, or all models if no -m given",
+    )
+    status_parser.add_argument("-m", "--model", default=None, help="Model name (optional)")
+
     args = parser.parse_args(argv)
 
     # ── Route to subcommand handler ───────────────────────────────────
@@ -840,6 +946,14 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "download-all":
         sys.exit(cmd_download_all())
+
+    # Server-mode commands
+    if args.command == "pull":
+        asyncio.run(cmd_pull(args))
+    elif args.command == "unload":
+        asyncio.run(cmd_unload(args))
+    elif args.command == "status":
+        asyncio.run(cmd_status(args))
 
     # Default: chat subcommand (for backwards compat with no subcommand)
     if hasattr(args, 'config'):
