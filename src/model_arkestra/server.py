@@ -593,7 +593,8 @@ class ArkestraServer:
         # ── Admin subcomponent ───────────────────────────────────
         from model_arkestra.admin import ArkestraAdmin
         admin_key = self._arkestra.resolve_config("ADMIN_KEY", explicit=self.admin_key)
-        self._admin = ArkestraAdmin(self, admin_key=admin_key, app=app)
+        api_key = self._arkestra.resolve_config("API_KEY")
+        self._admin = ArkestraAdmin(self, admin_key=admin_key, app=app, api_key=api_key)
         self._admin.install()
 
         self._app = app

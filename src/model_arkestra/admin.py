@@ -44,9 +44,11 @@ INFRA_KEYS = frozenset({"backend", "runner", "max_log_lines"})
 class ArkestraAdmin:
     """Admin subcomponent that installs routes on an ArkestraServer's app."""
 
-    def __init__(self, server: "ArkestraServer", admin_key: Optional[str], app: FastAPI):
+    def __init__(self, server: "ArkestraServer", admin_key: Optional[str], app: FastAPI,
+                 api_key: Optional[str] = None):
         self.server = server
         self.admin_key = admin_key
+        self.api_key = api_key
         self._app = app
         self._installed = False
         # Load schema registry from schemas.yaml (same dir as config)
@@ -100,6 +102,8 @@ class ArkestraAdmin:
         self._add_pull_route()
         self._add_pull_stop_route()
         self._add_model_route()
+        self._add_public_start_route()
+        self._add_public_stop_route()
         self._installed = True
         return self
 
@@ -209,18 +213,27 @@ class ArkestraAdmin:
                             headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
     def _add_auth_middleware(self) -> None:
-        # Always install the middleware (plumbing stays in place even when no key is set).
-        # When admin_key is empty/None, it's a no-op pass-through.
+        # Always install the middleware (plumbing stays in place even when no keys are set).
+        # Each namespace gates independently — neither key required unless configured.
         @self._app.middleware("http")
         async def admin_auth(request: Request, call_next):
             path = request.url.path
             is_admin = path == "/admin" or path.startswith("/admin/")
+            is_api = path == "/api" or path.startswith("/api/")
+
             if is_admin and self.admin_key:
                 key = request.headers.get("x-admin-key", "")
                 if key != self.admin_key:
                     return JSONResponse(
                         status_code=401,
                         content={"error": "Invalid or missing admin_key header"},
+                    )
+            if is_api and self.api_key:
+                key = request.headers.get("x-api-key", "")
+                if key != self.api_key:
+                    return JSONResponse(
+                        status_code=401,
+                        content={"error": "Invalid or missing api_key header"},
                     )
             return await call_next(request)
 
@@ -825,7 +838,7 @@ class ArkestraAdmin:
             return {"ok": True, "model": model}
 
     def _add_pull_stop_route(self) -> None:
-        @self._app.post("/admin/pull/stop/{model:path}")
+        @self._app.post("/admin/cancel-pull/{model:path}")
         async def admin_pull_stop(model: str):
             """Cancel an in-progress model pull."""
             cfg = self._models_cfg
@@ -861,7 +874,7 @@ class ArkestraAdmin:
             return {"ok": True, "model": model}
 
     def _add_model_route(self) -> None:
-        @self._app.get("/model/{name:path}")
+        @self._app.get("/api/model/{name:path}")
         async def get_model(name: str):
             """Public endpoint: model status info, any lifecycle state."""
             cfg = self._models_cfg
@@ -917,7 +930,7 @@ class ArkestraAdmin:
                 **progress,
             }
 
-        @self._app.get("/model")
+        @self._app.get("/api/models")
         async def get_models():
             """Public endpoint: all models, same format as /admin/models but no auth."""
             cfg = self._models_cfg
@@ -973,6 +986,77 @@ class ArkestraAdmin:
                 data.append(entry)
 
             return {"models": data}
+
+    def _add_public_start_route(self) -> None:
+        """Public /api/start/{model} — no auth required.
+
+        Currently a full mirror of /admin/start/{model}, including body params for
+        infra overrides (backend, runner, max_log_lines) and inference
+        parameters. Skips only the admin key gate. This behavior may be more restricted in future releases.
+        """
+        @self._app.post("/api/start/{model:path}")
+        async def public_start(model: str, body: Dict[str, Any] | None = None):
+            cfg = self._models_cfg
+            if model not in cfg:
+                raise HTTPException(status_code=404, detail=f"Model '{model}' not in config")
+
+            if not self.server._arkestra.can_start(model):
+                raise HTTPException(status_code=409, detail="model not available")
+
+            kw = {}
+            for key in INFRA_KEYS:
+                if body and key in body and body[key] is not None:
+                    val = body[key]
+                    if key == "max_log_lines":
+                        try:
+                            val = int(val)
+                        except (ValueError, TypeError):
+                            continue
+                    kw[key] = val
+            if body:
+                for key, value in body.items():
+                    if key not in INFRA_KEYS and value is not None:
+                        kw[key] = value
+
+            try:
+                await self.server._arkestra.start(model, **kw)
+                ctx = self.server._arkestra.find_context(model)
+                port = ctx.port if ctx else None
+                return {"ok": True, "model": model, "port": port}
+            except Exception as exc:
+                raise HTTPException(status_code=503, detail=f"Start failed: {exc}")
+
+    def _add_public_stop_route(self) -> None:
+        """Public /api/stop/{model} — no auth required.
+
+        Mirrors /admin/stop/{model} but skips the admin key gate.
+        Used by `arkestra stop` CLI without needing a token.
+        """
+        @self._app.post("/api/stop/{model:path}")
+        async def public_stop(model: str):
+            if model not in self._models_cfg:
+                raise HTTPException(status_code=404, detail=f"Model '{model}' not configured")
+            ctx = self.server._arkestra.find_context(model)
+            if not ctx:
+                raise HTTPException(
+                    status_code=404, detail=f"Model '{model}' not found in runners"
+                )
+            prev_state = ctx.state
+            if prev_state.is_terminal:
+                return JSONResponse(
+                    status_code=202,
+                    content={
+                        "ok": True,
+                        "model": model,
+                        "previous_state": str(prev_state),
+                    },
+                )
+            await self.server._arkestra.stop(model)
+            return {
+                "ok": True,
+                "model": model,
+                "previous_state": str(prev_state),
+            }
 
 
 # Type hints — resolved at runtime via string ref

@@ -2,6 +2,21 @@
 
 Model Arkestra ships an administrative panel that integrates into the same FastAPI app via `ArkestraServer`. It provides endpoints for monitoring and managing models, with optional API-key authentication on all admin paths.
 
+## Public Endpoints (No Auth)
+
+The `/api/*` namespace exposes read and safe lifecycle operations without requiring authentication:
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/models` | List all configured models with full runtime status |
+| `GET` | `/api/model/{name}` | Single model info (state, size_gb, port, checkpoint_id) |
+| `POST` | `/api/start/{model}` | Start a model |
+| `POST` | `/api/stop/{model}` | Stop a running model |
+
+These endpoints accept the same parameters as their authenticated equivalents but skip the admin key gate.
+
+## Endpoints Requiring Auth
+
 ## Initialization
 
 Admin routes are installed automatically when calling `server.get_app()` — pass the ``admin_key`` argument to enable:
@@ -48,7 +63,7 @@ Missing or incorrect keys return `401 Unauthorized`. Public paths (`/`, `/index.
 | `POST` | `/admin/shutdown` | Yes | Full server teardown — stops uvicorn and all models |
 | `POST` | `/admin/restart/{model}` | Yes | Stop and restart a running/loading model (accepts override params) |
 | `POST` | `/admin/pull/{model}` | Yes | Start pulling a model checkpoint from HuggingFace |
-| `POST` | `/admin/pull/stop/{model}` | Yes | Cancel an in-progress model pull |
+| `POST` | `/admin/cancel-pull/{model}` | Yes | Cancel an in-progress model pull |
 
 ### GET /admin/models
 
@@ -348,12 +363,12 @@ Returns `404` if the model is not in config.
 ]}
 ```
 
-### POST /admin/pull/stop/{model}
+### POST /admin/cancel-pull/{model}
 
 Cancel an in-progress model pull. The pull task is cancelled and partially downloaded files may remain in cache (subsequent pulls resume from cache).
 
 ```bash
-curl -X POST 'http://localhost:8080/admin/pull/stop/qwen3.5-4b' \
+curl -X POST 'http://localhost:8080/admin/cancel-pull/qwen3.5-4b' \
      -H 'X-Admin-Key: your-secret-key'
 ```
 
