@@ -7,7 +7,7 @@ ModelArkestra uses **two configuration files** that work together:
 | `~/.config/arkestra/config.yaml` | Model definitions, ports, global defaults | Full — edit freely |
 | `~/.config/arkestra/backends.yaml` | Backend types, binary sources, download channels | **Advanced** — see below |
 
-Both files are scaffolded together by `model-arkestra init`. They live in the XDG-compliant directory `~/.config/arkestra/`, resolvable via `resolve_config_path()` and `resolve_backends_path()`.
+Both files are scaffolded together by `arkestra init`. They live in the XDG-compliant directory `~/.config/arkestra/`, resolvable via `resolve_config_path()` and `resolve_backends_path()`.
 
 ```
 ~/.config/arkestra/
@@ -18,10 +18,10 @@ Both files are scaffolded together by `model-arkestra init`. They live in the XD
 ## Quick Start: The Init Command
 
 ```bash
-model-arkestra init --force          # writes both files from scratch
-model-arkestra list-backends         # shows available backends + binary status
-model-arkestra download-backend rocm  # downloads the ROCm binary
-model-arkestra start                 # validates backends, starts server
+arkestra init --force          # writes both files from scratch
+arkestra list-backends         # shows available backends + binary status
+arkestra download-backend rocm  # downloads the ROCm binary
+arkestra start                 # validates backends, starts server
 ```
 
 **Detection flow:** `init` probes your hardware (GPU vendor, CPU arch), then writes a `config.yaml` with `backends.default:` pointing to the best backend for your machine. The full backend definitions live in `backends.yaml`.
@@ -30,13 +30,13 @@ model-arkestra start                 # validates backends, starts server
 
 | Command | Purpose |
 |---------|---------|
-| `model-arkestra init [--force]` | Scaffold both config files; sets default backend from detection |
-| `model-arkestra detect` | Read-only hardware report — no file changes |
-| `model-arkestra list-backends` | Table of backends: type, description, cached binary status |
-| `model-arkestra add-backend -l /path/to/binary [-n name] [-d desc]` | Add a custom local llama-server binary |
-| `model-arkestra remove-backend <name>` | Delete a backend from backends.yaml |
-| `model-arkestra download-backend <name> [--version TAG]` | Download a pre-built binary for a backend |
-| `model-arkestra download-all` | Auto-detect + download primary + fallback backends |
+| `arkestra init [--force]` | Scaffold both config files; sets default backend from detection |
+| `arkestra detect` | Read-only hardware report — no file changes |
+| `arkestra list-backends` | Table of backends: type, description, cached binary status |
+| `arkestra add-backend -l /path/to/binary [-n name] [-d desc]` | Add a custom local llama-server binary |
+| `arkestra remove-backend <name>` | Delete a backend from backends.yaml |
+| `arkestra download-backend <name> [--version TAG]` | Download a pre-built binary for a backend |
+| `arkestra download-all` | Auto-detect + download primary + fallback backends |
 
 ---
 
@@ -198,7 +198,7 @@ models:
 
 ## `backends.yaml` — Backend Definitions & Download Sources
 
-> ⚠️ **Advanced:** This file is auto-generated on `init`. Edit with caution if you're not familiar with backend configuration. Use `model-arkestra add-backend` for custom binaries.
+> ⚠️ **Advanced:** This file is auto-generated on `init`. Edit with caution if you're not familiar with backend configuration. Use `arkestra add-backend` for custom binaries.
 
 ```yaml
 backends:
@@ -308,7 +308,7 @@ defaults:
 Add custom backends via the CLI:
 
 ```bash
-model-arkestra add-backend --local /opt/my-builds/llama-server \
+arkestra add-backend --local /opt/my-builds/llama-server \
                            --name my-avx512 \
                            --description "Custom AVX512 build"
 ```

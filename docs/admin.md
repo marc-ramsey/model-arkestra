@@ -618,7 +618,7 @@ State management:
 
 ## `arkestra-admin` CLI Tool
 
-A command-line interface for all admin endpoints, installed alongside `arkestra-cli` and `arkestra-server`. Reads `ADMIN_KEY` from config.yaml by default.
+A command-line interface for all admin endpoints, installed alongside `arkestra` and `arkestra-server`. Reads `ADMIN_KEY` from config.yaml by default.
 
 ```bash
 arkestra-admin --server http://localhost:8080 --api-key SECRET <command>
@@ -649,7 +649,7 @@ arkestra-admin --server http://localhost:8080 --api-key SECRET <command>
 | `arkestra-admin images build <backend> [--tag TAG]` | Build an OCI container image |
 | `arkestra-admin images rm <image_tag>` | Remove a container image |
 | `arkestra-admin pull <name>` | Pull model checkpoint from HuggingFace |
-| `arkestra-admin pull stop <name>` | Cancel an in-progress pull |
+| `arkestra-admin pull-stop <name>` | Cancel an in-progress pull |
 | `arkestra-admin shutdown` | Gracefully stop the server |
 
 ### Examples

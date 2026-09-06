@@ -825,14 +825,8 @@ def cmd_init_wrapper() -> None:
 
 
 # ── Entry point ───────────────────────────────────────────────────────
-
-def main(argv: list[str] | None = None) -> None:
-    """Entry point for arkestra-cli console script.
-    
-    Args:
-        argv: Command-line arguments (defaults to sys.argv[1:]).
-              Useful for testing or embedding.
-    """
+def build_parser() -> argparse.ArgumentParser:
+    """Build and return the CLI argument parser."""
     parser = argparse.ArgumentParser(
         prog="arkestra-cli",
         description="ModelArkestra — chat client, init, and more.",
@@ -922,6 +916,17 @@ def main(argv: list[str] | None = None) -> None:
     )
     status_parser.add_argument("-m", "--model", default=None, help="Model name (optional)")
 
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Entry point for arkestra-cli console script.
+    
+    Args:
+        argv: Command-line arguments (defaults to sys.argv[1:]).
+              Useful for testing or embedding.
+    """
+    parser = build_parser()
     args = parser.parse_args(argv)
 
     # ── Route to subcommand handler ───────────────────────────────────

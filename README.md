@@ -23,7 +23,7 @@ For more developed applications with similar function, see [llama-swap](https://
 ## Installation
 
 ```bash
-cd model-arkestra
+cd arkestra
 scripts/post_install.sh
 ```
 
@@ -33,7 +33,7 @@ After setup, CLI commands work from any directory — no activation needed:
 
 ```bash
 arkestra-server --config config.yaml --port 8080
-arkestra-cli list
+arkestra list
 ```
 
 ### Quick Start — Python API
@@ -60,6 +60,15 @@ arkestra-server --config config.yaml --port 8080
 ```
 
 Then hit `POST /v1/chat/completions` with any OpenAI-compatible client, or visit the admin dashboard at `http://localhost:8080/`.
+
+### Quick Start — User CLI
+
+```bash
+arkestra chat -m qwen3-4b            # interactive chat (starts if stopped)
+arkestra pull qwen3-4b                # download checkpoint from HuggingFace
+arkestra unload qwen3-4b              # stop and delete cache
+arkestra status [-m qwen3-4b]         # list all or single model status
+```
 
 ### Quick Start — Admin CLI
 
@@ -192,7 +201,7 @@ The default is `~/.cache/huggingface/hub`. The [`config.md`](./docs/config.md#en
 | **Open WebUI Ready** | Admin dashboard at `http://localhost:8080/` with live model management, SSE chat streaming, and structured status reporting (`{"value": "loaded"}`) for auto-load integration. |
 | **XDG Config Defaults** | Config files default to `~/.config/arkestra/config.yaml` — no CLI flag needed. Backends resolved from a companion `backends.yaml`. |
 | **Restart Resilience** | Crash detection with configurable restart limits and backoff delays. Stopped models reuse their original port on restart. |
-| **CLI Tooling** | `arkestra-admin` for remote model management: `start`, `stop`, `config`, `logs`, `images`, `shutdown`. API-key secured. |
+| **CLI Tooling** | `arkestra` for user-facing commands: chat, pull, unload, status. `arkestra-admin` for server ops: start, stop, config, logs, images, shutdown. API-key secured. |
 
 ## Architecture Overview
 
@@ -226,7 +235,7 @@ from model_arkestra import ModelNotStarted, MaxRestartsExceeded, ModelShutdown
 
 ## Further Reading
 
-- [API Reference — ModelArkestra](./docs/api/model-arkestra.md)
+- [API Reference — ModelArkestra](./docs/api/arkestra.md)
 - [API Reference — Runners](./docs/api/runners.md)
 - [LangChain Integration](./docs/langchain.md)
 - [Error Hierarchy](./docs/errors.md)
