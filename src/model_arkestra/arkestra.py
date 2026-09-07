@@ -425,24 +425,51 @@ class ModelArkestra:
             return self._cm.get("default/container-type", "process")
         return runner_type
 
-    # ── cache helpers ────────────────────────────────────────────────
+    # ── env resolution (computed at init, never persisted) ───────
+
+    def _build_env(self) -> Dict[str, str]:
+        """Merge default-env YAML with actual os.environ into _env.
+
+        precedence: explicit constructor args > os.environ > default-env defaults.
+        The _env dict is computed once at startup and never written to disk.
+        Keys use kebab-case (e.g. "hf_hub_cache", "admin_key").
+        Env var lookup uppercases the key and replaces '-' with '_'.
+        """
+        defaults = self._cm.get("default-env", {}) or {}
+        result: Dict[str, str] = {}
+        for key in defaults:
+            env_name = key.upper().replace("-", "_")
+            os_val = os.environ.get(env_name)
+            if os_val:
+                result[key] = os_val
+            else:
+                val = defaults[key]
+                if val is not None:
+                    result[key] = str(val) if not isinstance(val, str) else val
+        return result
+
+    def _ensure_env(self) -> Dict[str, str]:
+        """Return the computed _env dict (computed lazily at first access)."""
+        if not hasattr(self, "_env") or self._env is None:
+            self._env = self._build_env()
+        return self._env
 
     def resolve_config(self, key: str, explicit: Optional[str] = None) -> Optional[str]:
         """Resolve a config value with unified precedence.
 
-        Precedence: explicit arg → os.environ → config.env section → None.
+        Keys use kebab-case (e.g. "hf_hub_cache", "admin_key", "api_key").
+        Precedence: explicit arg → _env (default-env + os.environ merged).
+        The _env section is never persisted to disk — it's always freshly
+        computed from default-env config values plus the actual process env.
         """
         if explicit is not None and explicit != "":
             return explicit
-        val = os.environ.get(key)
-        if val:
-            return val
-        env_cfg = self._cm.get("env", {})
-        return env_cfg.get(key) if isinstance(env_cfg, dict) else ""
+        env_cfg = self._ensure_env()
+        return env_cfg.get(key) or ""
 
     def _cache_root(self) -> Path:
-        """Resolve HF_HUB_CACHE to a root Path."""
-        val = self.resolve_config("HF_HUB_CACHE")
+        """Resolve hf_hub_cache to a root Path."""
+        val = self.resolve_config("hf_hub_cache")
         if val:
             return Path(val).expanduser()
         return default_cache_root()

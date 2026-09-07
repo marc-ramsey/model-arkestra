@@ -3,6 +3,8 @@
  * Pattern: data (JSON tree) -> render() -> DOM. Conventions wire events.
  */
 
+const BASE_URL = "{{BASE_URL}}" || "";
+
 // ── Pub/sub bus ────────────────────────────────────────────────
 const EventBus = {
     _h: new Map(),
@@ -708,7 +710,7 @@ async function doStream(text, modelName, onData, options = {}) {
     if (!info?.port) throw new Error('Model not running');
 
     const params = JSON.parse(localStorage.getItem(CFG.STORAGE_CHAT_PARAMS)||'{}')[modelName] || {};
-    const resp = await fetch('/v1/chat/completions', {
+    const resp = await fetch(BASE_URL+'/v1/chat/completions', {
         method: 'POST', headers:{'Content-Type':'application/json'}, signal,
         body: JSON.stringify({
             model: info.id || modelName, messages:chatHistory, stream:true,
@@ -792,14 +794,14 @@ function _adminKey() { return document.querySelector('meta[name="arkestra-admin-
 
 async function adminGet(path, params) {
     const qs = new URLSearchParams(params).toString();
-    const r = await fetch(window.location.origin+path+(qs?'?'+qs:''), { headers:_adminKey()?{'X-Admin-Key':_adminKey()}:{} });
+    const r = await fetch(window.location.origin+BASE_URL+path+(qs?'?'+qs:''), { headers:_adminKey()?{'X-Admin-Key':_adminKey()}:{} });
     if (!r.ok) throw new Error('HTTP '+r.status);
     return r.json();
 }
 
 async function adminPost(path, body) {
     const k = _adminKey();
-    const r = await fetch(window.location.origin+path, {
+    const r = await fetch(window.location.origin+BASE_URL+path, {
         method:'POST', headers:{'Content-Type':'application/json',...(k?{'X-Admin-Key':k}:{})},
         body: JSON.stringify(body),
     });

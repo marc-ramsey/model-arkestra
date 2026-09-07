@@ -33,14 +33,14 @@ class TestLoadConfig:
 
 
 # ═══════════════════════════════════════════════════════════════
-# _read_admin_key — env section reader
+# _read_admin_key — default_env section reader
 # ═══════════════════════════════════════════════════════════════
 
 
 class TestReadAdminKey:
-    def test_reads_from_env_section(self, tmp_path):
+    def test_reads_from_default_env_section(self, tmp_path):
         cfg = tmp_path / "config.yaml"
-        cfg.write_text("env:\n  ADMIN_KEY: supersecret\n")
+        cfg.write_text("default-env:\n  admin_key: supersecret\n")
         assert _read_admin_key(str(cfg)) == "supersecret"
 
     def test_returns_none_when_no_env(self, tmp_path):
@@ -63,7 +63,7 @@ def _make_config(data: dict, tmp_path) -> str:
 
 
 class TestServerURLResolution:
-    """Resolution order: CLI > env ARKESTRA_ADMIN_URL > config admin-port > config env.PORT > default."""
+    """Resolution order: CLI > env ARKESTRA_ADMIN_URL > config admin-port > default."""
 
     def test_cli_server_takes_precedence(self):
         with patch("model_arkestra.admin_cli._dispatch", create=True) as mock_dispatch:
@@ -78,7 +78,7 @@ class TestServerURLResolution:
                     server_url = url_env
                 else:
                     data = {}  # no config in this test
-                    port = data.get("admin-port") or (data.get("env") or {}).get("PORT")
+                    port = data.get("admin-port")
                     if port is not None:
                         server_url = f"http://127.0.0.1:{port}"
             if not server_url:
@@ -104,15 +104,15 @@ class TestServerURLResolution:
             server_url = args.server
             if not server_url:
                 data = _load_config(args.config)
-                port = data.get("admin-port") or (data.get("env") or {}).get("PORT")
+                port = data.get("admin-port")
                 if port is not None:
                     server_url = f"http://127.0.0.1:{port}"
             if not server_url:
                 server_url = "http://127.0.0.1:8080"
             assert server_url == "http://127.0.0.1:9090"
 
-    def test_config_env_port_fallback(self, tmp_path):
-        cfg = _make_config({"env": {"PORT": 9091}}, tmp_path)
+    def test_config_default_port_fallback(self, tmp_path):
+        cfg = _make_config({"default": {"admin-port": 9091}}, tmp_path)
         with patch("model_arkestra.admin_cli._dispatch", create=True):
             from model_arkestra.admin_cli import build_parser, _load_config
             parser = build_parser()
@@ -120,15 +120,17 @@ class TestServerURLResolution:
             server_url = args.server
             if not server_url:
                 data = _load_config(args.config)
-                port = data.get("admin-port") or (data.get("env") or {}).get("PORT")
+                default_section = data.get("default") or {}
+                port = (default_section.get("admin-port")
+                        or data.get("admin-port"))
                 if port is not None:
                     server_url = f"http://127.0.0.1:{port}"
             if not server_url:
                 server_url = "http://127.0.0.1:8080"
             assert server_url == "http://127.0.0.1:9091"
 
-    def test_admin_port_takes_precedence_over_env_port(self, tmp_path):
-        cfg = _make_config({"admin-port": 9092, "env": {"PORT": 9093}}, tmp_path)
+    def test_admin_port_takes_precedence_over_config(self, tmp_path):
+        cfg = _make_config({"admin-port": 9092}, tmp_path)
         with patch("model_arkestra.admin_cli._dispatch", create=True):
             from model_arkestra.admin_cli import build_parser, _load_config
             parser = build_parser()
@@ -136,7 +138,7 @@ class TestServerURLResolution:
             server_url = args.server
             if not server_url:
                 data = _load_config(args.config)
-                port = data.get("admin-port") or (data.get("env") or {}).get("PORT")
+                port = data.get("admin-port")
                 if port is not None:
                     server_url = f"http://127.0.0.1:{port}"
             if not server_url:
@@ -168,7 +170,7 @@ class TestServerURLResolution:
                         server_url = url_env
                     else:
                         data = _load_config(args.config)
-                        port = data.get("admin-port") or (data.get("env") or {}).get("PORT")
+                        port = data.get("admin-port")
                         if port is not None:
                             server_url = f"http://127.0.0.1:{port}"
                 if not server_url:

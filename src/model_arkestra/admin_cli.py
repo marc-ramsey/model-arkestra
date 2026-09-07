@@ -41,9 +41,9 @@ def _load_config(path: str | None = None) -> dict:
 
 
 def _read_admin_key(config_path: str | None = None) -> str | None:
-    """Read ADMIN_KEY from config.yaml env section or return None."""
+    """Read admin_key from config.yaml default-env section or return None."""
     data = _load_config(config_path)
-    return (data.get("env") or {}).get("ADMIN_KEY")
+    return (data.get("default-env") or {}).get("admin_key")
 
 
 # ── HTTP helpers ───────────────────────────────────────────────────────
@@ -454,8 +454,7 @@ def main(argv: list[str] | None = None) -> None:
             # Check config.default.admin-port (matching server resolution chain)
             default_section = data.get("default") or {}
             port = (default_section.get("admin-port")
-                    or data.get("admin-port")
-                    or (data.get("env") or {}).get("PORT"))
+                    or data.get("admin-port"))
             if port is not None:
                 args.server = f"http://127.0.0.1:{port}"
     if not args.server:
@@ -465,7 +464,7 @@ def main(argv: list[str] | None = None) -> None:
     api_key = args.api_key or os.environ.get("ADMIN_KEY") or _read_admin_key(args.config)
     args.api_key = api_key
     if not api_key:
-        print("Error: no API key. Provide --api-key, set ADMIN_KEY env, or define it in config.yaml's env:", file=sys.stderr)
+        print("Error: no API key. Provide --api-key, set ADMIN_KEY env, or define it in config.yaml's default_env:", file=sys.stderr)
         sys.exit(1)
 
     # Dispatch to the right handler

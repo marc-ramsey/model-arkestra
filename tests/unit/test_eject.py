@@ -48,26 +48,27 @@ class TestCacheRoot:
         with tempfile.TemporaryDirectory() as td:
             cfg_path = os.path.join(td, "cfg.yaml")
             with open(cfg_path, "w") as f:
-                f.write("env:\n  HF_HUB_CACHE: /custom/hf/cache\nmodels: {}\n")
+                f.write(f"default-env:\n  hf_hub_cache: {td}\nmodels: {{}}\n")
             ma = ModelArkestra(cfg_path)
-            assert ma._cache_root() == Path("/custom/hf/cache")
+            assert ma._cache_root() == Path(td)
 
     def test_os_env_hf_fallback(self, monkeypatch):
         with tempfile.TemporaryDirectory() as td:
+            # Set env var before ModelArkestra construction so _env picks it up
             cfg_path = os.path.join(td, "cfg.yaml")
             with open(cfg_path, "w") as f:
-                f.write("models: {}\n")
-            ma = ModelArkestra(cfg_path)
+                f.write("default-env:\n  hf_hub_cache: /config/hf\nmodels: {}\n")
             monkeypatch.setenv("HF_HUB_CACHE", "/os-env/hf")
+            ma = ModelArkestra(cfg_path)
             assert ma._cache_root() == Path("/os-env/hf")
 
     def test_os_env_takes_priority_over_config(self, monkeypatch):
         with tempfile.TemporaryDirectory() as td:
             cfg_path = os.path.join(td, "cfg.yaml")
             with open(cfg_path, "w") as f:
-                f.write("env:\n  HF_HUB_CACHE: /config/hf\nmodels: {}\n")
-            ma = ModelArkestra(cfg_path)
+                f.write(f"default-env:\n  hf_hub_cache: {td}\nmodels: {{}}\n")
             monkeypatch.setenv("HF_HUB_CACHE", "/os-env/hf")
+            ma = ModelArkestra(cfg_path)
             assert ma._cache_root() == Path("/os-env/hf")
 
     def test_default_when_nothing_set(self, monkeypatch):
@@ -88,7 +89,7 @@ class TestCacheDirForCheckpoint:
         with tempfile.TemporaryDirectory() as td:
             cfg_path = os.path.join(td, "cfg.yaml")
             with open(cfg_path, "w") as f:
-                f.write(f"env:\n  HF_HUB_CACHE: {td}\nmodels: {{}}\n")
+                f.write(f"default-env:\n  hf_hub_cache: {td}\nmodels: {{}}\n")
             ma = ModelArkestra(cfg_path)
             result = ma._cache_dir_for_checkpoint("unsloth/Qwen3-4B-GGUF:Q4_K_M")
             expected = Path(td) / "models--unsloth--Qwen3-4B-GGUF:Q4_K_M"
@@ -99,7 +100,7 @@ class TestCacheDirForCheckpoint:
         with tempfile.TemporaryDirectory() as td:
             cfg_path = os.path.join(td, "cfg.yaml")
             with open(cfg_path, "w") as f:
-                f.write(f"env:\n  HF_HUB_CACHE: {td}\nmodels: {{}}\n")
+                f.write(f"default-env:\n  hf_hub_cache: {td}\nmodels: {{}}\n")
             ma = ModelArkestra(cfg_path)
             result = ma._cache_dir_for_checkpoint("meta-llama/Llama-3.2-1B")
             expected = Path(td) / "models--meta-llama--Llama-3.2-1B"
@@ -125,7 +126,7 @@ class TestEjectMethod:
         ma = self._make_arkestra()
         with tempfile.TemporaryDirectory() as tmpdir:
             # Override cache root to our temp dir
-            ma._cm.data["env"] = {"HF_HUB_CACHE": tmpdir}
+            ma._cm.data["default_env"] = {"hf_hub_cache": tmpdir}
 
             # Build runner with qwen3.5-4b in RUNNING state
             runner = MockRunner()
@@ -153,7 +154,7 @@ class TestEjectMethod:
         monkeypatch.delenv("HF_HUB_CACHE", raising=False)
         ma = self._make_arkestra()
         with tempfile.TemporaryDirectory() as tmpdir:
-            ma._cm.data["env"] = {"HF_HUB_CACHE": tmpdir}
+            ma._cm.data["default_env"] = {"hf_hub_cache": tmpdir}
 
             runner = MockRunner()
             ctx = make_ctx("qwen3.5-4b", 18000, RunnerState.RUNNING)
@@ -200,7 +201,7 @@ class TestEjectMethod:
         ma = self._make_arkestra()
         with tempfile.TemporaryDirectory() as tmpdir:
             # Set cache root first so all paths resolve correctly
-            ma._cm.data["env"] = {"HF_HUB_CACHE": tmpdir}
+            ma._cm.data["default_env"] = {"hf_hub_cache": tmpdir}
 
             shared_checkpoint = "shared/same-model:Q4_K_M"
             # Cache path strips quantizer tag
@@ -235,7 +236,7 @@ class TestEjectMethod:
         ma = self._make_arkestra()
         with tempfile.TemporaryDirectory() as tmpdir:
             # Set cache root first so all paths resolve correctly
-            ma._cm.data["env"] = {"HF_HUB_CACHE": tmpdir}
+            ma._cm.data["default_env"] = {"hf_hub_cache": tmpdir}
 
             shared_checkpoint = "shared/same-model:Q4_K_M"
             shared_cache_path = "shared/same-model"

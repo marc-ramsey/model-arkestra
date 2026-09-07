@@ -45,11 +45,12 @@ class ArkestraAdmin:
     """Admin subcomponent that installs routes on an ArkestraServer's app."""
 
     def __init__(self, server: "ArkestraServer", admin_key: Optional[str], app: FastAPI,
-                 api_key: Optional[str] = None):
+                 api_key: Optional[str] = None, base_url: str = ""):
         self.server = server
         self.admin_key = admin_key
         self.api_key = api_key
         self._app = app
+        self.base_url = base_url
         self._installed = False
         # Load schema registry from schemas.yaml (same dir as config)
         self._schemas: Dict[str, Any] = {}
@@ -192,11 +193,17 @@ class ArkestraAdmin:
 
     def _add_root_route(self) -> None:
         html = Path(__file__).parent.parent.parent / "static" / "index.html"
-        content = html.read_text().replace("{{ADMIN_KEY}}", self.admin_key or "")
+        content = (html.read_text()
+                   .replace("{{ADMIN_KEY}}", self.admin_key or "")
+                   .replace("{{BASE_URL}}", self.base_url or ""))
 
         @self._app.get("/")
-        @self._app.get("/index.html")
         async def root():
+            return HTMLResponse(content, media_type="text/html",
+                                headers={"Cache-Control": "no-store"})
+
+        @self._app.get("/index.html")
+        async def root_index():
             return HTMLResponse(content, media_type="text/html",
                                 headers={"Cache-Control": "no-store"})
 
@@ -246,8 +253,8 @@ class ArkestraAdmin:
 
                 data = []
 
-                # Resolve cache root — env var → config env → default.
-                hf_cache = self.server._arkestra.resolve_config("HF_HUB_CACHE")
+                # Resolve cache root — env var → config default_env → default.
+                hf_cache = self.server._arkestra.resolve_config("hf_hub_cache")
                 if not hf_cache:
                     hf_cache = str(default_cache_root())
 
@@ -937,7 +944,7 @@ class ArkestraAdmin:
             contexts_by_name = {ctx.name: ctx for ctx in self.server._arkestra.get_model_contexts()}
             data = []
 
-            hf_cache = self.server._arkestra.resolve_config("HF_HUB_CACHE")
+            hf_cache = self.server._arkestra.resolve_config("hf_hub_cache")
             if not hf_cache:
                 hf_cache = str(default_cache_root())
 

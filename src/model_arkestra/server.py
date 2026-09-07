@@ -150,7 +150,10 @@ class ArkestraServer:
             e.g. {"gpt-4": "qwen3-4b", "claude": "llama3"}
         extra_headers: Extra response headers to inject on every response.
         admin_key: Admin panel API key — gates all /admin/* paths. Falls back
-            to config.env.ADMIN_KEY if not provided.
+            to config.default_env.admin_key (via _env) if not provided.
+        base_url: URL path prefix for all endpoints (e.g. "/ark"). Defaults
+            to no prefix. Resolved: constructor arg > os.environ[ARKESTRA_BASE_PATH]
+            > config.default_env.arkestra-base-path > "".
         allow_origins: List of origins allowed for CORS (e.g. ["*"] or
             ["http://localhost:3000"]). When set, installs CORSMiddleware with
             full preflight support. Mutually exclusive with manual
@@ -173,11 +176,13 @@ class ArkestraServer:
         admin_key: Optional[str] = None,
         broadcast_addr: Optional[str] = None,
         allow_origins: Optional[List[str]] = None,
+        base_url: str = "",
     ):
         self.port = port
         self.openai_aliases = openai_aliases or {}
         self.extra_headers = extra_headers or {}
         self.admin_key = admin_key
+        self.base_url = base_url
         self.allow_origins = allow_origins
 
         from model_arkestra.arkestra import ModelArkestra
@@ -532,7 +537,8 @@ class ArkestraServer:
             return Response(content=wav_bytes, media_type="audio/wav")
 
         # ── Streaming audio WebSocket (dev endpoint — may become /v1/...) ─
-        @app.websocket("/ark/audio/stream")
+        ws_path = self.base_url + "/ark/audio/stream" if self.base_url else "/ark/audio/stream"
+        @app.websocket(ws_path)
         async def audio_stream_ws(websocket: WebSocket) -> None:
             """Unified JSON-over-text protocol.
 
@@ -590,11 +596,30 @@ class ArkestraServer:
             except Exception:
                 pass  # client disconnected
 
+        # ── Prefix-rewriting middleware (applies base_url to all routes) ─
+        if self.base_url:
+            @app.middleware("http")
+            async def prefix_middleware(request: Request, call_next):
+                path = request.url.path
+                if path == self.base_url or path.startswith(self.base_url + "/"):
+                    # Strip prefix from scope so FastAPI sees unprefixed paths
+                    suffix = path[len(self.base_url):]
+                    request.scope["path"] = suffix or "/"
+                    request.scope["raw_path"] = (suffix or b"/").encode()
+                response = await call_next(request)
+                # Rewrite Location headers for redirects
+                if 300 <= response.status_code < 400 and "Location" in response.headers:
+                    loc = response.headers["Location"]
+                    if not loc.startswith(self.base_url):
+                        response.headers["Location"] = self.base_url + loc
+                return response
+
         # ── Admin subcomponent ───────────────────────────────────
         from model_arkestra.admin import ArkestraAdmin
-        admin_key = self._arkestra.resolve_config("ADMIN_KEY", explicit=self.admin_key)
-        api_key = self._arkestra.resolve_config("API_KEY")
-        self._admin = ArkestraAdmin(self, admin_key=admin_key, app=app, api_key=api_key)
+        admin_key = self._arkestra.resolve_config("admin_key", explicit=self.admin_key)
+        api_key = self._arkestra.resolve_config("api_key")
+        self._admin = ArkestraAdmin(self, admin_key=admin_key, app=app, api_key=api_key,
+                                    base_url=self.base_url)
         self._admin.install()
 
         self._app = app

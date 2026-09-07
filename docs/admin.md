@@ -4,7 +4,7 @@ Model Arkestra ships an administrative panel that integrates into the same FastA
 
 ## Public Endpoints (No Auth)
 
-The `/api/*` namespace exposes read and safe lifecycle operations without requiring authentication. When `API_KEY` is set in config.yaml (under `env:`), these endpoints require the `X-Api-Key` header instead — enabling gradual rollout of API-level auth.
+The `/api/*` namespace exposes read and safe lifecycle operations without requiring authentication. When `api_key` is set in `config.default-env.api_key` (via the computed `_env` section), these endpoints require the `X-Api-Key` header instead — enabling gradual rollout of API-level auth.
 
 | Method | Path | Description |
 |---|---|---|
@@ -17,12 +17,12 @@ The `/api/*` namespace exposes read and safe lifecycle operations without requir
 
 ## Configuring Auth
 
-Both namespaces gate independently. Set the keys in `config.yaml`:
+Both namespaces gate independently. Set the keys in `config.yaml`'s `default-env:` section:
 
 ```yaml
-env:
-  ADMIN_KEY: supersecret    # gates /admin/* — header: X-Admin-Key
-  API_KEY: apipublic        # gates /api/* — header: X-Api-Key
+default-env:
+  admin_key: supersecret    # gates /admin/* — header: X-Admin-Key
+  api_key: apipublic        # gates /api/* — header: X-Api-Key
 ```
 
 Neither key is required unless configured. With both keys set, `/admin/*` requires `X-Admin-Key` and `/api/*` requires `X-Api-Key` independently.
@@ -40,7 +40,7 @@ server = ArkestraServer(
 app = server.get_app()
 ```
 
-The key resolves with priority: **constructor argument** > ``config.env.ADMIN_KEY`` from the YAML config file > disabled (no auth).
+The key resolves with priority: **constructor argument** > `_env.admin_key` (computed from `config.default-env.admin_key` + process env) > disabled (no auth).
 
 When `admin_key` is provided, every request to `/admin/*` must include the header:
 
@@ -652,7 +652,7 @@ arkestra-admin --server http://localhost:8080 --api-key SECRET <command>
 ### Authentication Priority
 1. `--api-key KEY` flag (highest)
 2. `$ADMIN_KEY` environment variable
-3. `ADMIN_KEY` from `config.yaml`'s `env:` section
+3. `admin_key` from `config.yaml`'s `default-env:` section
 
 ### Commands
 

@@ -8,9 +8,9 @@ default:
   model-repo: unsloth           # default HuggingFace repo owner
   model-quant: Q4_K_M          # default quantizer suffix
 
-env:
-  ADMIN_KEY: whatever
-  HF_HUB_CACHE: ~/.cache/huggingface
+default-env:
+  admin_key: whatever
+  hf_hub_cache: ~/.cache/huggingface
 
 backends:
   default: vulkan-radv

@@ -323,8 +323,7 @@ def _resolve_server_url() -> str | None:
     except Exception:
         data = {}
     default = data.get("default") or {}
-    port = (default.get("admin-port") or data.get("admin-port")
-            or (data.get("env") or {}).get("PORT"))
+    port = (default.get("admin-port") or data.get("admin-port"))
     if port:
         return f"http://127.0.0.1:{port}"
     return None

@@ -1,5 +1,7 @@
 /* app.js — Glue: actions + data loading + init */
 
+const BASE_URL = "{{BASE_URL}}" || "";
+
 let _init = false;
 let toastTimer = null;
 
