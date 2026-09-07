@@ -191,6 +191,37 @@ class ArkestraAdmin:
                 })
             return JSONResponse(status_code=200, content={"clusters": result})
 
+        @self._app.post("/admin/clusters/{name:path}")
+        async def admin_cluster_add(name: str, body: Dict[str, Any]):
+            """Add a managed cluster to configuration."""
+            cm = self.server._arkestra.cm
+            data = cm.data
+            if "clusters" not in data or not isinstance(data["clusters"], dict):
+                data["clusters"] = {}
+            clusters = data["clusters"]
+            if name in clusters:
+                raise HTTPException(status_code=409, detail=f"Cluster '{name}' already exists")
+            clusters[name] = {
+                "base-url": body.get("base-url", ""),
+                "admin-key": body.get("admin-key"),
+            }
+            cm.export(cm.config_path)
+            self.server._arkestra._load_clusters()
+            return {"ok": True, "cluster": name}
+
+        @self._app.delete("/admin/clusters/{name:path}")
+        async def admin_cluster_del(name: str):
+            """Remove a managed cluster from configuration."""
+            cm = self.server._arkestra.cm
+            data = cm.data
+            clusters = data.get("clusters") or {}
+            if name not in clusters:
+                raise HTTPException(status_code=404, detail=f"Cluster '{name}' not configured")
+            del clusters[name]
+            cm.export(cm.config_path)
+            self.server._arkestra._load_clusters()
+            return {"ok": True, "cluster": name}
+
     def _add_root_route(self) -> None:
         html = Path(__file__).parent.parent.parent / "static" / "index.html"
         content = (html.read_text()
@@ -529,12 +560,28 @@ class ArkestraAdmin:
                 cfg[model].update(snapshot)
                 raise HTTPException(status_code=500, detail=f"Save failed: {exc}")
 
-    def _add_start_route(self) -> None:
-        @self._app.post("/admin/start/{model:path}")
-        async def admin_start(model: str, body: Dict[str, Any] | None = None):
+        @self._app.delete("/admin/config/{model:path}")
+        async def admin_config_delete(model: str):
+            """Remove a model from configuration. Stops it first if running."""
             cfg = self._models_cfg
             if model not in cfg:
                 raise HTTPException(status_code=404, detail=f"Model '{model}' not in config")
+
+            # Stop if running
+            ctx = self.server._arkestra.find_context(model)
+            if ctx and ctx.state in (RunnerState.RUNNING, RunnerState.LOADING):
+                try:
+                    await self.server._arkestra.stop(model)
+                except Exception:
+                    pass
+
+            del cfg[model]
+            self.server._arkestra.cm.export(self.server._arkestra.cm.config_path)
+            return {"ok": True, "model": model}
+
+    def _add_start_route(self) -> None:
+        @self._app.post("/admin/start/{model:path}")
+        async def admin_start(model: str, body: Dict[str, Any] | None = None):
 
             if not self.server._arkestra.can_start(model):
                 raise HTTPException(status_code=409, detail="model not available")

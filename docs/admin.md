@@ -15,8 +15,6 @@ The `/api/*` namespace exposes read and safe lifecycle operations without requir
 
 ## Configuring Auth
 
-## Configuring Auth
-
 Both namespaces gate independently. Set the keys in `config.yaml`'s `default-env:` section:
 
 ```yaml
@@ -61,6 +59,10 @@ Missing or incorrect keys return `401 Unauthorized`. Public paths (`/`, `/index.
 | `POST` | `/admin/config` | Yes | Create a new model entry |
 | `GET` | `/admin/config/{model}` | Yes | Retrieve a single model's configuration |
 | `PUT` | `/admin/config/{model}` | Yes | Update an existing model's configuration (no restart) |
+| `DELETE` | `/admin/config/{model}` | Yes | Remove a model from config (stops first if running) |
+| `GET` | `/admin/clusters` | Yes | List clusters with health check |
+| `POST` | `/admin/clusters/{name}` | Yes | Add a managed cluster |
+| `DELETE` | `/admin/clusters/{name}` | Yes | Remove a managed cluster |
 | `POST` | `/admin/start/{model}` | Yes | Start or restart a model (with optional transient overrides) |
 | `POST` | `/admin/stop/{model}` | Yes | Stop a running model |
 | `POST` | `/admin/eject/{model}` | Yes | Remove model from cache, clear contexts (no config change) |
@@ -214,6 +216,22 @@ Valid fields: `args`, `repo`, `model`, `backend`, `capabilities`, `runner`, `tag
 
 Returns `404` if the model does not exist. Returns `500` on write failure (config is rolled back).
 
+### DELETE /admin/config/{model}
+
+Remove a model from configuration entirely. Stops the model first if running, then removes its config entry permanently.
+
+```bash
+curl -X DELETE 'http://localhost:8080/admin/config/qwen3-4b' \
+     -H 'X-Admin-Key: your-secret-key'
+```
+
+Returns:
+```json
+{"ok": true, "model": "qwen3-4b"}
+```
+
+If the model is running during deletion, it is stopped first (silently). Returns `404` if the model does not exist.
+
 ### POST /admin/start/{model}
 
 Start a model from a stopped or error state. Returns the port assigned.
@@ -319,6 +337,57 @@ Then shuts down in background:
 5. Uvicorn HTTP server stops — process exits
 
 This endpoint always returns `200 OK`. The response is sent before shutdown begins.
+
+### GET /admin/clusters
+
+List all managed clusters with connectivity health checks.
+
+```bash
+curl 'http://localhost:8080/admin/clusters' \
+     -H 'X-Admin-Key: your-secret-key'
+```
+
+Returns:
+```json
+{
+  "clusters": [
+    {"name": "gpu-lab-1", "base-url": "http://192.168.1.42:18000", "healthy": true},
+    {"name": "gpu-lab-2", "base-url": "http://192.168.1.43:18000", "healthy": false}
+  ]
+}
+```
+
+Each cluster entry includes `name`, `base-url`, and `healthy` (bool, based on `/health` ping).
+
+### POST /admin/clusters/{name}
+
+Add a managed cluster. The cluster name becomes part of model naming convention (`<cluster>/<model-id>` for federation).
+
+```bash
+curl -X POST 'http://localhost:8080/admin/clusters/gpu-lab-3' \
+     -H 'Content-Type: application/json' \
+     -H 'X-Admin-Key: your-secret-key' \
+     -d '{"base-url": "http://192.168.1.44:18000", "admin-key": "secret"}'
+```
+
+Returns:
+```json
+{"ok": true, "cluster": "gpu-lab-3"}
+```
+
+### DELETE /admin/clusters/{name}
+
+Remove a managed cluster from configuration.
+
+```bash
+curl -X DELETE 'http://localhost:8080/admin/clusters/gpu-lab-2' \
+     -H 'X-Admin-Key: your-secret-key'
+```
+
+Returns:
+```json
+{"ok": true, "cluster": "gpu-lab-2"}
+```
 
 ### POST /admin/eject/{model}
 
@@ -576,63 +645,57 @@ This is the only thing you need to change before deploying. The dashboard automa
 
 ### Layout
 
-The dashboard uses a **two-column resizable layout** starting at 40% / 60%:
+The dashboard uses a **session-based vertical split layout**: cluster tree on the left (top), docked sessions on the right (bottom). API key users see only a single chat pane.
 
-| Column | Content |
+#### Admin Layout (Cluster Tree + Session Dock)
+
+| Section | Content |
 |---|---|
-| **Left** (default 40%) | **Models** accordion — searchable model list with status indicators. **Edit** accordion — form for viewing/modifying config (opens on model selection). |
-| **Right** (default 60%) | Unified **accordion widget** containing two panes: **Logs** (terminal-style log viewer) and **Chat** (conversational inference UI). Open panes split available height evenly. |
+| **Cluster Tree** (top/left) | Hierarchical accordion: Local cluster → model entries, Remote clusters (via `/admin/clusters`) → model entries. Each model row shows status dot, name, size badge, and inline action buttons (+ Chat / + Log / ▶ / ■ / ⏏). |
+| **Session Dock** (bottom/right) | Pinned chat/log sessions. Each session is an expandable card with a ChatPane or LogPane. Drag divider to resize (persisted in `localStorage`). Layout toggle button switches between vertical and horizontal split. |
 
-- Drag the divider between columns to resize (20–80% range); preference persists in `localStorage`.
-- Click any accordion header to toggle collapse/expand. The top header bar toggles all sections simultaneously.
-- Model list search filters client-side from cached data — instant, no server round-trip.
+#### API User Layout (single pane)
+
+Non-admin users see only **one ChatPane** — no left panel, no log viewer. Logs are strictly admin-only.
+
+- Click **+** on any model row to spawn a new chat session in the dock.
 
 ### Features
 
-**Models list** — Displays every configured model with:
-- Status dot: 🟢 running, 🟡 loading/uncached/stopped, 🔴 error
-- Backend ID and runner type as metadata
-- Click a model to select it (highlights in accent color)
-- Text filter input at top for quick lookup
+**Cluster Tree** — Hierarchical navigation of all known clusters and their models.
 
-**Edit form** — Opens automatically on model selection. Contains fields for:
-- Checkpoint path, backend, runner type, args string
-- Log buffer size (max log lines ring buffer)
-- Capability chips (`chat`, `tts`) — click to toggle; default is `[chat]` for all models unless explicitly overridden with non-chat tags (opt-out model)
+**Model rows** (cluster tree) — Each model entry shows:
+- Status dot (running=green, stopped=black, loading=amber pulse, error=red, uncached=gray)
+- Model name and size badge
+- **Inline action buttons**: `+` Chat, `+` Log (admin only), `▶` Start, `■` Stop, `⏏` Eject, `✕` Cancel pull
 
-State management:
+**Sessions** (dock) — Pinned conversation/log workspaces:
+- Click `+` Chat on a model row to create a new chat session in the dock.
+- Click `+` Log on a model row (admin only) to create a log stream session.
+- Each session is expandable/collapsible; click header to toggle.
+- Close button (`×`) removes session from dock and aborts any active streams.
 
-| Button | Behavior |
-|---|---|
-| **Reset** | Re-fetches config from server, repopulates form, clears dirty state |
-| **Save ·** | Writes current values to disk via `PUT /admin/config/{model}`. Starts disabled; enables when form differs from cached snapshot. The trailing dot animates on hover as visual feedback. |
-| **Cancel** | Closes the Edit accordion. Form values stay in memory (not reverted) so you can reopen later with edits intact. |
-| **Start / Restart** | Sends `POST /admin/start/{model}` with current transient draft values as overrides — no save-to-disk step first. |
+**Chat pane** — Conversational inference UI per-session:
+- **Model selector dropdown**: choose which model to chat with in this session.
+- **Ephemeral params panel**: Temperature, Top P, Max Tokens, Top K — click "Params ▸" to expand. Values persist live to IndexedDB (personal defaults) but are not saved to disk unless explicitly triggered.
+- **Chat-triggered auto-start**: If a model is stopped when user sends a message, the UI shows "Starting…" status and starts the model using current chat params before streaming.
+- Full conversation history maintained in-memory across turns (OpenAI-compatible message format).
+- Token-by-token SSE streaming with animated cursor during generation.
+- Markdown rendering via `marked.js` from CDN — code blocks, bold, lists, inline code all rendered.
 
-**Logs pane** — Terminal-style log viewer for a selected model or server:
+**Log pane** (admin only) — Terminal-style log viewer per-session:
 - **Model logs**: Select a specific model from the dropdown to view its process stdout/stderr via `GET /admin/log/{model}`
 - **Server logs**: Select "Server logs" from the dropdown to view proxy traffic and lifecycle events via `GET /admin/logs`
 - Both share the same delta-polling pattern (1–2s interval) with `?since=N` cursor
 - Smart auto-scroll: scrolls to bottom during active streaming *unless* you've scrolled up to read older logs
-- Clear button empties the pane content
-- Smart auto-scroll: scrolls to bottom during active streaming *unless* you've scrolled up to read older logs
-- Clear button empties the pane content
-- Missed-line notifications shown if a reconnect gap is detected
-
-**Chat pane** — Conversational inference UI that talks directly to the model's port:
-- Parameter panel: Temperature, Top P, Max Tokens — persisted per-model in `localStorage`
-- Full conversation history maintained in-memory across turns (OpenAI-compatible message format)
-- Token-by-token SSE streaming with animated cursor during generation
-- Markdown rendering via `marked.js` from CDN — code blocks, bold, lists, inline code all rendered
-- Send button disabled while a response is streaming; concurrent messages prevented
 
 ### Technical Details
 
-- **File size**: ~60KB served, ~1400 lines of HTML/CSS/JS (as of v0.3)
 - **Zero dependencies**: No build step, no frameworks. Only `marked.js` loaded from CDN for markdown rendering.
-- **All data via fetch/SSE**: Model list refreshes automatically on page load; subsequent interactions use the same Admin API documented above.
-- **Layout persistence**: Column width ratio saved to `localStorage('arkestra-col-width')`
-- **Chat params**: Per-model chat parameters saved to `localStorage('arkestra-chat-params')`
+- **Layout engine**: JSON-driven (app.json → SessionLayout → ClusterTree + SessionDock via SplitPane). Resize persisted in `localStorage`.
+- **IndexedDB**: Personal chat defaults per-model stored in `arkestra` database, `settings` object store. Keyed by model ID.
+- **Session lifecycle**: Sessions created via `+ Chat` / `+ Log` buttons on model rows. Each session maintains its own state: chat history (in-memory), log polling timer, abort controller for streaming.
+- **Auth gating**: `HAS_ADMIN_KEY` derived from `<meta name="arkestra-admin-key">` content. Non-admin users get a single ChatPane only.
 
 ## Related Documentation
 
@@ -668,6 +731,9 @@ arkestra-admin --server http://localhost:8080 --api-key SECRET <command>
 | `arkestra-admin config set <name> key=value` | Update a model field (e.g., `backend=rocm`) |
 | `arkestra-admin config create --model PATH` | Add a new model to config |
 | `arkestra-admin config rm <name>` | Remove a model from config |
+| `arkestra-admin clusters list` | List managed clusters with health status (API only) |
+| `arkestra-admin clusters add <name> --url URL` | Add a managed cluster (API only) |
+| `arkestra-admin clusters rm <name>` | Remove a managed cluster (API only) |
 | `arkestra-admin logs <name\|all> [--lines 100]` | Tail model or global server logs |
 | `arkestra-admin eject <name>` | Stop model and delete its cached files |
 | `arkestra-admin images list` | Show OCI image availability per backend |

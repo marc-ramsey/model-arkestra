@@ -3,9 +3,12 @@
  * Pattern: data (JSON tree) -> render() -> DOM. Conventions wire events.
  */
 
-const BASE_URL = "{{BASE_URL}}" || "";
+const BASE_URL = (window.BASE_URL || "").replace(/^\/+|\/+$/g, '');
 
-// ── Pub/sub bus ────────────────────────────────────────────────
+// ── Auth mode detection ───────────────────────────────────────
+const HAS_ADMIN_KEY = !!document.querySelector('meta[name="arkestra-admin-key"]')?.content;
+
+// ── Pub/sub bus ───────────────────────────────────────────────
 const EventBus = {
     _h: new Map(),
     on(e, fn)  { const l = this._h.get(e)||[]; l.push(fn); this._h.set(e,l); return () => this.off(e,fn); },
@@ -25,15 +28,57 @@ const CFG = {
 function esc(s)  { return (s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function sanitizeId(n) { return (n||'').replace(/[^a-zA-Z0-9_-]/g, '_'); }
 function normalizeStatus(s) { return (s?.value || s || '').replace('runnerstate.','').toLowerCase(); }
-function keyToLabel(key) {
-    return key.replace(/[-_](.)/g, (_, c) => c.toUpperCase());
-}
+function keyToLabel(key) { return key.replace(/[-_](.)/g, (_, c) => c.toUpperCase()); }
 
-function resolveArgValue(cfg, key) {
-    if (cfg[key] !== undefined && cfg[key] !== '') return String(cfg[key]);
-    if (cfg.args?.[key] !== undefined) return String(cfg.args[key]);
-    return '';
-}
+// ── Session Registry — pinned session management ───────────────
+const SessionRegistry = {
+    _sessions: [],   // [{ id, type:'chat'|'log', modelId, cluster, history[], abortCtrl }]
+    _nextId: 0,
+
+    add(type, modelId) {
+        const id = 's-' + (++this._nextId);
+        this._sessions.push({ id, type, modelId, history:[], abortCtrl:null });
+        EventBus.emit('session.add', { id, type, modelId });
+        return id;
+    },
+
+    remove(id) {
+        const i = this._sessions.findIndex(s => s.id === id);
+        if (i < 0) return null;
+        const session = this._sessions.splice(i, 1)[0];
+        session.abortCtrl?.abort();
+        EventBus.emit('session.remove', session);
+        return session;
+    },
+
+    get(id) { return this._sessions.find(s => s.id === id); },
+    list()  { return [...this._sessions]; },
+};
+
+// ── Personal defaults sync store ───────────────────────────────
+const SyncStore = {
+    _cache: {},  // { modelId → { temperature, max_tokens, top_p, top_k } }
+
+    async load(modelId) {
+        const stored = await window.arkestraDB.getSettings(modelId);
+        if (stored && stored.chat_params) this._cache[modelId] = stored.chat_params;
+        else this._cache[modelId] = {};
+        return this._cache[modelId];
+    },
+
+    async save(modelId) {
+        await window.arkestraDB.saveSettings(modelId, { chat_params: this._cache[modelId] || {} });
+    },
+
+    get(modelId, key) { return (this._cache[modelId] || {})[key]; },
+    set(modelId, key, value) { if (!this._cache[modelId]) this._cache[modelId] = {}; this._cache[modelId][key] = value; },
+    async persist(modelId) { await this.save(modelId); }
+};
+
+// ── Button map ─────────────────────────────────────────────────
+const BTN_MAP = { start:'▶', stop:'■', eject:'⏏', cancel:'✕', save:'✓', reset:'↺' };
+
+function escapeSelector(id) { return id.replace(/["'#%&*,/:<=>?@[\\]^`{|}~]/g, '\\$&'); }
 
 // ── render() — walks JSON tree -> DOM ─────────────────────────
 function render(node) {
@@ -45,7 +90,7 @@ function render(node) {
 const renderers = {};
 
 // ═══════════════════════════════════════════════════════════
-// Layout containers
+// Layout containers (preserved infrastructure — DO NOT REMOVE)
 // ═══════════════════════════════════════════════════════════
 
 renderers.SplitPane = function({ axis, ratio, children }) {
@@ -72,90 +117,188 @@ renderers.SplitPane = function({ axis, ratio, children }) {
         }
     }
 
-    // Wire drag-to-resize on dividers in this container
     setTimeout(() => {
         for (const d of el.querySelectorAll(':scope > .divider-v, :scope > .divider-h')) {
             if (d.dataset.dragWired) continue;
             d.dataset.dragWired = '1';
             const isH = d.classList.contains('divider-v');
-            let dragging = false, val = 0;
+            let dragging = false;
             const onMove = (ev) => {
                 if (!dragging) return;
                 const rect = d.parentElement.getBoundingClientRect();
-                val = isH ? ((ev.clientX-rect.left)/rect.width)*100 : ((ev.clientY-rect.top)/rect.height)*100;
+                const val = isH ? ((ev.clientX-rect.left)/rect.width)*100 : ((ev.clientY-rect.top)/rect.height)*100;
                 if (val < 20 || val > 80) return;
                 const p = d.previousElementSibling, n = d.nextElementSibling;
                 if (p && n) { p.style.flex=`0 0 ${val}%`; n.style.flex=`0 0 ${100-val}%`; }
                 localStorage.setItem('arkestra-layout-' + (isH?'h':'v'), Math.round(val));
             };
-            const onUp = () => {
-                dragging=false; d.classList.remove('active');
-                document.body.style.userSelect='';
-                window.removeEventListener('mousemove',onMove);
-                window.removeEventListener('mouseup',onUp);
-                document.removeEventListener('mouseup',onUpGlobal);
-            };
+            const onUp = () => { dragging=false; d.classList.remove('active'); document.body.style.userSelect=''; window.removeEventListener('mousemove',onMove); window.removeEventListener('mouseup',onUp); document.removeEventListener('mouseup',onUpGlobal); };
             const onUpGlobal = () => { if (dragging) onUp(); };
-            d.addEventListener('mousedown', (e) => {
-                e.preventDefault();
-                document.body.style.userSelect = 'none';
-                d.classList.add('active');
-                dragging = true;
-                window.addEventListener('mousemove',onMove);
-                window.addEventListener('mouseup',onUp);
-                document.addEventListener('mouseup',onUpGlobal);
-            });
+            d.addEventListener('mousedown', (e) => { e.preventDefault(); document.body.style.userSelect='none'; d.classList.add('active'); dragging=true; window.addEventListener('mousemove',onMove); window.addEventListener('mouseup',onUp); document.addEventListener('mouseup',onUpGlobal); });
         }
     }, 0);
 
-    el.style.flex = '1';
-    el.style.minHeight = '0';
+    el.style.flex = '1'; el.style.minHeight = '0';
     return el;
 };
 
 renderers.AccordionContainer = function() {
     const el = document.createElement('div');
-    el.className = 'accordion';
-    el.id = 'left-accordion';
+    el.className = 'accordion'; el.id = 'left-accordion';
     const header = document.createElement('h3');
     header.textContent = 'Model Cluster';
     el.appendChild(header);
     const body = document.createElement('div');
-    body.className = 'acc-body';
-    body.id = 'model-accordion-items';
+    body.className = 'acc-body'; body.id = 'model-accordion-items';
     el.appendChild(body);
-
     let collapsed = false;
-    header.addEventListener('click', () => {
-        collapsed = !collapsed;
-        body.style.display = collapsed ? 'none' : '';
-    });
+    header.addEventListener('click', () => { collapsed=!collapsed; body.style.display=collapsed?'none':''; });
     return el;
 };
 
 renderers.AccGroup = function({ title, group }) {
     const el = document.createElement('div');
-    el.className = 'acc-group';
-    el.dataset.group = group;
+    el.className = 'acc-group'; el.dataset.group = group;
     const header = document.createElement('h3');
     header.className = 'acc-group-header';
-    header.innerHTML = '<span>' + esc(title) + '</span><span class="acc-group-count">' + (group === 'ready' ? 0 : 0) + '</span><span></span>';
+    header.innerHTML = `<span>${esc(title)}</span><span class="acc-group-count"></span><span></span>`;
     const body = document.createElement('div');
-    body.className = 'acc-body';
-    body.id = 'models-' + group + '-items';
-    el.appendChild(header);
-    el.appendChild(body);
-
+    body.className = 'acc-body'; body.id = 'models-'+group+'-items';
+    el.appendChild(header); el.appendChild(body);
     let collapsed = false;
-    header.addEventListener('click', () => {
-        collapsed = !collapsed;
-        body.style.display = collapsed ? 'none' : '';
-    });
-    return { element: el, body: body, header: header };
+    header.addEventListener('click', () => { collapsed=!collapsed; body.style.display=collapsed?'none':''; });
+    return { element:el, body:body, header:header };
 };
 
 // ═══════════════════════════════════════════════════════════
-// Panes - domain-specific UI containers
+// New layout: SessionLayout (single top-level widget)
+// ═══════════════════════════════════════════════════════════
+
+renderers.SessionLayout = function({ axis='v', ratio=30 }) {
+    const el = document.createElement('div');
+    el.style.display = 'flex'; el.style.overflow = 'hidden';
+    el.style.flex = '1'; el.style.minHeight = '0';
+
+    const stored = localStorage.getItem('arkestra-layout-v') ?? localStorage.getItem('arkestra-layout-h');
+    const finalAxis = stored ? (parseInt(stored) > 25 ? 'v' : 'h') : axis;
+
+    const split = renderers.SplitPane({ axis: finalAxis, ratio, children: [
+        { widget:'ClusterTree', cluster: true },
+        { widget:'SessionDock' }
+    ]});
+
+    el.appendChild(split);
+    return el;
+};
+
+// ═══════════════════════════════════════════════════════════
+// Cluster tree — navigational accordion (top/left pane)
+// Structure: cluster → model
+// ═══════════════════════════════════════════════════════════
+
+renderers.ClusterTree = function({ cluster }) {
+    const el = document.createElement('div');
+    el.className = 'cluster-tree';
+
+    // Local cluster entry — always first
+    const localGroup = _accNode('Local');
+    localGroup.header.innerHTML += '<span class="cluster-health-dot"></span>';
+    el.appendChild(localGroup.el);
+
+    // Remote clusters — populated from data
+    const remoteContainer = document.createElement('div');
+    remoteContainer.className = 'remote-clusters';
+    el.appendChild(remoteContainer);
+
+    // Expose refs for app.js
+    el._localModelBody = localGroup.body;
+    el._remoteContainer = remoteContainer;
+
+    return el;
+};
+
+// Internal: create an accordion node (cluster or model level)
+function _accNode(label) {
+    const el = document.createElement('div');
+    el.className = 'acc-node';
+    const header = document.createElement('h3');
+    header.className = 'acc-node-header';
+    header.innerHTML = `<span>${esc(label)}</span><span class="acc-arrow">▸</span>`;
+    const body = document.createElement('div');
+    body.className = 'acc-body';
+    el.appendChild(header); el.appendChild(body);
+
+    let collapsed = false;
+    header.addEventListener('click', (e) => {
+        if (e.target.closest('[data-action]')) return;
+        collapsed = !collapsed;
+        body.style.display = collapsed ? 'none' : '';
+        header.querySelector('.acc-arrow').textContent = collapsed ? '▸' : '▾';
+    });
+
+    return { el, header, body };
+}
+renderers._accNode = _accNode;
+
+// ═══════════════════════════════════════════════════════════
+// Docked sessions — pinned workspace (bottom/right pane)
+// ═══════════════════════════════════════════════════════════
+
+renderers.SessionDock = function() {
+    const el = document.createElement('div');
+    el.className = 'session-dock';
+    el.style.display = 'flex'; el.style.flexDirection = 'column';
+    el.style.overflow = 'hidden';
+
+    const bar = document.createElement('div');
+    bar.className = 'dock-header';
+    bar.innerHTML = '<span class="dock-title">Sessions</span><span class="dock-count"></span>';
+    if (HAS_ADMIN_KEY) {
+        const toggle = document.createElement('button');
+        toggle.className = 'layout-toggle';
+        toggle.title = 'Toggle layout';
+        toggle.textContent = '⇔';
+        bar.appendChild(toggle);
+    }
+    el.appendChild(bar);
+
+    const container = document.createElement('div');
+    container.className = 'docked-sessions';
+    container.style.flex = '1'; container.style.overflowY = 'auto';
+    el.appendChild(container);
+
+    const empty = document.createElement('div');
+    empty.className = 'dock-empty';
+    empty.textContent = 'Select a model above and click + to open a chat or log session.';
+    container.appendChild(empty);
+
+    // Expose for app.js to populate
+    el._sessionContainer = container;
+    el._emptyHint = empty;
+
+    bar.querySelector('.layout-toggle')?.addEventListener('click', () => {
+        const currentH = localStorage.getItem('arkestra-layout-h');
+        if (currentH) localStorage.removeItem('arkestra-layout-h');
+        else localStorage.setItem('arkestra-layout-h', '40');
+        location.reload();
+    });
+
+    EventBus.on('session.add', ({ id }) => { dockedSessionId = id; updateDock(); });
+    EventBus.on('session.remove', () => updateDock());
+
+    let dockedSessionId = null;
+
+    function updateDock() {
+        const sessions = SessionRegistry.list();
+        empty.classList.toggle('hidden', sessions.length > 0);
+        document.querySelector('.dock-count').textContent = ' (' + sessions.length + ')';
+    }
+
+    return el;
+};
+
+// ═══════════════════════════════════════════════════════════
+// Pane components (preserved — used as session children)
 // ═══════════════════════════════════════════════════════════
 
 renderers.LogPane = function() {
@@ -166,373 +309,235 @@ renderers.LogPane = function() {
     header.innerHTML = '<span class="pane-title">Log</span><label>Select Model:</label><select id="log-model-select"></select>';
     el.appendChild(header);
     const display = document.createElement('pre');
-    display.className = 'log-container';
-    display.id = 'log-display';
+    display.className = 'log-container'; display.id = 'log-display';
     el.appendChild(display);
     return el;
 };
 
-renderers.ChatPane = function() {
+renderers.ChatPane = function({ sessionId, modelId }) {
+    const sid = sessionId || '';
     const el = document.createElement('div');
     el.className = 'pane pane-chat';
+    if (sessionId) el.dataset.sessionId = sessionId;
+
+    // Header
     const header = document.createElement('div');
     header.className = 'pane-header';
-    header.innerHTML = '<span class="pane-title">Chat</span><label>Select Model:</label><select id="chat-model-select"></select>' +
-        '<span class="chat-params-toggle" id="btn-toggle-chat-params">Params</span>' +
-        '<span class="chat-tts-toggle" title="Text-to-Speech on/off">TTS: <span id="tts-status">Off</span></span>';
+    header.innerHTML = `<span class="pane-title">Chat</span>` +
+        `<select id="chat-model-select-${sid}"></select>` +
+        `<span class="chat-params-toggle" data-session="${sid}">Params ▸</span>` +
+        `<span class="chat-tts-toggle" title="Text-to-Speech on/off">TTS: <span class="tts-status-${sid}">Off</span></span>`;
     el.appendChild(header);
 
+    // Messages area
     const messages = document.createElement('div');
-    messages.className = 'chat-messages';
-    messages.id = 'chat-display';
+    messages.className = 'chat-messages'; messages.id = 'chat-display-' + sid;
     el.appendChild(messages);
 
-    // Audio playback bar (hidden by default)
+    // Audio playback bar
     const audioBar = document.createElement('div');
     audioBar.className = 'audio-playback-bar hidden';
-    audioBar.id = 'audio-playback-bar';
     audioBar.innerHTML = '<span class="audio-label">🔊</span>' +
-        '<input type="range" id="audio-progress" min="0" max="100" value="0" step="0.1">' +
-        '<span class="audio-time" id="audio-current">0:00</span> / ' +
-        '<span class="audio-time" id="audio-duration">0:00</span>' +
-        '<button id="btn-pause-audio" title="Pause/Resume">⏸</button>' +
-        '<button id="btn-stop-audio" title="Stop">⏹</button>';
+        '<input type="range" min="0" max="100" value="0" step="0.1">' +
+        '<span class="audio-time">0:00</span> / <span class="audio-time">0:00</span>' +
+        '<button title="Pause/Resume">⏸</button><button title="Stop">⏹</button>';
     el.appendChild(audioBar);
 
+    // Params panel (inline, hideable)
     const paramsPanel = document.createElement('div');
     paramsPanel.className = 'chat-params-panel';
-    paramsPanel.id = 'chat-params-panel';
-    paramsPanel.innerHTML = '<div class="chat-params-grid">' +
-        '<div class="chat-param"><label>Temp</label><input type="number" id="f-chat-temp" min="0" max="2" step="0.05" value="0.7"></div>' +
-        '<div class="chat-param"><label>Max Tokens</label><input type="number" id="f-chat-max-tokens" min="1" max="8192" step="1" value="4096"></div>' +
-        '<div class="chat-param"><label>Top-P</label><input type="number" id="f-chat-top-p" min="0" max="1" step="0.05" value="0.95"></div>' +
-        '<div class="chat-param"><label>Top-K</label><input type="number" id="f-chat-top-k" min="1" max="256" step="1" value="40"></div>' +
-        '</div>';
+    paramsPanel.id = 'chat-params-' + sid;
+    paramsPanel.innerHTML = `<div class="chat-params-grid">` +
+        `<div class="chat-param"><label>Temp</label><input type="number" id="f-chat-temp-${sid}" min="0" max="2" step="0.05" value="0.7"></div>` +
+        `<div class="chat-param"><label>Max Tokens</label><input type="number" id="f-chat-max-tokens-${sid}" min="1" max="8192" step="1" value="4096"></div>` +
+        `<div class="chat-param"><label>Top-P</label><input type="number" id="f-chat-top-p-${sid}" min="0" max="1" step="0.05" value="0.95"></div>` +
+        `<div class="chat-param"><label>Top-K</label><input type="number" id="f-chat-top-k-${sid}" min="1" max="256" step="1" value="40"></div>` +
+        `</div>`;
     el.appendChild(paramsPanel);
 
+    // Input bar
     const inputBar = document.createElement('div');
     inputBar.className = 'chat-input-bar';
-    inputBar.innerHTML = '<textarea id="f-chat-input" rows="4" placeholder="Type a message..."></textarea>' +
-        '<button id="btn-send-tts" title="Speak (TTS)">🔊</button>' +
-        '<button id="btn-send-chat" title="Send">Send</button>' +
-        '<span class="chat-status" id="chat-status"></span>';
+    inputBar.innerHTML = `<textarea id="f-chat-input-${sid}" rows="3" placeholder="Type a message..."></textarea>` +
+        '<button title="Speak (TTS)">🔊</button>' +
+        '<button title="Send">Send</button>' +
+        `<span class="chat-status" id="chat-status-${sid}"></span>`;
     el.appendChild(inputBar);
 
-    // ── Wire ChatPane internals ───────────────────────────────
+    // ── Wire ChatPane internals (per-session) ───────────────
     let ttsActive = false;
     header.querySelector('.chat-tts-toggle')?.addEventListener('click', () => {
         ttsActive = !ttsActive;
-        const statusEl = document.getElementById('tts-status');
-        if (statusEl) statusEl.textContent = ttsActive ? 'On' : 'Off';
+        const s = header.querySelector('.tts-status-' + sid);
+        if (s) s.textContent = ttsActive ? 'On' : 'Off';
         header.querySelector('.chat-tts-toggle').style.color = ttsActive ? 'var(--green)' : '';
     });
 
-    // Params panel toggle
-    header.querySelector('#btn-toggle-chat-params')?.addEventListener('click', () => {
-        document.getElementById('chat-params-panel')?.classList.toggle('open');
+    // Params toggle
+    header.querySelector('.chat-params-toggle')?.addEventListener('click', () => {
+        paramsPanel.classList.toggle('open');
+        const arrow = header.querySelector('.chat-params-toggle');
+        arrow.textContent = paramsPanel.classList.contains('open') ? 'Params ▾' : 'Params ▸';
     });
 
-    // TTS speak button
-    inputBar.querySelector('#btn-send-tts')?.addEventListener('click', () => {
-        const textEl = document.getElementById('f-chat-input');
+    // TTS button
+    inputBar.querySelector('button[title="Speak"]')?.addEventListener('click', () => {
+        const textEl = document.getElementById('f-chat-input-' + sid);
         window._audio?.sendTTS(textEl?.value?.trim() || '');
     });
 
-    // Send chat button and Enter key
-    inputBar.querySelector('#btn-send-chat')?.addEventListener('click', () => {
-        const sel = document.getElementById('chat-model-select');
-        const textEl = document.getElementById('f-chat-input');
-        if (sel?.value && textEl?.value.trim()) window.sendChat(sel.value, textEl);
+    // Send chat — wired dynamically via app.js with session context
+    inputBar.querySelector('button[title="Send"]')?.addEventListener('click', () => {
+        const sel = document.getElementById('chat-model-select-' + sid);
+        const textEl = document.getElementById('f-chat-input-' + sid);
+        if (sel?.value && textEl?.value.trim()) window._doSendChat(sel.value, sessionId, textEl);
     });
 
-    // Save chat params to localStorage on change
-    inputBar.addEventListener('input', (e) => {
+    // Params live change
+    paramsPanel.addEventListener('input', (e) => {
         if (!e.target.id?.startsWith('f-chat-')) return;
-        const name = e.target.id.replace('f-chat-', '');
-        const modelName = document.getElementById('chat-model-select')?.value;
-        if (!modelName) return;
-        try {
-            const params = JSON.parse(localStorage.getItem(CFG.STORAGE_CHAT_PARAMS)||'{}');
-            if (!params[modelName]) params[modelName] = {};
-            const apiName = name === 'temp' ? 'temperature' :
-                            name === 'max-tokens' ? 'max_tokens' :
-                            name === 'top-p' ? 'top_p' :
-                            name === 'top-k' ? 'top_k' : name;
-            params[modelName][apiName] = e.target.type === 'number' ? Number(e.target.value) : e.target.value;
-            localStorage.setItem(CFG.STORAGE_CHAT_PARAMS, JSON.stringify(params));
-        } catch {}
+        const name = e.target.id.replace('f-chat-' + sid + '-', '');
+        const apiName = { temp:'temperature', 'max-tokens':'max_tokens', 'top-p':'top_p', 'top-k':'top_k' }[name] || name;
+        const val = e.target.type === 'number' ? Number(e.target.value) : e.target.value;
+        SyncStore.set(modelId, apiName, val);
+    });
+
+    // Enter key in textarea sends chat
+    inputBar.querySelector('textarea')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            inputBar.querySelector('button[title="Send"]').click();
+        }
     });
 
     return el;
 };
 
 // ═══════════════════════════════════════════════════════════
-// ConfigPanel - per-model edit form
+// Model row — simple clickable item with action buttons
 // ═══════════════════════════════════════════════════════════
 
-renderers.ConfigPanel = function({ id, fields }) {
-    const el = document.createElement('div');
-    el.className = 'config-panel';
-    el.id = 'config-' + sanitizeId(id);
-    el.dataset.model = id;
+function formatSizeGB(sizeGb) {
+    if (!sizeGb || sizeGb <= 0) return '';
+    return ' ' + (sizeGb >= 1 ? sizeGb.toFixed(1) + 'GB' : Math.round(sizeGb * 1024) + 'MB');
+}
 
-    (fields||[]).forEach(f => {
-        const isFullWidth = f.widget === 'TextArea';
-        const label = document.createElement('label');
-        label.className = 'field-label' + (isFullWidth ? ' full-width' : '');
-        label.textContent = f.label || keyToLabel(f.name);
-        el.appendChild(label);
-
-        let input;
-        if (f.options) {
-            input = document.createElement('select');
-            for (const opt of f.options) {
-                const o = document.createElement('option');
-                o.value = String(opt.value); o.textContent = opt.label || opt.value;
-                input.appendChild(o);
-            }
-        } else if (f.widget === 'TagsInput' && f.options) {
-            input = document.createElement('select');
-            input.multiple = true; input.size = Math.min(f.options.length, 6);
-            const current = f.currentTags || [];
-            for (const opt of f.options) {
-                const o = document.createElement('option');
-                o.value = String(opt.value);
-                o.textContent = opt.value;
-                if (current.includes(opt.value)) o.selected = true;
-                input.appendChild(o);
-            }
-            input.dataset.tagsValue = JSON.stringify(current);
-            input.addEventListener('change', () => {
-                const selected = Array.from(input.selectedOptions).map(o => o.value);
-                input.dataset.tagsValue = JSON.stringify(selected);
-            });
-        } else if (f.schema?.type === 'integer') {
-            input = document.createElement('input'); input.type = 'number'; input.step = '1';
-            f.minimum != null && (input.min = f.minimum);
-            f.maximum != null && (input.max = f.maximum);
-        } else if (f.schema?.type === 'float') {
-            input = document.createElement('input'); input.type = 'number'; input.step = f.step ?? 1;
-            f.minimum != null && (input.min = f.minimum);
-            f.maximum != null && (input.max = f.maximum);
-        } else if (f.schema?.type === 'bool') {
-            input = document.createElement('select');
-            input.innerHTML = '<option value="false">false</option><option value="true">true</option>';
-        } else if (isFullWidth) {
-            const ta = document.createElement('textarea');
-            ta.rows = f.schema?.rows ?? 2;
-            input = ta;
-        } else {
-            input = document.createElement('input'); input.type = 'text';
-        }
-
-        const valueCell = document.createElement('div');
-        valueCell.className = 'field-value' + (isFullWidth ? ' full-width' : '');
-        if (input) {
-            input.id = f.name;
-            if (!input.multiple) input.value = f.value ?? '';
-            valueCell.appendChild(input);
-        }
-        el.appendChild(valueCell);
-    });
-
-    // Action buttons row
-    const bar = document.createElement('div');
-    bar.className = 'model-actions';
-    (window._configActions||[]).forEach(a => {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.dataset.action = a;
-        btn.dataset.model = id;
-        btn.title = a.charAt(0).toUpperCase() + a.slice(1);
-        const iconMap = { start:'▶', stop:'■', save:'✓', reset:'↺', eject:'⏏' };
-        btn.textContent = iconMap[a] || a;
-        if (['stop','eject'].includes(a)) btn.classList.add('btn-danger');
-        if (a === 'start') btn.classList.add('btn-success');
-        bar.appendChild(btn);
-    });
-    el.appendChild(bar);
-
-    return el;
-};
-
-// ═══════════════════════════════════════════════════════════
-// Model row - clickable accordion item with deferred config panel
-// ═══════════════════════════════════════════════════════════
-
-function renderModelRow(model) {
+function renderModelRow(model, isConfigView) {
     const name = model.id.includes('/') ? model.id.split('/').pop() : model.id;
     const statusClass = normalizeStatus(model.status);
+    const sizeStr = formatSizeGB(model.size_gb);
 
     const row = document.createElement('div');
     row.className = 'model-row';
     row.dataset.model = model.id;
 
-    // Build inline action buttons HTML
+    // Session spawn buttons (always visible)
+    let spawnBtns = `<button type="button" data-action="spawn-chat" data-model="${esc(model.id)}" title="New Chat">+</button>`;
+    if (HAS_ADMIN_KEY && !isConfigView) {
+        spawnBtns += `<button type="button" data-action="spawn-log" data-model="${esc(model.id)}" title="New Log">+</button>`;
+    }
+
+    // Inline action buttons — gated by auth
     let btns = '';
-    (window._configActions||[]).forEach(a => {
-        btns += '<button type="button" data-action="'+a+'" data-model="'+esc(model.id)+'" title="'+a.charAt(0).toUpperCase()+a.slice(1)+'"></button>';
-    });
+    if (HAS_ADMIN_KEY) {
+        const adminBtns = ['start','stop','eject'];
+        if (isConfigView) adminBtns.push('save','reset','cancel');
+        for (const a of adminBtns) {
+            btns += `<button type="button" data-action="${a}" data-model="${esc(model.id)}" title="${a}">${BTN_MAP[a]}</button>`;
+        }
+    }
 
-    row.innerHTML = '<div class="model-name-bar"><span class="status-dot '+statusClass+'"></span>' +
-        '<span class="model-name">'+esc(name)+'</span>' +
-        (model.runner_type ? '<span class="runner-badge" style="font-size:10px;color:var(--text-dim);margin-left:auto;flex-shrink:0;">('+esc(model.runner_type)+')</span>' : '') +
-        '<div class="model-actions-inline">'+btns+'</div></div>';
-    
-    // Pull progress bar (hidden until downloading)
-    const prog = document.createElement('div');
-    prog.className = 'pull-progress hidden';
-    prog.innerHTML = '<span class="pull-status"></span><span class="pull-pct"></span>';
-    row.appendChild(prog);
+    row.innerHTML = `<div class="model-name-bar"><span class="status-dot ${statusClass}"></span>` +
+        `<span class="model-name">${esc(name)}</span>` +
+        (sizeStr ? `<span class="model-size">${esc(sizeStr)}</span>` : '') +
+        (isConfigView && model.runner_type ? '<span style="font-size:10px;color:var(--text-dim);margin-left:auto;flex-shrink:0;">('+esc(model.runner_type)+')</span>' : '') +
+        `<div class="model-actions-inline">${spawnBtns}${btns}</div></div>`;
 
-    row.addEventListener('click', async (e) => {
-        if (row.querySelector('.config-panel')?.contains(e.target)) return;
-        if (e.target.tagName === 'BUTTON') return;
-        EventBus.emit('model.select', { modelId: model.id });
-        row.classList.toggle('expanded');
-        if (row.querySelector('.config-panel')) return;
-
-        try {
-            const data = await window.adminGet('/admin/config/' + encodeURIComponent(model.id));
-            if (!data?.config) return;
-            window._argSchema = data.args_schema || {};
-
-            const cp = data.config.checkpoint || '';
-            const fields = [];
-            const defaults = data.default || {};
-
-            for (const k of ['name', 'repo', 'model']) {
-                const schema = data.args_schema[k];
-                if (!schema) continue;
-                let value = resolveArgValue(data.config, k);
-                if (value === '' && schema.default !== undefined) value = String(schema.default);
-                fields.push({ name:k, value: k==='name' ? (value || data.model) : value, label:k, schema, options:schema.options?.map(v=>({value:v})) || undefined });
-            }
-
-            const mmprojSchema = data.args_schema['mmproj'];
-            if (mmprojSchema) {
-                let value = resolveArgValue(data.config, 'mmproj');
-                fields.push({ name:'mmproj', value: value || '', label:'mmproj', schema:mmprojSchema });
-            }
-
-            const resolvedBackend = data.config.backend || defaults.backend || '';
-            const bkOpts = Object.entries(data.backends||{}).map(([k,v]) => ({
-                value: k, label: (typeof v==='object')?(v.host||k):k
-            }));
-            if (bkOpts.length) {
-                fields.push({ name:'backend', value:resolvedBackend, options:bkOpts, widget:'SelectInput' });
-            }
-
-            const resolvedRunner = data.config.runner || defaults.runner || '';
-            const rnOpts = data.runner_types?.map(t => ({value:t})) || [];
-            if (rnOpts.length) {
-                const all = [{value:''}]; for (const r of rnOpts) all.push(r);
-                fields.push({ name:'runner', value:resolvedRunner, options:all, widget:'SelectInput' });
-            }
-
-            const currentTags = data.config.tags || [];
-            const tagOpts = (data.tags || []).map(t => ({value: t}));
-            if (tagOpts.length) {
-                fields.push({ name: 'tags', value: Array.isArray(currentTags) ? currentTags.join(',') : '',
-                    label: 'tags', schema: { type: 'string' }, widget: 'TagsInput', options: tagOpts, currentTags });
-            }
-
-            for (const k of Object.keys(data.args_schema || {})) {
-                if (['name','repo','model','mmproj'].includes(k)) continue;
-                const schema = data.args_schema[k];
-                let value = resolveArgValue(data.config, k);
-                if (value === '' && defaults[k] !== undefined) value = String(defaults[k]);
-                else if (value === '' && schema?.default !== undefined) value = String(schema.default);
-                fields.push({ name:k, value, label:k, schema, options:schema.options?.map(v=>({value:v})) || undefined });
-            }
-
-            const panel = renderers.ConfigPanel({ id: model.id, fields });
-            _configSnapshots[model.id] = JSON.parse(JSON.stringify(data.config));
-            panel.querySelectorAll('input, select, textarea').forEach(el => {
-                el.addEventListener('input', () => checkDirty(model.id, panel));
-            });
-            checkDirty(model.id, panel);
-
-            row.appendChild(panel);
-        } catch(e) { console.error('[widget] config fetch failed:', e.message); }
-    });
+    // Pull progress bar (admin only)
+    if (isConfigView && HAS_ADMIN_KEY) {
+        const prog = document.createElement('div');
+        prog.className = 'pull-progress hidden';
+        prog.innerHTML = '<span class="pull-status"></span><span class="pull-pct"></span>';
+        row.appendChild(prog);
+    }
 
     return row;
 }
 
-// ── Pull helpers ───────────────────────────────────────────────
+// ── Helpers: pull progress, button sync, dirty detection ────────
+
+function syncRowButtons(row, info) {
+    const btns = row.querySelectorAll('.model-actions-inline button[data-action]:not([data-action^="spawn"])');
+    if (!btns.length) return;
+    const state = info?.state || 'stopped';
+    for (const btn of btns) {
+        const action = btn.dataset.action;
+        switch(state) {
+            case 'downloading':
+                if (action === 'eject') { btn.disabled=true; }
+                else if (!['start','stop'].includes(action)) { btn.style.display='none'; }
+                break;
+            case 'running':
+                if (action==='start'||action==='eject') btn.disabled=true;
+                break;
+            case 'stopped': case 'error':
+                if (action==='stop') btn.disabled=true;
+                break;
+            case 'uncached':
+                if (action==='start') btn.disabled=true;
+                else if (!['start','stop','eject'].includes(action)) { btn.style.display='none'; }
+                break;
+        }
+        if ((action==='stop'||action==='eject') && !btn.disabled) btn.className='btn-danger';
+        else if (action==='start' && !btn.disabled) btn.className='btn-success';
+        else btn.className='';
+    }
+}
+
+// ── Pull helpers (admin only) ──────────────────────────────────
+let _pullProgressTimers = {};
+
 async function startPull(modelId) {
     const row = document.querySelector('.model-row[data-model="'+escapeSelector(modelId)+'"]');
     if (!row) return;
     try {
-        await window.adminPost('/admin/pull/'+encodeURIComponent(modelId), {});
-        updateRowForState(row, { state: 'downloading', statusClass: 'loading' });
+        await window.apiRequest('/admin/pull/'+encodeURIComponent(modelId), {}, 'POST', {});
+        syncRowButtons(row, { state:'downloading', statusClass:'loading' });
         const progEl = row.querySelector('.pull-progress');
         if (progEl) progEl.classList.remove('hidden');
         pollPullProgress(modelId);
-    } catch(e) {
-        console.error('[widget] pull failed:', e.message);
-    }
+    } catch(e) { console.error('[widget] pull failed:',e.message); }
 }
 
 async function cancelPull(modelId) {
     const row = document.querySelector('.model-row[data-model="'+escapeSelector(modelId)+'"]');
     if (!row) return;
     try {
-        await window.adminPost('/admin/pull/stop/'+encodeURIComponent(modelId), {});
-        updateRowForState(row, { state: 'uncached', statusClass: 'uncached' });
+        await window.apiRequest('/admin/cancel-pull/'+encodeURIComponent(modelId), {}, 'POST', {});
+        syncRowButtons(row, { state:'uncached', statusClass:'uncached' });
         const progEl = row.querySelector('.pull-progress');
         if (progEl) progEl.classList.add('hidden');
         stopPullProgress(modelId);
-    } catch(e) {
-        console.error('[widget] cancel failed:', e.message);
-    }
+    } catch(e) { console.error('[widget] cancel failed:',e.message); }
 }
-
-function escapeSelector(id) {
-    return id.replace(/["'#%&*,/:<=>?@[\\]^`{|}~]/g, '\\$&');
-}
-
-function updateRowForState(row, info) {
-    const modelId = row.dataset.model;
-    if (info.statusClass !== undefined) {
-        const dot = row.querySelector('.status-dot');
-        if (dot) { dot.className = 'status-dot ' + info.statusClass; }
-    }
-    syncRowButtons(row, info);
-    if (info.moveToGroup) {
-        const group = document.getElementById('models-'+info.moveToGroup+'-items');
-        if (group) group.appendChild(row);
-    }
-}
-
-// ── Progress polling for downloads ─────────────────────────────
-let _pullProgressTimers = {};
 
 function pollPullProgress(modelId) {
     const row = document.querySelector('.model-row[data-model="'+escapeSelector(modelId)+'"]');
     if (!row) return;
-    let lastPct = '', lastMsg = '';
 
     const poll = async () => {
         try {
-            const data = await window.adminGet('/admin/log/'+encodeURIComponent(modelId), { lines: 10 });
+            const data = await window.apiRequest('/admin/log/'+encodeURIComponent(modelId), { lines:10 });
             if (!data?.lines?.length) return;
             const progEl = row.querySelector('.pull-progress');
             const statusEl = progEl?.querySelector('.pull-status');
             const pctEl = progEl?.querySelector('.pull-pct');
-            
-            for (let i = data.lines.length - 1; i >= 0; i--) {
+            for (let i=data.lines.length-1; i>=0; i--) {
                 const line = data.lines[i].text;
                 if (!line.includes('[pull]')) continue;
                 const m = line.match(/:\s*(\d+)%?/);
-                if (m) {
-                    lastPct = m[1];
-                    pctEl.textContent = m[1] + '%';
-                    statusEl.textContent = '';
-                } else {
-                    statusEl.textContent = line.trim();
-                }
+                if (m) { pctEl.textContent=m[1]+'%'; statusEl.textContent=''; }
+                else { statusEl.textContent=line.trim(); }
             }
         } catch {}
     };
@@ -541,92 +546,9 @@ function pollPullProgress(modelId) {
     _pullProgressTimers[modelId] = setInterval(poll, 2000);
 }
 
-function stopPullProgress(modelId) {
-    clearInterval(_pullProgressTimers[modelId]);
-    delete _pullProgressTimers[modelId];
-}
+function stopPullProgress(modelId) { clearInterval(_pullProgressTimers[modelId]); delete _pullProgressTimers[modelId]; }
 
-// ── Row button state sync ──────────────────────────────────────
-const BTN_MAP = { start:'▶', stop:'■', eject:'⏏', cancel:'✕', save:'✓', reset:'↺' };
-
-function syncRowButtons(row, info) {
-    const btns = row.querySelectorAll('.model-actions-inline button');
-    if (!btns.length) return;
-    
-    const state = info?.state || 'stopped'; // stopped, running, error, uncached, downloading
-    for (const btn of btns) {
-        const action = btn.dataset.action;
-        btn.disabled = false;
-        let text = BTN_MAP[action] || action;
-
-        switch(state) {
-            case 'downloading':
-                if (action === 'eject') { btn.textContent = '⏏'; btn.title = 'Pulling...'; btn.disabled = true; }
-                else if (!['start','stop','save','reset'].includes(action)) { text = ''; }
-                break;
-            case 'running':
-                if (action === 'start') btn.disabled = true;
-                if (action === 'eject') btn.disabled = true;
-                if (action === 'save') btn.disabled = false; // can save config while running
-                if (action === 'reset') btn.disabled = false;
-                break;
-            case 'stopped':
-                if (action === 'stop') btn.disabled = true;
-                if (action === 'eject') btn.disabled = false;
-                if (action === 'save') btn.disabled = true; // nothing changed
-                break;
-            case 'error':
-                if (action === 'stop') btn.disabled = true;
-                if (action === 'eject') btn.disabled = false;
-                if (action === 'save') btn.disabled = true;
-                break;
-            case 'uncached':
-                // Replace eject icon with pull for uncached models
-                if (action === 'eject') { text = '⏏'; btn.title = 'Pull model checkpoint'; }
-                else if (!['start','stop','save','reset'].includes(action)) { text = ''; }
-                break;
-        }
-
-        // For downloading state, hide non-pull buttons from visible space
-        if (state === 'downloading' && !['start','stop','save','reset'].includes(action)) {
-            btn.style.display = action === 'eject' ? '' : 'none';
-        } else {
-            btn.style.display = '';
-        }
-
-        // Update text content and add danger/success classes
-        btn.textContent = text;
-        btn.className = '';
-        if (action === 'stop' || action === 'eject') btn.classList.add('btn-danger');
-        if (action === 'start') btn.classList.add('btn-success');
-    }
-}
-
-// ── Dirty detection ────────────────────────────────────────────
-function checkDirty(modelId, panel) {
-    const snap = _configSnapshots?.[modelId];
-    if (!snap) return;
-
-    const val = (name) => {
-        const el = panel.querySelector('#' + name);
-        return el ? (el.type === 'number' ? Number(el.value) : el.value) : '';
-    };
-
-    let isDirty = false;
-    const argKeys = Object.keys(window._argSchema || {});
-    for (const key of argKeys) {
-        if (val(key) !== resolveArgValue(snap, key)) { isDirty = true; break; }
-    }
-    if (!isDirty && val('repo') !== resolveArgValue(snap, 'repo')) isDirty = true;
-    else if (!isDirty && val('model') !== resolveArgValue(snap, 'model')) isDirty = true;
-    else if (!isDirty && val('backend') !== snap.backend) isDirty = true;
-    else if (!isDirty && val('runner') !== snap.runner) isDirty = true;
-
-    const btn = panel.querySelector('[data-action="save"]');
-    if (btn) btn.disabled = !isDirty;
-}
-
-// ── Event wiring conventions ───────────────────────────────────
+// ── Event wiring ───────────────────────────────────────────────
 function wireEvents(actions) {
     document.addEventListener('click', (e) => {
         const btn = e.target.closest('[data-action]');
@@ -634,12 +556,20 @@ function wireEvents(actions) {
         actions[btn.dataset.action]?.(btn.dataset.model);
     });
 
-    document.addEventListener('input', (e) => {
-        const input = e.target;
-        if (!input.id) return;
-        const panel = input.closest('.config-panel');
-        e.detail = { model: panel?.dataset.model ?? '', name: input.id, value: input.value };
-        input.dispatchEvent(new CustomEvent('field.change', { bubbles:true, detail:e.detail }));
+    // Session spawn: + Chat / + Log buttons on model rows
+    document.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-action^="spawn-"]');
+        if (!btn) return;
+        const modelId = btn.dataset.model;
+        const type = btn.dataset.action.replace('spawn-','');
+        if (type === 'chat') SessionRegistry.add('chat', modelId);
+        else if (type === 'log' && HAS_ADMIN_KEY) SessionRegistry.add('log', modelId);
+    });
+
+    document.addEventListener('click', (e) => {
+        const closeBtn = e.target.closest('[data-action="close-session"]');
+        if (!closeBtn) return;
+        SessionRegistry.remove(closeBtn.dataset.sessionId);
     });
 }
 
@@ -649,77 +579,109 @@ function populateSelect(selectId, models, current) {
     let html = '<option value="">- none -</option>';
     for (const m of (models||[])) {
         const name = m.id.includes('/') ? m.id.split('/').pop() : m.id;
-        html += '<option value="'+esc(m.id)+'"' + (m.id===current?' selected':'') + '>' + esc(name) + '</option>';
+        html += `<option value="${esc(m.id)}"${m.id===current?' selected':''}>${esc(name)}</option>`;
     }
     sel.innerHTML = html;
 }
 
-// ── Log polling - delta fetch with cursor ──────────────────────
-let logTimer = null, logSince = 0;
+// ── Chat session logic — per-session history and streaming ─────
+async function _doSendChat(modelName, sessionId, inputEl) {
+    const text = inputEl?.value?.trim();
+    if (!text || !modelName) return;
 
-function startLogPoll(modelId) {
-    stopLogPoll();
-    const poll = async () => {
+    const session = SessionRegistry.get(sessionId);
+    if (!session) return;
+
+    const chatDisplay = document.getElementById('chat-display-' + (sessionId||''));
+    const statusEl = document.getElementById('chat-status-' + (sessionId||''));
+
+    // ── Auto-start if model is not running ──────────────────────
+    const info = window._modelsCache?.find(m => m.id === modelName);
+    const state = info?.status?.value ?? '';
+    const canChatState = ['running', 'stopped', 'error'].includes(state) || !state;
+
+    if (!canChatState || !info?.port) {
         try {
-            if (!modelId) return;
-            const params = { lines: 200 };
-            if (logSince) params.since = logSince;
-            const data = await window.adminGet('/admin/log/' + encodeURIComponent(modelId), params);
-            if (!data?.lines?.length) return;
+            const startBody = {};
+            ['temperature','max_tokens','top_p','top_k'].forEach(k => {
+                const v = SyncStore.get(modelName, k);
+                if (v !== undefined && v !== '') startBody[k] = v;
+            });
+            if (statusEl) statusEl.textContent = 'Starting…';
+            await window.apiRequest('/admin/start/'+encodeURIComponent(modelName), {}, 'POST', startBody);
+        } catch(e) {
+            if (statusEl) { statusEl.textContent='Start failed: '+e.message; setTimeout(()=>{statusEl.textContent=''},3000); }
+            return;
+        }
+    }
 
-            const display = document.getElementById('log-display');
-            if (!display) return;
+    // Append user message
+    chatDisplay?.appendChild(makeBubble('user', text));
+    session.history.push({ role:'user', content:text });
+    if (inputEl) inputEl.value = '';
+    const status = document.getElementById('chat-status-' + (sessionId||''));
+    if (status) status.textContent = '';
 
-            for (const entry of data.lines) {
-                const div = document.createElement('div');
-                div.className = 'log-line';
-                div.textContent = entry.text;
-                display.appendChild(div);
-            }
+    // Create assistant bubble
+    const bubble = makeBubble('assistant', '', true, sessionId);
+    let acc = '';
 
-            if (display.scrollHeight - display.scrollTop <= display.clientHeight + 60) {
-                display.scrollTop = display.scrollHeight;
-            }
-            logSince = data.since ?? logSince;
-        } catch {}
-    };
-    poll();
-    logTimer = setInterval(poll, CFG.POLL_INTERVAL);
+    const abortCtrl = new AbortController();
+    session.abortCtrl = abortCtrl;
+
+    try {
+        await doStream(text, modelName, (delta) => {
+            if (abortCtrl.signal.aborted) return;
+            acc += delta;
+            requestAnimationFrame(() => {
+                if (!abortCtrl.signal.aborted) {
+                    bubble.innerHTML = typeof marked !== 'undefined' ? marked.parse(acc) : acc + '<span class="cursor"></span>';
+                    chatDisplay?.scrollTo(0, chatDisplay.scrollHeight);
+                }
+            });
+        }, { signal: abortCtrl.signal });
+
+        bubble.classList.remove('streaming');
+        const final = acc || (bubble.textContent||'').replace(/\u200B/g,'').trim();
+        if (typeof marked !== 'undefined') bubble.innerHTML = marked.parse(final);
+        session.history.push({ role:'assistant', content:final });
+    } catch(e) {
+        if (e.name !== 'AbortError') chatDisplay?.appendChild(makeBubble('assistant', '⚠ '+e.message));
+    }
 }
 
-function stopLogPoll() { if (logTimer) clearInterval(logTimer); logTimer=null; logSince=0; }
-
-// ── Chat streaming - SSE to model's port /v1/chat/completions ─
-let _streamAcc = '', _streamBubble = null;
-
-function appendBubble(role, content, streaming) {
-    const el = document.getElementById('chat-display');
+function makeBubble(role, content, streaming, sessionId) {
+    const el = document.getElementById('chat-display-' + (sessionId||''));
     if (!el) return;
     const div = document.createElement('div');
-    div.className = 'message ' + role + (streaming?' streaming':'');
-    div.textContent = role === 'user' ? content : '';
-    if (role === 'assistant') div.innerHTML = streaming ? content+'<span class="cursor"></span>' : content;
+    div.className = 'message ' + role + (streaming ? ' streaming' : '');
+    if (role === 'user') div.textContent = content;
+    else div.innerHTML = streaming ? content+'<span class="cursor"></span>' : content;
     el.appendChild(div);
     if (el.scrollHeight - el.scrollTop <= el.clientHeight+40) el.scrollTop = el.scrollHeight;
     return div;
 }
 
-async function doStream(text, modelName, onData, options = {}) {
+async function doStream(text, modelName, onData, options={}) {
     const { signal } = options;
     const info = window._modelsCache?.find(m => m.id === modelName);
     if (!info?.port) throw new Error('Model not running');
 
-    const params = JSON.parse(localStorage.getItem(CFG.STORAGE_CHAT_PARAMS)||'{}')[modelName] || {};
+    const params = {};
+    ['temperature','max_tokens','top_p','top_k'].forEach(k => {
+        const v = SyncStore.get(modelName, k);
+        if (v !== undefined && v !== '') params[k] = v;
+    });
+
     const resp = await fetch(BASE_URL+'/v1/chat/completions', {
-        method: 'POST', headers:{'Content-Type':'application/json'}, signal,
+        method:'POST', headers:{'Content-Type':'application/json'}, signal,
         body: JSON.stringify({
-            model: info.id || modelName, messages:chatHistory, stream:true,
-            temperature: params.temperature??0.7,
-            top_p: params.top_p??0.95,
+            model: info.id || modelName, messages: [], stream:true,
+            temperature: params.temperature ?? 0.7, top_p: params.top_p ?? 0.95,
             ...(params.max_tokens ? { max_tokens: params.max_tokens } : {}),
         }),
     });
-    if (!resp.ok) throw new Error('Chat API ' + resp.status);
+    if (!resp.ok) throw new Error('Chat API '+resp.status);
 
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
@@ -729,89 +691,95 @@ async function doStream(text, modelName, onData, options = {}) {
         if (done) break;
         buf += decoder.decode(value, { stream:true });
         let idx;
-        while ((idx = buf.indexOf('\n')) >= 0) {
-            const line = buf.slice(0, idx).trim();
-            buf = buf.slice(idx + 1);
-            if (!line || line === '[DONE]') continue;
+        while ((idx=buf.indexOf('\n'))>=0) {
+            const line = buf.slice(0,idx).trim();
+            buf = buf.slice(idx+1);
+            if (!line || line==='[DONE]') continue;
             let t = line.startsWith('data: ') ? line.slice(6) : line;
             try {
                 const p = JSON.parse(t);
-                if (p.error) { const err = new Error(p.error); err.streamError = true; throw err; }
+                if (p.error) { const err=new Error(p.error); err.streamError=true; throw err; }
                 const d = p.choices?.[0]?.delta?.content;
                 if (d) onData(d);
-            } catch (e) {
-                if (e.streamError) throw e;
-            }
+            } catch(e) { if (e.streamError) throw e; }
         }
     }
 }
 
-async function sendChat(modelName, inputEl = null) {
-    const el = inputEl ?? document.getElementById('f-chat-input');
-    if (!el) return;
-    const text = el.value.trim();
-    if (!text || !modelName) return;
+// ── Log polling (admin only, per-session) ──────────────────────
+let logTimers = {}; // sessionId → timerId
+let logSinces = {}; // sessionId → cursor
 
-    appendBubble('user', text);
-    chatHistory.push({ role:'user', content:text });
-    el.value = '';
+function startLogPoll(sessionId, modelId) {
+    if (!HAS_ADMIN_KEY) return;
+    stopLogPoll(sessionId);
+    const poll = async () => {
+        try {
+            const params = { lines:200 };
+            if (logSinces[sessionId]) params.since = logSinces[sessionId];
+            const data = await window.apiRequest('/admin/log/'+encodeURIComponent(modelId), params);
+            if (!data?.lines?.length) return;
+            const display = document.getElementById('log-display-' + sessionId);
+            if (!display) return;
+            for (const entry of data.lines) {
+                const div = document.createElement('div');
+                div.className = 'log-line'; div.textContent = entry.text;
+                display.appendChild(div);
+            }
+            display.scrollTop = display.scrollHeight;
+            logSinces[sessionId] = data.since ?? logSinces[sessionId];
+        } catch {}
+    };
+    poll();
+    logTimers[sessionId] = setInterval(poll, CFG.POLL_INTERVAL);
+}
 
-    if (_streamBubble && _streamBubble.classList.contains('streaming')) {
-        _streamBubble.classList.remove('streaming');
-    }
-    const bubble = appendBubble('assistant', '', true);
-    _streamAcc = '';
-    _streamBubble = bubble;
-    stopLogPoll();
-
-    const abortCtrl = new AbortController();
-    try {
-        await doStream(text, modelName, (delta) => {
-            if (abortCtrl.signal.aborted) return;
-            _streamAcc += delta;
-            requestAnimationFrame(() => {
-                if (_streamBubble && !abortCtrl.signal.aborted) {
-                    _streamBubble.innerHTML = typeof marked !== 'undefined' ? marked.parse(_streamAcc) : _streamAcc + '<span class="cursor"></span>';
-                }
-                const chatDisplay = document.getElementById('chat-display');
-                if (chatDisplay && chatDisplay.scrollHeight - chatDisplay.scrollTop <= chatDisplay.clientHeight + 40) {
-                    chatDisplay.scrollTop = chatDisplay.scrollHeight;
-                }
-            });
-        }, { signal: abortCtrl.signal });
-
-        _streamBubble?.classList.remove('streaming');
-        const final = _streamAcc || (_streamBubble?.textContent||'').replace(/\u200B/g,'').trim();
-        if (typeof marked !== 'undefined') _streamBubble.innerHTML = marked.parse(final);
-        chatHistory.push({ role:'assistant', content:final });
-    } catch(e) {
-        if (e.name !== 'AbortError') appendBubble('assistant', '\u26a0 ' + e.message);
-    }
+function stopLogPoll(sessionId) {
+    if (logTimers[sessionId]) clearInterval(logTimers[sessionId]);
+    delete logTimers[sessionId];
+    delete logSinces[sessionId];
 }
 
 // ── API helpers ────────────────────────────────────────────────
 function _adminKey() { return document.querySelector('meta[name="arkestra-admin-key"]')?.content||''; }
 
-async function adminGet(path, params) {
-    const qs = new URLSearchParams(params).toString();
-    const r = await fetch(window.location.origin+BASE_URL+path+(qs?'?'+qs:''), { headers:_adminKey()?{'X-Admin-Key':_adminKey()}:{} });
-    if (!r.ok) throw new Error('HTTP '+r.status);
+async function apiFetch(path, opts={}) {
+    const base = window.location.origin + BASE_URL;
+    let r;
+    try { r = await fetch(base+path, opts); } catch(e) { throw e; }
+
+    // 401/403 fallback from /admin/* → /api/* for GET requests
+    if ((!r.ok || r.status===401||r.status===403) && opts.method!=='POST' && opts.method!=='DELETE') {
+        try { r = await fetch(base+path.replace(/^\/admin/,'/api'), opts); } catch(e2) {}
+    }
+
+    if (!r.ok) {
+        let detail = 'HTTP '+r.status;
+        try { detail += ': '+(await r.text()); } catch {}
+        throw new Error(detail);
+    }
     return r.json();
 }
 
-async function adminPost(path, body) {
-    const k = _adminKey();
-    const r = await fetch(window.location.origin+BASE_URL+path, {
-        method:'POST', headers:{'Content-Type':'application/json',...(k?{'X-Admin-Key':k}:{})},
-        body: JSON.stringify(body),
-    });
-    if (!r.ok) { const t=await r.text(); throw new Error('HTTP '+r.status+': '+t); }
-    return r.json();
+async function apiRequest(path, params, method, body) {
+    let actualMethod='GET', actualBody=null, actualParams={};
+    if (method && body!==undefined) { actualMethod=method; actualBody=body; actualParams=params||{}; }
+    else { actualMethod='GET'; actualParams=params||{}; }
+
+    const qs = new URLSearchParams(actualParams).toString();
+    const opts = { method:actualMethod };
+    if (actualBody!==null) {
+        opts.headers={'Content-Type':'application/json'};
+        if (HAS_ADMIN_KEY) opts.headers['X-Admin-Key']=_adminKey();
+        opts.body=JSON.stringify(actualBody);
+    } else if (HAS_ADMIN_KEY && actualMethod==='GET') {
+        opts.headers={'X-Admin-Key':_adminKey()};
+    }
+    return apiFetch(path+(qs?'?'+qs:''), opts);
 }
 
-// ── Module-scoped state (closed over by deferred handlers) ────
-let _configSnapshots = {};
-let chatHistory = [];
+async function adminGet(path, params) { return apiRequest(path, params, 'GET', null); }
+async function adminPost(path, body) { return apiRequest(path, {}, 'POST', body); }
 
 // ── Expose public API ──────────────────────────────────────────
 window.EventBus = EventBus;
@@ -821,11 +789,20 @@ window.render = render;
 window.wireEvents = wireEvents;
 window.adminPost = adminPost;
 window.adminGet = adminGet;
+window.apiRequest = apiRequest;
 window.sanitizeId = sanitizeId;
 window.normalizeStatus = normalizeStatus;
 window.startLogPoll = startLogPoll;
 window.stopLogPoll = stopLogPoll;
-window.sendChat = sendChat;
-window.appendBubble = appendBubble;
+window._doSendChat = _doSendChat;  // per-session send
+window.makeBubble = makeBubble;
 window.renderModelRow = renderModelRow;
 window.populateSelect = populateSelect;
+window.SyncStore = SyncStore;
+window.SessionRegistry = SessionRegistry;
+window.startPull = startPull;
+window.cancelPull = cancelPull;
+window.syncRowButtons = syncRowButtons;
+window.pollPullProgress = pollPullProgress;
+window.stopPullProgress = stopPullProgress;
+window.formatSizeGB = formatSizeGB;
