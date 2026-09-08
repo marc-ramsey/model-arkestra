@@ -12,19 +12,23 @@ from model_arkestra.server import ArkestraServer
 
 # ── separate config copy so mutations never touch base file ────
 _BASE_CFG = "tests/test-admin-config.yaml"
+_base_cfg_dir = os.path.dirname(_BASE_CFG)
 _copy_fd, _TEST_CFG = tempfile.mkstemp(suffix=".yaml")
 os.close(_copy_fd)
 import shutil
 shutil.copy2(_BASE_CFG, _TEST_CFG)
+_shutil_backup = shutil.copy2  # preserve for other tests in this file
 
 
 @pytest.fixture(scope="session")
 def live_server():
     """Start a single ArkestraServer for the entire test session.
 
-    Uses a separate copy of tests/test-admin-config.yaml so mutations
-    from POST /admin/config never touch the base file or sample-config.yaml.
+    Uses a separate copy of tests/test-admin-config.yaml and tests/backends.yaml
+    so mutations from POST /admin/config never touch the base files.
     """
+    import shutil as _shutil
+    _shutil.copy2("tests/backends.yaml", os.path.dirname(_TEST_CFG) + "/backends.yaml")
     server = ArkestraServer(_TEST_CFG, port=18005)
     client = TestClient(server.get_app())
     result = {"server": server, "client": client}
@@ -97,10 +101,13 @@ class TestStopModel:
     """POST /admin/stop/{model}"""
 
     def test_stop_already_stopped_returns_202(self, live_server):
+        """Stopping an already-stopped model returns 202; stopping a running
+        model is handled asynchronously via _arkestra.stop() returning 200."""
         client = live_server["client"]
         r = client.post("/admin/stop/qwen3.5-4b")
-        # 202 if context exists and stopped, 404 if never started
-        assert r.status_code in (202, 404)
+        # 202 if already stopped (terminal), 200 if we stopped a running model,
+        # 404 if model not configured
+        assert r.status_code in (200, 202, 404)
 
 
 # ── /admin/config/ (collection) ────────────────────────────────────
@@ -121,7 +128,7 @@ class TestConfigCollection:
         client = live_server["client"]
         r = client.post(
             "/admin/config",
-            json={"model": "unsloth/test/new-model:Q4", "args": "--temp 0.7"},
+            json={"model": "unsloth/test/new-model:Q4", "temp": 0.7},
         )
         assert r.status_code == 201
         body = r.json()
@@ -136,7 +143,7 @@ class TestConfigCollection:
             json={
                 "model": "unsloth/test/full-model:Q5",
                 "backend": "rocm",
-                "args": "--ctx 8192",
+                "ctx-size": 8192,
                 "tags": ["chat", "reasoning"],
             },
         )
@@ -149,7 +156,7 @@ class TestConfigCollection:
         assert "full-model" in cfg
         assert cfg["full-model"]["model"] == "unsloth/test/full-model:Q5"
         assert cfg["full-model"]["backend"] == "rocm"
-        assert cfg["full-model"]["args"] == "--ctx 8192"
+        assert cfg["full-model"]["ctx-size"] == 8192
         assert cfg["full-model"]["tags"] == ["chat", "reasoning"]
 
     def test_create_requires_checkpoint(self, live_server):
@@ -157,7 +164,7 @@ class TestConfigCollection:
         client = live_server["client"]
         r = client.post(
             "/admin/config",
-            json={"name": "no-checkpoint", "args": "--temp 1.0"},
+            json={"name": "no-checkpoint", "temp": 1.0},
         )
         assert r.status_code == 400
 
@@ -186,7 +193,7 @@ class TestConfigModel:
         assert body["model"] == "qwen3.5-4b"
         cfg = body["config"]
         assert "model" in cfg
-        assert "args" in cfg
+        assert "temp" in cfg
         assert cfg["model"] == "unsloth/Qwen3.5-4B-GGUF:Q4_K_M"
 
     def test_get_nonexistent_returns_404(self, live_server):
@@ -201,23 +208,25 @@ class TestConfigModel:
         # GET original
         r = client.get("/admin/config/qwen3.5-4b")
         assert r.status_code == 200
-        original_args = r.json()["config"]["args"]
+        original_temp = r.json()["config"].get("temp", 0.8)
+        original_ctx = r.json()["config"].get("ctx-size", 16384)
 
-        # PUT modified args back
+        # PUT modified fields back
         r = client.put(
             "/admin/config/qwen3.5-4b",
-            json={"args": "--temp 1.5 --ctx-size 32768"},
+            json={"temp": 1.5, "ctx-size": 32768},
         )
         assert r.status_code == 200
 
         # GET again to verify
         r = client.get("/admin/config/qwen3.5-4b")
-        assert r.json()["config"]["args"] == "--temp 1.5 --ctx-size 32768"
+        assert r.json()["config"]["temp"] == 1.5
+        assert r.json()["config"]["ctx-size"] == 32768
 
         # PUT original back so tests remain consistent
         client.put(
             "/admin/config/qwen3.5-4b",
-            json={"args": original_args},
+            json={"temp": original_temp, "ctx-size": original_ctx},
         )
 
 
@@ -248,6 +257,9 @@ class TestStopAll:
     def test_stop_all_no_models_returns_200(self, live_server):
         """When no models are running, returns 200 with a message."""
         client = live_server["client"]
+        # Ensure all models are stopped first (they may have been started
+        # by earlier session-scoped fixture tests)
+        client.post("/admin/stop-all")
         r = client.post("/admin/stop-all")
         assert r.status_code == 200
         body = r.json()

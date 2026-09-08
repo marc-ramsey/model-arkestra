@@ -5,3 +5,5 @@ engines:
 backends:
   vulkan-radv:
     engine: llama-cpp
+  rocm:
+    engine: llama-cpp

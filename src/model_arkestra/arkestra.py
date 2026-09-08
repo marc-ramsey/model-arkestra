@@ -895,22 +895,24 @@ class ModelArkestra:
             "ok": True,
             "model": model_name,
             "cache_deleted": False,
-            "contexts_cleared": 0,
         }
 
         # Stop the model first (always)
         await self.stop(model_name)
 
         if not cache_path:
-            # No cache to clear — just record context cleanup and return
-            for r in self._runners.values():
-                if model_name in r._models:
-                    del r._models[model_name]
-                    result["contexts_cleared"] += 1
+            # No cache to clear — context stays for visibility
             return result
 
         cache_root = self._cache_root()
         cache_dir = self._cache_dir_for_checkpoint(cache_path)
+
+        # Get the context for this model (exists in runner after stop)
+        ctx = None
+        for r in self._runners.values():
+            if model_name in r._models:
+                ctx = r._models[model_name]
+                break
 
         # Safety check: other running contexts sharing this cache?
         if cache_dir.exists():
@@ -935,15 +937,13 @@ class ModelArkestra:
                     + ", ".join(targets)
                 )
 
-        # Delete cache, then clear contexts
+        # Delete cache, mark context as UNCACHED (cache gone)
         if cache_dir.exists():
             shutil.rmtree(cache_dir)
             result["cache_deleted"] = True
             result["cache_path"] = str(cache_dir)
-        for r in self._runners.values():
-            if model_name in r._models:
-                del r._models[model_name]
-                result["contexts_cleared"] += 1
+        if ctx:
+            ctx.state = RunnerState.UNCACHED
 
         return result
 

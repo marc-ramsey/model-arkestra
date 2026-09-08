@@ -1,24 +1,27 @@
 backends:
   vulkan-radv:
-    description: "Vulkan with RADV driver \u2014 works on AMD, NVIDIA, and Intel GPUs"
+    description: "Vulkan with RADV driver — works on AMD, NVIDIA, and Intel GPUs"
     runner: process
     source_ref: official-vulkan-radv
+    engine: llama-cpp
     args:
       ngl: 999
       hf: ${CHECKPOINT}
       ctx-size: ${ctx-size}
   rocm:
-    description: "ROCm \u2014 best for AMD iGPU and discrete GPUs"
+    description: "ROCm — best for AMD iGPU and discrete GPUs"
     runner: process
     source_ref: rocm-gfx1151
+    engine: llama-cpp
     args:
       ngl: 999
       hf: ${CHECKPOINT}
       ctx-size: ${ctx-size}
   rocm-container:
-    description: "ROCm container \u2014 kyuz0 toolbox with bundled ROCm libs"
+    description: "ROCm container — kyuz0 toolbox with bundled ROCm libs"
     runner: podman
     source_ref: amd-toolbox-rocm
+    engine: llama-cpp
     entrypoint: /usr/local/bin/llama-server
     devices:
     - /dev/kfd
@@ -27,9 +30,10 @@ backends:
       hf: ${CHECKPOINT}
       ngl: 999
   cuda:
-    description: "NVIDIA CUDA \u2014 for NVIDIA discrete GPUs"
+    description: "NVIDIA CUDA — for NVIDIA discrete GPUs"
     runner: process
     source_ref: official-cuda
+    engine: llama-cpp
     args:
       ngl: 999
       hf: ${CHECKPOINT}

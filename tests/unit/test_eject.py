@@ -144,7 +144,7 @@ class TestEjectMethod:
             assert result["model"] == "qwen3.5-4b"
             assert result["cache_deleted"] is True
             assert str(result["cache_path"]) == str(cache_dir)
-            assert result["contexts_cleared"] == 1
+            assert "contexts_cleared" not in result
             assert not cache_dir.exists()
 
     # ── Happy path: cache dir doesn't exist on disk ───────────────────
@@ -154,7 +154,9 @@ class TestEjectMethod:
         monkeypatch.delenv("HF_HUB_CACHE", raising=False)
         ma = self._make_arkestra()
         with tempfile.TemporaryDirectory() as tmpdir:
-            ma._cm.data["default_env"] = {"hf_hub_cache": tmpdir}
+            # Set default-env (kebab-case) and invalidate cached _env
+            ma._cm.data["default-env"] = {"hf_hub_cache": tmpdir}
+            ma._env = None  # force rebuild on next resolve_config
 
             runner = MockRunner()
             ctx = make_ctx("qwen3.5-4b", 18000, RunnerState.RUNNING)
@@ -165,7 +167,6 @@ class TestEjectMethod:
 
             assert result["ok"] is True
             assert result["cache_deleted"] is False
-            assert result["contexts_cleared"] == 1
 
     # ── No checkpoint in config ───────────────────────────────────────
 
@@ -185,7 +186,6 @@ class TestEjectMethod:
         assert result["ok"] is True
         assert result["cache_deleted"] is False
         assert "cache_path" not in result
-        assert result["contexts_cleared"] == 1
 
     # ── Model not in config ───────────────────────────────────────────
 
@@ -301,7 +301,7 @@ class TestAdminEjectEndpoint:
         assert body["ok"] is True
         assert "model" in body
         assert "cache_deleted" in body
-        assert "contexts_cleared" in body
+        assert "contexts_cleared" not in body
 
     def test_404_nonexistent(self, live_server):
         r = live_server["client"].post("/admin/eject/nonexistent-model-xyz")

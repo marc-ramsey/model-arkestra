@@ -10,12 +10,8 @@ env:
 
 backends:
   default: vulkan-radv
-  rocm:
-    args:
-      ngl: 999
-  vulkan-radv:
-    args:
-      ngl: 999
+  rocm: {}
+  vulkan-radv: {}
 
 models:
   gemma-4-e2b:

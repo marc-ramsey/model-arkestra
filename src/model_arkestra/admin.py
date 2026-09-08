@@ -294,7 +294,7 @@ class ArkestraAdmin:
 
                 data = []
                 for model_name in self.server._arkestra.get_models():
-                    ctx = contexts_by_name[model_name]
+                    ctx = contexts_by_name.get(model_name)
                     model_cfg = self.server._arkestra.get_model(model_name) or {}
                     model_ref = model_cfg.get("model", "")
 
@@ -307,7 +307,11 @@ class ArkestraAdmin:
                     )
 
                     status_val = model_status_for_ctx(ctx)
-                    backend_id = ctx.backend_id or self._resolve_model_backend(ctx.name, model_cfg)
+                    backend_id = (
+                        ctx.backend_id
+                        if ctx
+                        else self._resolve_model_backend(model_name, model_cfg)
+                    )
                     runner_type = ctx.runner_type or ""
 
                     # Size and checkpoint-hash from HuggingFace (optional)
@@ -445,6 +449,28 @@ class ArkestraAdmin:
                 new_model["repo"] = body["repo"]
             for key in MODEL_CONFIG_FIELDS:
                 if key in body and body[key] is not None:
+                    new_model[key] = body[key]
+
+            # Store inference params that match the model's engine schema
+            backend_id = _resolve_backend(
+                self.server._arkestra.cm, new_model, name,
+            )
+            cm_data = self.server._arkestra.cm.data
+            bcfg = (cm_data.get("backends") or {}).get(backend_id, {})
+            engine_name = (
+                bcfg.get("engine") if isinstance(bcfg, dict) else None
+            )
+            if not engine_name:
+                engine_name = cm_data.get("default", {}).get("engine")
+            if not engine_name:
+                engine_name = cm_data.get("engines", {}).get("default-engine")
+            schema_map = self._schemas.get("model-args", {})
+            arg_schema = schema_map.get(engine_name, {}) or {}
+            arg_keys = set(arg_schema.keys())
+            arg_schema = schema_map.get(engine_name, {}) or {}
+            arg_keys = set(arg_schema.keys())
+            for key in body:
+                if key not in INFRA_KEYS and key in arg_keys:
                     new_model[key] = body[key]
 
             cfg[name] = new_model

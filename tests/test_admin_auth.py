@@ -87,12 +87,12 @@ class TestAdminKeyEnforced:
     def test_correct_header_passes_auth(self):
         """With the right header, auth is bypassed — status ≠ 401."""
         client = self._client_with_key()
-        r = client.get("/admin/models", headers={"X-Admin-Key": "secret123"})
+        r = client.get("/admin/models", headers={"Authorization": "Bearer secret123"})
         assert r.status_code != 401
 
     def test_correct_header_config_passes_auth(self):
         client = self._client_with_key()
-        r = client.get("/admin/config", headers={"X-Admin-Key": "secret123"})
+        r = client.get("/admin/config", headers={"Authorization": "Bearer secret123"})
         assert r.status_code != 401
 
     # --- POST endpoints also gated ---
