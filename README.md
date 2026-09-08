@@ -64,7 +64,7 @@ Then hit `POST /v1/chat/completions` with any OpenAI-compatible client, or visit
 ### Quick Start — User CLI
 
 ```bash
-arkestra chat -m qwen3-4b            # interactive chat (starts if stopped)
+arkestra chat -m qwen3-4b            # interactive chat (auto-starts if stopped)
 arkestra pull qwen3-4b                # download checkpoint from HuggingFace
 arkestra unload qwen3-4b              # stop and delete cache
 arkestra models [-m qwen3-4b]        # list all or single model status
@@ -198,10 +198,18 @@ The default is `~/.cache/huggingface/hub`. The [`config.md`](./docs/config.md#de
 | **Container Runners** | Podman or Docker isolation — pick the runtime globally (`container_type:`) and every backend inherits it. |
 | **Remote Federation** | The `runner: remote` type proxies inference and lifecycle commands to another arkestra worker on a different machine. Model names use the `<worker-name>/<model-id>` convention (e.g., `gpu-server/qwen3`). Master servers never download, spawn, or allocate ports for remote models — all HTTP calls are forwarded transparently. |
 | **ONNX Inference** | Native in-memory sessions for embeddings (`bge-*`), Whisper STT, and Kokoro TTS. No subprocesses, no ports — loads directly into Python via `onnxruntime`. Exposed on OpenAI-compatible `/v1/embeddings`, `/v1/audio/transcriptions`, `/v1/audio/speech`. |
-| **Open WebUI Ready** | Admin dashboard at `http://localhost:8080/` with live model management, SSE chat streaming, and structured status reporting (`{"value": "loaded"}`) for auto-load integration. |
+| **Open WebUI Ready** | Admin dashboard at `http://localhost:8080/` with live model management, SSE chat streaming, and structured status reporting (`loaded`, `sleeping`, `unloaded`) for auto-load integration. |
+| **Auto-Start on Inference** | Chat to a stopped or sleeping model starts it automatically. Chat to an uncached model (no checkpoint) fails cleanly with 503. Configure wait timeout per-model: `model-start-timeout: 600`. |
+| **Eject Preserves Visibility** | `unload` removes the cache but keeps the model visible in the admin panel as `unloaded`, ready for re-pull or config edit. |
 | **XDG Config Defaults** | Config files default to `~/.config/arkestra/config.yaml` — no CLI flag needed. Backends resolved from a companion `backends.yaml`. |
 | **Restart Resilience** | Crash detection with configurable restart limits and backoff delays. Stopped models reuse their original port on restart. |
 | **CLI Tooling** | `arkestra` for user-facing commands: chat, pull, unload, status. `arkestra-admin` for server ops: start, stop, config, logs, images, shutdown. API-key secured. |
+
+## Configuration Notes
+
+- **Flat keys**: All model parameters (e.g., `temp`, `ctx-size`) are flat keys at the model level — no nested `args:` dict support.
+- **Status mapping**: Internal states map to Open WebUI vocabulary: `STOPPED → sleeping`, `UNCACHED → unloaded`, `RUNNING → loaded`.
+- **Admin routes only**: Lifecycle control (`start`, `stop`, `restart`) is available via `/admin/*` endpoints — inference-only clients trigger auto-start automatically.
 
 ## Architecture Overview
 
