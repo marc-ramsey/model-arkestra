@@ -38,7 +38,7 @@ def _set_admin_header(live_server):
     Reads ADMIN_KEY from the actual config so it stays in sync.
     """
     key = live_server["server"]._arkestra.cm.data.get("env", {}).get("ADMIN_KEY") or ""
-    live_server["client"].headers["X-Admin-Key"] = key
+    live_server["client"].headers["Authorization"] = f"Bearer {key}"
 
 
 # ── /admin/models ──────────────────────────────────────────────────
@@ -51,25 +51,22 @@ class TestAdminModels:
         r = client.get("/admin/models")
         assert r.status_code == 200
 
-        ids = [m["id"] for m in r.json()["models"]]
+        ids = [m["name"] for m in r.json()["models"]]
         expected = {"gemma-4-e2b", "qwen3.5-4b", "voxtral-mini"}
         assert set(ids) == expected
 
     def test_non_running_models_have_constructed_contexts(self, live_server):
         client = live_server["client"]
         r = client.get("/admin/models")
-        models_by_id = {m["id"]: m for m in r.json()["models"]}
+        models_by_id = {m["name"]: m for m in r.json()["models"]}
 
-        # All should have required context fields
+        # All should have required fields
         for model in r.json()["models"]:
-            assert "id" in model
+            assert "name" in model
             assert "status" in model
-            assert "port" in model
-            assert "runner_type" in model
-            assert "backend_id" in model
-            assert "args" in model
+            assert "backend" in model
+            assert "runner" in model
             assert "model" in model
-            assert "tags" in model
 
     def test_uncached_status_for_downloaded_checkpoints(self, live_server):
         """Models with a checkpoint field but no HF cache should be UNCACHED.
@@ -95,7 +92,7 @@ class TestAdminModels:
             try:
                 client = live_server["client"]
                 r = client.get("/admin/models")
-                models_by_id = {m["id"]: m for m in r.json()["models"]}
+                models_by_id = {m["name"]: m for m in r.json()["models"]}
 
                 gemma = models_by_id["gemma-4-e2b"]
                 qwen = models_by_id["qwen3.5-4b"]
@@ -322,15 +319,15 @@ class TestBackendResolutionFallback:
         server = ArkestraServer(path, port=18006)
         try:
             client = TestClient(server.get_app())
-            client.headers["X-Admin-Key"] = "test-key"
+            client.headers["Authorization"] = "Bearer test-key"
             r = client.get("/admin/models")
             assert r.status_code == 200
             models = r.json()["models"]
-            entry = next((m for m in models if m["id"] == "no-default-test"), None)
+            entry = next((m for m in models if m["name"] == "no-default-test"), None)
             assert entry is not None, "Model should appear in response"
             # Resolution chain: per-model (missing) → backends.default (missing) → cpu
-            assert entry.get("backend_id") == "cpu", (
-                f"Expected fallback to 'cpu', got {entry.get('backend_id')!r}"
+            assert entry.get("backend") == "cpu", (
+                f"Expected fallback to 'cpu', got {entry.get('backend')!r}"
             )
         finally:
             graceful_server_teardown({"server": server, "client": client})

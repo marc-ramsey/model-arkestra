@@ -59,7 +59,7 @@ async def _request(
     """Execute an admin API request and return parsed JSON."""
     headers = {"Accept": "application/json"}
     if api_key:
-        headers["x-admin-key"] = api_key
+        headers["Authorization"] = f"Bearer {api_key}"
 
     url = server_url.rstrip("/") + path
     timeout = ClientTimeout(total=30)
@@ -273,6 +273,92 @@ async def cmd_logs(args: argparse.Namespace) -> None:
         print(f"{prefix}{text}")
 
 
+async def cmd_pull(args: argparse.Namespace) -> None:
+    result = await _request("POST", args.server, f"/admin/pull/{args.name}", api_key=args.api_key)
+    if getattr(args, "json", False):
+        _print_json(result)
+    elif result.get("ok") or result.get("already_downloading"):
+        print(f"Download started for '{args.name}'")
+    else:
+        print(result.get("detail", "Failed to pull"), file=sys.stderr)
+
+
+async def cmd_restart(args: argparse.Namespace) -> None:
+    body: Dict[str, Any] = {}
+    if args.backend:
+        body["backend"] = args.backend
+    if args.runner:
+        body["runner"] = args.runner
+    for kv in (args.args or []):
+        key, _, value = kv.partition("=")
+        try:
+            value = int(value)
+        except ValueError:
+            try:
+                value = float(value)
+            except ValueError:
+                pass
+        body[key] = value
+    result = await _request("POST", args.server, f"/admin/restart/{args.name}", api_key=args.api_key, json_body=body)
+    if getattr(args, "json", False):
+        _print_json(result)
+    elif result.get("ok"):
+        port = result.get("port")
+        print(f"Model '{args.name}' restarted" + (f" on port {port}" if port else ""))
+    else:
+        print(result.get("detail", "Failed to restart"), file=sys.stderr)
+
+
+async def cmd_cancel_pull(args: argparse.Namespace) -> None:
+    result = await _request("POST", args.server, f"/admin/cancel-pull/{args.name}", api_key=args.api_key)
+    if getattr(args, "json", False):
+        _print_json(result)
+    elif result.get("ok"):
+        print(f"Pull cancelled for '{args.name}'")
+    else:
+        print(result.get("detail", "Failed to cancel pull"), file=sys.stderr)
+
+
+async def cmd_clusters(args: argparse.Namespace) -> None:
+    result = await _request("GET", args.server, "/admin/clusters", api_key=args.api_key)
+    if getattr(args, "json", False):
+        _print_json(result)
+        return
+    clusters = result.get("clusters", [])
+    if not clusters:
+        print("No clusters configured.")
+        return
+    header = f"{'NAME':<20} {'BASE-URL':<45} {'HEALTHY'}"
+    print(header)
+    print("-" * len(header))
+    for c in clusters:
+        healthy = "yes" if c.get("healthy") else "no"
+        print(f"{c['name']:<20} {c.get('base-url', '-'):<45} {healthy}")
+
+
+async def cmd_cluster_add(args: argparse.Namespace) -> None:
+    body = {"base-url": args.base_url}
+    if getattr(args, "admin_key", None):
+        body["admin-key"] = args.admin_key
+    result = await _request("POST", args.server, f"/admin/clusters/{args.name}", api_key=args.api_key, json_body=body)
+    if getattr(args, "json", False):
+        _print_json(result)
+    elif result.get("ok"):
+        print(f"Cluster '{args.name}' added")
+    else:
+        print(result.get("detail", "Failed to add cluster"), file=sys.stderr)
+
+
+async def cmd_cluster_delete(args: argparse.Namespace) -> None:
+    result = await _request("DELETE", args.server, f"/admin/clusters/{args.name}", api_key=args.api_key)
+    if getattr(args, "json", False):
+        _print_json(result)
+    elif result.get("ok"):
+        print(f"Cluster '{args.name}' removed")
+    else:
+        print(result.get("detail", "Failed to delete cluster"), file=sys.stderr)
+
+
 async def cmd_eject(args: argparse.Namespace) -> None:
     result = await _request("POST", args.server, f"/admin/eject/{args.name}", api_key=args.api_key)
     if getattr(args, "json", False):
@@ -338,7 +424,7 @@ async def cmd_shutdown(args: argparse.Namespace) -> None:
     headers = {"Accept": "application/json"}
     api_key = args.api_key
     if api_key:
-        headers["x-admin-key"] = api_key
+        headers["Authorization"] = f"Bearer {api_key}"
 
     try:
         async with ClientSession(timeout=ClientTimeout(total=10)) as session:
@@ -417,6 +503,32 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("eject", help="Stop model and delete its checkpoint cache")
     p.add_argument("name")
 
+    # ── pull ──
+    p = sub.add_parser("pull", help="Download model checkpoint from HuggingFace")
+    p.add_argument("name")
+
+    # ── restart ──
+    p = sub.add_parser("restart", help="Restart a model (with optional backend/runner overrides)")
+    p.add_argument("name")
+    p.add_argument("--backend", default=None)
+    p.add_argument("--runner", default=None)
+    p.add_argument("args", nargs="*", help="Extra fields as key=value")
+
+    # ── cancel-pull ──
+    cp = sub.add_parser("cancel-pull", help="Cancel in-flight download")
+    cp.add_argument("name")
+
+    # ── clusters ──
+    clp = sub.add_parser("clusters", help="Manage remote cluster proxies (requires sub-command)")
+    clsubs = clp.add_subparsers(dest="cluster_cmd")
+    clsubs.add_parser("list", help="List all clusters")
+    cla = clsubs.add_parser("add", help="Add a remote cluster")
+    cla.add_argument("name")
+    cla.add_argument("--base-url", required=True)
+    cla.add_argument("--admin-key", default=None, help="Cluster's admin key")
+    cld = clsubs.add_parser("delete", help="Remove a remote cluster")
+    cld.add_argument("name")
+
     # ── images ──
     ip = sub.add_parser("images", help="Manage OCI container images (requires sub-command)")
     ips = ip.add_subparsers(dest="image_cmd")
@@ -464,7 +576,7 @@ def main(argv: list[str] | None = None) -> None:
     api_key = args.api_key or os.environ.get("ADMIN_KEY") or _read_admin_key(args.config)
     args.api_key = api_key
     if not api_key:
-        print("Error: no API key. Provide --api-key, set ADMIN_KEY env, or define it in config.yaml's default_env:", file=sys.stderr)
+        print("Error: no API key. Provide --api-key, set ADMIN_KEY env, or define admin_key in config.yaml", file=sys.stderr)
         sys.exit(1)
 
     # Dispatch to the right handler
@@ -478,6 +590,8 @@ async def _dispatch(args: argparse.Namespace) -> None:
         await _cmd_config_dispatch(args)
     elif args.command == "images":
         await _cmd_images_dispatch(args)
+    elif args.command == "clusters":
+        await _cmd_clusters_dispatch(args)
     else:
         dispatch = {
             "models": cmd_models,
@@ -487,6 +601,9 @@ async def _dispatch(args: argparse.Namespace) -> None:
             "logs": cmd_logs,
             "eject": cmd_eject,
             "shutdown": cmd_shutdown,
+            "pull": cmd_pull,
+            "restart": cmd_restart,
+            "cancel-pull": cmd_cancel_pull,
         }
         handler = dispatch.get(args.command)
         if not handler:
@@ -529,6 +646,24 @@ async def _cmd_images_dispatch(args: argparse.Namespace) -> None:
     handler = handlers.get(cmd)
     if not handler:
         print(f"Error: unknown images sub-command '{cmd}'", file=sys.stderr)
+        sys.exit(1)
+    await handler(args)
+
+
+async def _cmd_clusters_dispatch(args: argparse.Namespace) -> None:
+    """Route clusters sub-commands to their handlers."""
+    handlers = {
+        "list": cmd_clusters,
+        "add": cmd_cluster_add,
+        "delete": cmd_cluster_delete,
+    }
+    cmd = getattr(args, "cluster_cmd", None)
+    if not cmd:
+        print("Error: clusters requires a sub-command (list|add|delete)", file=sys.stderr)
+        sys.exit(1)
+    handler = handlers.get(cmd)
+    if not handler:
+        print(f"Error: unknown clusters sub-command '{cmd}'", file=sys.stderr)
         sys.exit(1)
     await handler(args)
 

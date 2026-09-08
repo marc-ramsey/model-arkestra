@@ -328,7 +328,7 @@ class ModelArkestra:
             owned_by = str(model_cfg.get("owned_by", "local")) if isinstance(model_cfg, dict) else "local"
 
             entry: Dict[str, Any] = {
-                "id": f"{cluster_name}/{model_name}",
+                "name": model_name,
                 "object": "model",
                 "created": int(time()),
                 "owned_by": owned_by,

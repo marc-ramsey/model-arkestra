@@ -358,7 +358,7 @@ def _start_model(client: httpx.Client, base_url: str, model_name: str,
     while time.time() < deadline:
         r = client.get(f"{base_url}/admin/models", timeout=10)
         for m in r.json()["models"]:
-            if m["id"] == model_name and m.get("status", {}).get("value") == "loaded":
+            if m["name"] == model_name and m.get("status", {}).get("value") == "loaded":
                 return True
         time.sleep(0.5)
     return False
@@ -507,7 +507,7 @@ class TestPullAndEject:
         r = client.get(f"{base_url}/admin/models", timeout=10)
         model_state = None
         for m in r.json()["models"]:
-            if m["id"] == eject_model_id:
+            if m["name"] == eject_model_id:
                 model_state = m.get("status", {}).get("value")
         assert model_state == "loaded", f"Model not loaded (state={model_state})"
 
@@ -520,7 +520,7 @@ class TestPullAndEject:
         # After eject the model is uncached (cache deleted + already stopped)
         r = client.get(f"{base_url}/admin/models", timeout=10)
         for m in r.json()["models"]:
-            if m["id"] == eject_model_id:
+            if m["name"] == eject_model_id:
                 assert m.get("status", {}).get("value") in ("stopped", "uncached"), \
                     f"Ejected model in unexpected state: {m['status']}"
 

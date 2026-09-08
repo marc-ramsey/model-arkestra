@@ -67,7 +67,7 @@ Then hit `POST /v1/chat/completions` with any OpenAI-compatible client, or visit
 arkestra chat -m qwen3-4b            # interactive chat (starts if stopped)
 arkestra pull qwen3-4b                # download checkpoint from HuggingFace
 arkestra unload qwen3-4b              # stop and delete cache
-arkestra status [-m qwen3-4b]         # list all or single model status
+arkestra models [-m qwen3-4b]        # list all or single model status
 ```
 
 ### Quick Start — Admin CLI

@@ -102,9 +102,9 @@ class ArkestraAdmin:
         self._add_images_route()
         self._add_pull_route()
         self._add_pull_stop_route()
-        self._add_model_route()
-        self._add_public_start_route()
-        self._add_public_stop_route()
+        self._add_api_models_route()
+        self._add_api_restart_route()
+        self._add_api_clusters_route()
         self._installed = True
         return self
 
@@ -251,29 +251,40 @@ class ArkestraAdmin:
                             headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
     def _add_auth_middleware(self) -> None:
-        # Always install the middleware (plumbing stays in place even when no keys are set).
-        # Each namespace gates independently — neither key required unless configured.
+        # Install auth middleware for both /admin and /api namespaces.
+        # Both accept api_key OR admin_key as Bearer token — either works.
         @self._app.middleware("http")
-        async def admin_auth(request: Request, call_next):
+        async def api_auth(request: Request, call_next):
             path = request.url.path
             is_admin = path == "/admin" or path.startswith("/admin/")
             is_api = path == "/api" or path.startswith("/api/")
+            any_gated = (is_admin and self.admin_key) or (is_api and self.api_key)
+            if not any_gated:
+                return await call_next(request)
 
-            if is_admin and self.admin_key:
-                key = request.headers.get("x-admin-key", "")
-                if key != self.admin_key:
-                    return JSONResponse(
-                        status_code=401,
-                        content={"error": "Invalid or missing admin_key header"},
-                    )
-            if is_api and self.api_key:
-                key = request.headers.get("x-api-key", "")
-                if key != self.api_key:
-                    return JSONResponse(
-                        status_code=401,
-                        content={"error": "Invalid or missing api_key header"},
-                    )
-            return await call_next(request)
+            header = request.headers.get("authorization", "")
+            if not header.startswith("Bearer "):
+                return JSONResponse(
+                    status_code=401,
+                    content={"error": "Missing or invalid Authorization header (expected Bearer <key>)"},
+                )
+            token = header[7:]
+
+            # For /admin routes, accept either key
+            if is_admin and self.admin_key and token == self.admin_key:
+                return await call_next(request)
+            if is_admin and self.api_key and token == self.api_key:
+                return await call_next(request)
+            # For /api routes, accept either key (admin also works)
+            if is_api and self.admin_key and token == self.admin_key:
+                return await call_next(request)
+            if is_api and self.api_key and token == self.api_key:
+                return await call_next(request)
+
+            return JSONResponse(
+                status_code=401,
+                content={"error": "Invalid or missing Authorization header"},
+            )
 
     def _add_models_route(self) -> None:
         @self._app.get("/admin/models")
@@ -282,35 +293,28 @@ class ArkestraAdmin:
                 cfg = self._models_cfg
                 contexts_by_name = {ctx.name: ctx for ctx in self.server._arkestra.get_model_contexts()}
 
-                data = []
-
-                # Resolve cache root — env var → config default_env → default.
                 hf_cache = self.server._arkestra.resolve_config("hf_hub_cache")
                 if not hf_cache:
                     hf_cache = str(default_cache_root())
 
+                data = []
                 for model_name in self.server._arkestra.get_models():
                     ctx = contexts_by_name.get(model_name)
                     model_cfg = self.server._arkestra.get_model(model_name) or {}
+                    model_ref = model_cfg.get("model", "")
+
+                    resolved = None
+                    is_cached = False
 
                     if ctx:
-                        webui_status = model_status_for_ctx(ctx)
-                        model_ref = model_cfg.get("model", "")
-                        entry = {
-                            "id": ctx.name,
-                            "status": webui_status,
-                            "port": ctx.port,
-                            "runner_type": ctx.runner_type,
-                            "backend_id": ctx.backend_id or self._resolve_model_backend(ctx.name, model_cfg),
-                            "args": {},
-                            "model": model_ref,
-                            "downloading": ctx.state == RunnerState.DOWNLOADING,
-                        }
+                        status_val = model_status_for_ctx(ctx)
+                        backend_id = ctx.backend_id or self._resolve_model_backend(ctx.name, model_cfg)
+                        runner_type = ctx.runner_type or ""
+                        is_cached = True
                     else:
                         default_section = (self.server._arkestra.cm.data.get("default") or {})
-                        raw_model = model_cfg.get("model", "")
                         resolved = resolve_model_ref(
-                            raw=raw_model,
+                            raw=model_ref,
                             default_section=default_section,
                             model_repos=self.server._arkestra.cm.data.get("model-repos"),
                         )
@@ -318,37 +322,26 @@ class ArkestraAdmin:
                         if resolved.cache_path:
                             cache_path = Path(hf_cache).expanduser() / f"models--{resolved.cache_path}"
                         is_cached = cache_path.exists() if cache_path else False
-                        resolved_backend = self._resolve_model_backend(model_name, model_cfg)
-                        _, runner_type = image_and_runner_for_backend(self.server._arkestra.cm.data, resolved_backend)
-                        entry = {
-                            "id": model_name,
-                            "status": {"value": "cached"} if is_cached else {"value": "uncached"},
-                            "port": None,
-                            "runner_type": runner_type,
-                            "backend_id": resolved_backend,
-                            "args": {},
-                            "model": model_cfg.get("model", ""),
-                            "downloading": False,
-                        }
+                        backend_id = self._resolve_model_backend(model_name, model_cfg)
+                        _, runner_type = image_and_runner_for_backend(self.server._arkestra.cm.data, backend_id)
+                        status_val = {"value": "cached"} if is_cached else {"value": "uncached"}
 
-                    # Resolve available capabilities per-model (normal chain)
-                    global_cfg = self.server._arkestra.cm.data or {}
-                    bcfg = (global_cfg.get("backends") or {}).get(str(entry.get("backend_id") or ""))
-                    entry["tags"] = _resolve_tags(
-                        model_cfg, global_cfg,
-                        backend_id=str(entry.get("backend_id") or "") or None,
-                    )
-                    data.append(entry)
+                    # Size and checkpoint-hash from HuggingFace (optional)
+                    info = hf_model_info(resolved.ref) or {}
+                    size_gb = round(info.get("size_gb", 0) or 0, 1)
+                    checkpoint_hash = info.get("checkpoint_id") if info else None
 
-                # Top-level metadata for dropdown options (static per-server)
-                backends = self.server._arkestra.cm.data.get("backends") or {}
-                runner_types = list(self.server._arkestra._RUNNER_CLASSES.keys())
+                    data.append({
+                        "name": model_name,
+                        "model": model_ref,
+                        "size": size_gb,
+                        "status": status_val,
+                        "backend": backend_id,
+                        "runner": runner_type,
+                        "checkpoint-hash": checkpoint_hash,
+                    })
 
-                return {
-                    "models": data,
-                    "backends": backends,
-                    "runner_types": runner_types,
-                }
+                return {"models": data}
             except Exception as e:
                 raise HTTPException(status_code=503, detail=str(e))
 
@@ -927,190 +920,78 @@ class ArkestraAdmin:
             ctx.state = RunnerState.UNCACHED
             return {"ok": True, "model": model}
 
-    def _add_model_route(self) -> None:
-        @self._app.get("/api/model/{name:path}")
-        async def get_model(name: str):
-            """Public endpoint: model status info, any lifecycle state."""
-            cfg = self._models_cfg
-            if name not in cfg:
-                raise HTTPException(status_code=404, detail=f"Model '{name}' not found")
-
-            ctx = self.server._arkestra.find_context(name)
-            model_cfg = cfg.get(name, {})
-            default_section = self.server._arkestra.cm.data.get("default") or {}
-            resolved = resolve_model_ref(
-                model_cfg.get("model", ""),
-                default_section=default_section,
-                model_repos=self.server._arkestra.cm.data.get("model-repos"),
-            )
-
-            # Base fields from ctx or config resolution
-            if ctx:
-                state = ctx.state
-                port = ctx.port
-                runner_type = ctx.runner_type or ""
-                backend_id = ctx.backend_id or self._resolve_model_backend(name, model_cfg)
-            else:
-                state = RunnerState.UNCACHED
-                port = None
-                resolved_be = self._resolve_model_backend(name, model_cfg)
-                _, runner_type = image_and_runner_for_backend(self.server._arkestra.cm.data, resolved_be)
-                backend_id = resolved_be
-
-            # Size and checkpoint ID from HuggingFace metadata
-            info = hf_model_info(resolved.ref) or {}
-            size_gb = info.get("size_gb", 0) or 0
-            checkpoint_id = info.get("checkpoint_id") or model_cfg.get("model", name)
-
-            # Live download progress if downloading
-            progress: Dict[str, Any] = {}
-            if ctx and state == RunnerState.DOWNLOADING:
-                pct = getattr(ctx, "download_pct", None)
-                downloaded = getattr(ctx, "download_downloaded", None) or 0
-                speed = getattr(ctx, "download_speed_mbps", None)
-                progress.update({
-                    "pct": round(pct, 1) if pct is not None else 0,
-                    "downloaded_gb": round(downloaded / 1e9, 2),
-                    "speed_mbps": round(speed, 0) if speed is not None else 0,
-                })
-
-            return {
-                "state": state.name.lower(),
-                "size_gb": size_gb,
-                "checkpoint_id": checkpoint_id,
-                "port": port,
-                "backend_id": backend_id,
-                "runner_type": runner_type or "",
-                **progress,
-            }
-
+    def _add_api_models_route(self) -> None:
         @self._app.get("/api/models")
-        async def get_models():
-            """Public endpoint: all models, same format as /admin/models but no auth."""
-            cfg = self._models_cfg
-            contexts_by_name = {ctx.name: ctx for ctx in self.server._arkestra.get_model_contexts()}
-            data = []
-
+        async def api_models():
+            """Cached models only: name, model-name, size (GB)."""
             hf_cache = self.server._arkestra.resolve_config("hf_hub_cache")
             if not hf_cache:
                 hf_cache = str(default_cache_root())
 
+            data = []
             for model_name in self.server._arkestra.get_models():
-                ctx = contexts_by_name.get(model_name)
-                model_cfg = cfg.get(model_name, {})
-                default_section = self.server._arkestra.cm.data.get("default") or {}
+                model_cfg = self._models_cfg.get(model_name, {})
+                model_ref = model_cfg.get("model", "")
+
+                default_section = (self.server._arkestra.cm.data.get("default") or {})
                 resolved = resolve_model_ref(
-                    model_cfg.get("model", ""),
+                    raw=model_ref,
                     default_section=default_section,
                     model_repos=self.server._arkestra.cm.data.get("model-repos"),
                 )
 
-                hf = hf_model_info(resolved.ref) or {}
-                size_gb = hf.get("size_gb", 0) or 0
-                checkpoint_id = hf.get("checkpoint_id") or model_cfg.get("model", model_name)
+                # Only include cached models
+                cache_path = None
+                if resolved.cache_path:
+                    cache_path = Path(hf_cache).expanduser() / f"models--{resolved.cache_path}"
+                is_cached = cache_path.exists() if cache_path else False
+                if not is_cached:
+                    continue
 
-                if ctx:
-                    webui_status = model_status_for_ctx(ctx)
-                    entry = {
-                        "id": ctx.name,
-                        "status": webui_status,
-                        "port": ctx.port,
-                        "runner_type": ctx.runner_type or "",
-                        "backend_id": ctx.backend_id or self._resolve_model_backend(model_name, model_cfg),
-                        "size_gb": size_gb,
-                        "checkpoint_id": checkpoint_id,
-                    }
-                else:
-                    cache_path = None
-                    if resolved.cache_path:
-                        cache_path = Path(hf_cache).expanduser() / f"models--{resolved.cache_path}"
-                    is_cached = cache_path.exists() if cache_path else False
-                    resolved_be = self._resolve_model_backend(model_name, model_cfg)
-                    _, runner_type = image_and_runner_for_backend(self.server._arkestra.cm.data, resolved_be)
-                    entry = {
-                        "id": model_name,
-                        "status": {"value": "cached"} if is_cached else {"value": "uncached"},
-                        "port": None,
-                        "runner_type": runner_type,
-                        "backend_id": resolved_be,
-                        "size_gb": size_gb,
-                        "checkpoint_id": checkpoint_id,
-                    }
-
-                data.append(entry)
+                info = hf_model_info(resolved.ref) or {}
+                size_gb = round(info.get("size_gb", 0) or 0, 1)
+                data.append({
+                    "name": model_name,
+                    "model": model_ref,
+                    "size": size_gb,
+                })
 
             return {"models": data}
 
-    def _add_public_start_route(self) -> None:
-        """Public /api/start/{model} — no auth required.
-
-        Currently a full mirror of /admin/start/{model}, including body params for
-        infra overrides (backend, runner, max_log_lines) and inference
-        parameters. Skips only the admin key gate. This behavior may be more restricted in future releases.
-        """
-        @self._app.post("/api/start/{model:path}")
-        async def public_start(model: str, body: Dict[str, Any] | None = None):
+    def _add_api_restart_route(self) -> None:
+        @self._app.post("/api/restart/{model:path}")
+        async def api_restart(model: str):
+            """Thin restart — no params, uses config as-is."""
             cfg = self._models_cfg
             if model not in cfg:
                 raise HTTPException(status_code=404, detail=f"Model '{model}' not in config")
-
-            if not self.server._arkestra.can_start(model):
+            if not self.server._arkestra.can_restart(model):
                 raise HTTPException(status_code=409, detail="model not available")
 
-            kw = {}
-            for key in INFRA_KEYS:
-                if body and key in body and body[key] is not None:
-                    val = body[key]
-                    if key == "max_log_lines":
-                        try:
-                            val = int(val)
-                        except (ValueError, TypeError):
-                            continue
-                    kw[key] = val
-            if body:
-                for key, value in body.items():
-                    if key not in INFRA_KEYS and value is not None:
-                        kw[key] = value
-
+            ctx = self.server._arkestra.find_context(model)
+            if ctx and ctx.state in (RunnerState.RUNNING, RunnerState.LOADING):
+                try:
+                    await self.server._arkestra.stop(model)
+                except Exception:
+                    pass
             try:
-                await self.server._arkestra.start(model, **kw)
+                await self.server._arkestra.start(model)
                 ctx = self.server._arkestra.find_context(model)
                 port = ctx.port if ctx else None
                 return {"ok": True, "model": model, "port": port}
             except Exception as exc:
-                raise HTTPException(status_code=503, detail=f"Start failed: {exc}")
+                raise HTTPException(status_code=503, detail=f"Restart failed: {exc}")
 
-    def _add_public_stop_route(self) -> None:
-        """Public /api/stop/{model} — no auth required.
-
-        Mirrors /admin/stop/{model} but skips the admin key gate.
-        Used by `arkestra stop` CLI without needing a token.
-        """
-        @self._app.post("/api/stop/{model:path}")
-        async def public_stop(model: str):
-            if model not in self._models_cfg:
-                raise HTTPException(status_code=404, detail=f"Model '{model}' not configured")
-            ctx = self.server._arkestra.find_context(model)
-            if not ctx:
-                raise HTTPException(
-                    status_code=404, detail=f"Model '{model}' not found in runners"
-                )
-            prev_state = ctx.state
-            if prev_state.is_terminal:
-                return JSONResponse(
-                    status_code=202,
-                    content={
-                        "ok": True,
-                        "model": model,
-                        "previous_state": str(prev_state),
-                    },
-                )
-            await self.server._arkestra.stop(model)
-            return {
-                "ok": True,
-                "model": model,
-                "previous_state": str(prev_state),
-            }
+    def _add_api_clusters_route(self) -> None:
+        @self._app.get("/api/clusters")
+        async def api_clusters():
+            """Cluster list: name and base-url pairs."""
+            clusters = self.server._arkestra._clusters
+            result = []
+            for name, cfg in clusters.items():
+                base_url = str(cfg.get("base-url", ""))
+                result.append({"name": name, "base-url": base_url})
+            return {"clusters": result}
 
 
 # Type hints — resolved at runtime via string ref

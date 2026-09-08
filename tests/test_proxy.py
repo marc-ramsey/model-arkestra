@@ -103,12 +103,9 @@ def _build_app(mock_arkestra, aliases=None):
         data = []
         for entry in v1_data.get("data", []):
             data.append(ModelInfo(
-                id=entry.get("id", "unknown"),
+                id=entry.get("name", entry.get("id", "unknown")),
                 owned_by=entry.get("owned_by", "local"),
                 status=entry.get("status", {"value": "stopped"}),
-                port=entry.get("port"),
-                runner_type=entry.get("runner_type"),
-                backend_id=entry.get("backend_id"),
             ).model_dump())
         return {"object": "list", "data": data}
 
@@ -166,20 +163,14 @@ def mock_arkestra():
         "object": "list",
         "data": [
             {
-                "id": "qwen3-4b",
+                "name": "qwen3-4b",
                 "owned_by": "local",
                 "status": {"value": "loaded"},
-                "port": 18000,
-                "runner_type": "process",
-                "backend_id": None,
             },
             {
-                "id": "gemma-4-e2b",
+                "name": "gemma-4-e2b",
                 "owned_by": "local",
                 "status": {"value": "sleeping"},
-                "port": 18001,
-                "runner_type": "podman",
-                "backend_id": "rocm",
             },
         ],
     })

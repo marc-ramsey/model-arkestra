@@ -370,7 +370,7 @@ class ArkestraServer:
             models: List[ModelInfo] = []
             for entry in v1_data.get("data", []):
                 models.append(ModelInfo(
-                    id=entry.get("id", "unknown"),
+                    id=entry.get("name", entry.get("id", "unknown")),
                     owned_by=entry.get("owned_by", "local"),
                     status=entry.get("status", "stopped"),
                 ))
