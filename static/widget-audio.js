@@ -102,7 +102,6 @@ window._audioStream = new AudioStream();
 
 // ── Playback state ────────────────────────────────────────────────
 let _audioEl = null;
-let _onLoadedMetadata = null, _onTimeUpdate = null, _onEnded = null;
 
 function formatTime(sec) {
     if (!sec || isNaN(sec)) return '0:00';
@@ -114,11 +113,6 @@ function formatTime(sec) {
 // ── Audio playback engine ────────────────────────────────────────
 function playAudioFromUrl(url) {
     if (_audioEl) { _audioEl.pause(); URL.revokeObjectURL(_audioEl.src); }
-    if (_audioEl && typeof _audioEl.removeEventListener === 'function') {
-        if (_onLoadedMetadata) _audioEl.removeEventListener('loadedmetadata', _onLoadedMetadata);
-        if (_onTimeUpdate)     _audioEl.removeEventListener('timeupdate',     _onTimeUpdate);
-        if (_onEnded)          _audioEl.removeEventListener('ended',         _onEnded);
-    }
 
     _audioEl = new Audio(url);
     const bar  = document.getElementById('audio-playback-bar');
@@ -129,17 +123,19 @@ function playAudioFromUrl(url) {
     if (!bar || !prog) return;
     bar.classList.remove('hidden');
 
-    _onLoadedMetadata = () => { durEl.textContent = formatTime(_audioEl.duration); prog.max = 100; };
-    _onTimeUpdate     = () => {
+    const metaHandler  = () => { durEl.textContent = formatTime(_audioEl.duration); prog.max = 100; };
+    const timeHandler  = () => {
         if (!_audioEl?.duration) return;
         const pct = (_audioEl.currentTime / _audioEl.duration) * 100;
         prog.value = pct; currEl.textContent = formatTime(_audioEl.currentTime);
     };
-    _onEnded = () => { _audioEl = null; bar.classList.add('hidden'); };
+    const endHandler   = () => { _audioEl = null; bar.classList.add('hidden'); };
 
-    _audioEl.addEventListener('loadedmetadata', _onLoadedMetadata);
-    _audioEl.addEventListener('timeupdate',     _onTimeUpdate);
-    _audioEl.addEventListener('ended',         _onEnded);
+    // Store closures on element for cleanup — avoids global variables
+    _audioEl.__handlers = [metaHandler, timeHandler, endHandler];
+    _audioEl.addEventListener('loadedmetadata', metaHandler);
+    _audioEl.addEventListener('timeupdate',     timeHandler);
+    _audioEl.addEventListener('ended',         endHandler);
 
     if (!playAudioFromUrl._controlsBound) {
         playAudioFromUrl._controlsBound = true;

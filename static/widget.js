@@ -283,16 +283,7 @@ renderers.SessionDock = function() {
         location.reload();
     });
 
-    EventBus.on('session.add', ({ id }) => { dockedSessionId = id; updateDock(); });
-    EventBus.on('session.remove', () => updateDock());
 
-    let dockedSessionId = null;
-
-    function updateDock() {
-        const sessions = SessionRegistry.list();
-        empty.classList.toggle('hidden', sessions.length > 0);
-        document.querySelector('.dock-count').textContent = ' (' + sessions.length + ')';
-    }
 
     return el;
 };
@@ -778,8 +769,6 @@ async function apiRequest(path, params, method, body) {
     return apiFetch(path+(qs?'?'+qs:''), opts);
 }
 
-async function adminGet(path, params) { return apiRequest(path, params, 'GET', null); }
-async function adminPost(path, body) { return apiRequest(path, {}, 'POST', body); }
 
 // ── Expose public API ──────────────────────────────────────────
 window.EventBus = EventBus;
@@ -787,8 +776,6 @@ window.CFG = CFG;
 window.esc = esc;
 window.render = render;
 window.wireEvents = wireEvents;
-window.adminPost = adminPost;
-window.adminGet = adminGet;
 window.apiRequest = apiRequest;
 window.sanitizeId = sanitizeId;
 window.normalizeStatus = normalizeStatus;

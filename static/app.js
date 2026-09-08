@@ -14,8 +14,7 @@ function showToast(msg) {
     toastTimer = setTimeout(() => el.classList.add('hidden'), 4000);
 }
 
-const _configSnapshots = {};
-let logTimer = null, logSince = 0;
+
 
 (async () => {
     console.log('app.js IIFE STARTING');
