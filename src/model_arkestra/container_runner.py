@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shlex
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -224,9 +225,123 @@ class ContainerModelRunner(BaseModelRunner, ABC):
     def _resolve_image(self, image: str) -> str:
         return image
 
+    def _pre_start_cleanup(self) -> List[str]:
+        """Pre-start cleanup command (e.g. docker rm -f). Return [] for none."""
+        return []
+
+    def _extra_run_args(self) -> List[str]:
+        """Extra CLI args to insert into the run command. Override per-runtime."""
+        return []
+
+    async def _resolve_image_from_source(
+        self, image: str, source_ref: Optional[str]
+    ) -> str:
+        """Resolve image via BinaryDownloader if backend references an OCI-image source."""
+        from model_arkestra.binary_downloader import BinaryDownloaderError
+        if not source_ref or not isinstance(source_ref, str):
+            return image
+        sources = self.cm.data.get("sources") or {}
+        source_cfg = sources.get(source_ref)
+        if not source_cfg or source_cfg.get("type") != "oci-image":
+            return image
+        cache_dir = getattr(self, "_image_cache_dir", None)
+        if not cache_dir:
+            return image
+        downloader = BinaryDownloader(
+            cache_dir=cache_dir,
+            backend_id=source_ref,
+            source_cfg=source_cfg,
+        )
+        try:
+            resolved = await downloader.resolve(version="latest")
+            return str(resolved)
+        except BinaryDownloaderError as e:
+            self.logger.warning(
+                f"OCI source resolution failed for {source_ref}: {e}. "
+                f"Using raw image reference: {image}"
+            )
+            return image
+
     @abstractmethod
     async def _remove_containers(self, cids: list) -> None:
         """Force-remove a list of stale container IDs."""
+
+    async def _start_model_process(
+        self, ctx: _ModelContext, model_data: Dict[str, Any]
+    ) -> None:
+        """Shared container launch logic. Subclasses may override hooks."""
+        await self._ensure_port_available(ctx.port)
+        # Pre-start cleanup hook (docker removes existing by name; podman uses --replace)
+        pre_cmd = self._pre_start_cleanup()
+        if pre_cmd:
+            proc = await asyncio.create_subprocess_exec(
+                *pre_cmd,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+                env=SUBPROCESS_ENV,
+            )
+            await proc.wait()
+
+        backend = _resolve_backend(self, ctx, model_data)
+        if backend is None:
+            raise RuntimeError(
+                f"No backend resolved for {self._container_cmd()} model '{ctx.name}' — "
+                "configure a backend with an 'image' key."
+            )
+
+        # Resolve image from source (pulls via downloader if oci-image source)
+        raw_image = str(backend.get("image", ""))
+        source_ref = backend.get("source_ref")
+
+        if source_ref:
+            sources = self.cm.data.get("sources") or {}
+            source_cfg = sources.get(source_ref)
+            if source_cfg and source_cfg.get("type") == "oci-image":
+                raw_image = ""
+
+        image = await self._resolve_image_from_source(raw_image, source_ref)
+        if not image:
+            raise RuntimeError(
+                f"No container image resolved for {self._container_cmd()} backend '{ctx.backend_id}'. "
+                f"Configure an 'image' key or an oci-image 'source_ref' in the backend."
+            )
+        if "/" not in image:
+            image = f"localhost/{image}"
+
+        # Inject resolved image for _build_container_cmd
+        backend["image"] = image
+
+        extra_args = self._extra_run_args()
+        cmd_parts = _build_container_cmd(
+            self._container_cmd(), self, ctx.name, ctx.port,
+            self.broadcast_addr, type(self).INSIDE_PORT,
+            backend,
+            backend_id=ctx.backend_id,
+        )
+        for arg in extra_args:
+            cmd_parts.insert(2, arg)
+
+        proc = await asyncio.create_subprocess_shell(
+            shlex.join(cmd_parts),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=SUBPROCESS_ENV,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            err_msg = stderr.decode().strip() or f"exit code {proc.returncode}"
+            raise RuntimeError(
+                f"{self._container_cmd()} run failed for model '{ctx.name}': {err_msg}"
+            )
+        ctx.container_id = stdout.decode().strip()
+
+        # Start live log capture.
+        log_task = asyncio.create_task(
+            self._capture_container_logs(ctx.name, ctx.container_id)
+        )
+        if not hasattr(self, '_log_tasks'):
+            self._log_tasks = {}
+        self._log_tasks[ctx.name] = log_task
 
     async def _watch_container(self, model_name: str, ctx: _ModelContext) -> None:
         """Poll container status and restart on unexpected exit."""

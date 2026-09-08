@@ -38,7 +38,7 @@ from model_arkestra.base import BaseModelRunner
 from model_arkestra.common import default_cache_root, resolve_model_ref
 
 
-class OnnxRunner(BaseModelRunner):  # type: ignore[name-defined]
+class OnnxRunner(BaseModelRunner):
     """Run ONNX models in-memory via BaseModelRunner lifecycle.
 
     Unlike ProcessModelRunner (subprocess) or ContainerModelRunner (podman/docker),

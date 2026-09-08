@@ -270,6 +270,21 @@ class ArkestraServer:
 
     # ── ONNX auxiliary model management ───────────────────────────
 
+    def _wait_for_ready(self, model_name: str, timeout: float) -> bool:
+        """Poll until a model context reaches RUNNING state or timeout."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            ready_ctx = next(
+                (c for c in self._arkestra.get_model_contexts()
+                 if c.name == model_name), None
+            )
+            if ready_ctx and ready_ctx.state == RunnerState.RUNNING:
+                return True
+            time.sleep(0.2)
+        return False
+
+    # ── ONNX auxiliary model management ───────────────────────────
+
     def _find_model_by_tag(self, tag: str) -> Optional[str]:
         """Find first model with the given tag in its tags list."""
         for name, cfg in self._arkestra.cm.data.get("models", {}).items():
@@ -342,29 +357,15 @@ class ArkestraServer:
             if ctx is None or ctx.state.name not in ('RUNNING', 'LOADING'):
                 try:
                     await self._arkestra.start(model_name)
-                    # Wait for the runner to become healthy
-                    deadline = time.time() + start_timeout
-                    while time.time() < deadline:
-                        ready_ctx = next(
-                            (c for c in self._arkestra.get_model_contexts()
-                             if c.name == model_name), None
-                        )
-                        if ready_ctx and ready_ctx.state == RunnerState.RUNNING:
-                            break
-                        await asyncio.sleep(0.2)
+                    if not self._wait_for_ready(model_name, start_timeout):
+                        raise HTTPException(status_code=503, detail="Model failed to start")
+                except HTTPException:
+                    raise
                 except Exception as e:
                     raise HTTPException(status_code=503, detail=f"Model error: {e}")
             else:
                 # Model was already LOADING — wait for RUNNING before proxying
-                deadline = time.time() + start_timeout
-                while time.time() < deadline:
-                    ready_ctx = next(
-                        (c for c in self._arkestra.get_model_contexts()
-                         if c.name == model_name), None
-                    )
-                    if ready_ctx and ready_ctx.state == RunnerState.RUNNING:
-                        break
-                    await asyncio.sleep(0.2)
+                self._wait_for_ready(model_name, start_timeout)
 
             # Detect remote models — proxy directly to the worker
             base_url = self._get_remote_base_url(model_name)

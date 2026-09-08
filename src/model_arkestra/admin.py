@@ -20,6 +20,7 @@ except ImportError:
     raise RuntimeError("model_arkestra.admin requires fastapi")
 
 from model_arkestra.common import (
+    _load_schema_registry,
     _resolve_backend,
     _runtime_binary,
     build_image,
@@ -28,6 +29,7 @@ from model_arkestra.common import (
     hf_model_info,
     image_and_runner_for_backend,
     image_exists as _image_exists,
+    INFRA_KEYS,
     remove_image,
     resolve_model_ref,
     resolve_tags as _resolve_tags,
@@ -37,7 +39,6 @@ from model_arkestra.types import RunnerState, _ModelContext
 
 # ── Model config field definitions (single source of truth) ─────────────
 MODEL_CONFIG_FIELDS = frozenset({"backend", "runner", "tags", "max_log_lines"})
-INFRA_KEYS = frozenset({"backend", "runner", "max_log_lines"})
 
 
 
@@ -57,29 +58,10 @@ class ArkestraAdmin:
         self._load_schema_registry()
 
     def _load_schema_registry(self) -> None:
-        """Load named schemas from schemas.yaml in the config directory.
-
-        Falls back to bundled templates/schemas.yaml.j2 if none found.
-        """
-        import yaml
-        try:
-            parent = Path(self.server._arkestra._config_path).parent
-            schema_path = parent / "schemas.yaml"
-        except (AttributeError, TypeError):
-            self._schemas = {}
-            return
-
-        if schema_path.exists():
-            with open(schema_path) as f:
-                self._schemas = yaml.safe_load(f) or {}
-        else:
-            # Bundled fallback: ship a sensible default in the package
-            try:
-                from importlib.resources import files
-                bundled = (files("model_arkestra.templates") / "schemas.yaml.j2").read_text()
-                self._schemas = yaml.safe_load(bundled) or {}
-            except Exception:
-                self._schemas = {}
+        """Load named schemas from schemas.yaml or bundled fallback."""
+        self._schemas = _load_schema_registry(
+            getattr(self.server._arkestra, "_config_path", None),
+        )
 
     def install(self) -> "ArkestraAdmin":
         """Install all admin routes on the FastAPI app. Idempotent."""
@@ -465,10 +447,8 @@ class ArkestraAdmin:
             if not engine_name:
                 engine_name = cm_data.get("engines", {}).get("default-engine")
             schema_map = self._schemas.get("model-args", {})
-            arg_schema = schema_map.get(engine_name, {}) or {}
-            arg_keys = set(arg_schema.keys())
-            arg_schema = schema_map.get(engine_name, {}) or {}
-            arg_keys = set(arg_schema.keys())
+            engine_schema = schema_map.get(engine_name, {}) or {}
+            arg_keys = set(engine_schema.keys())
             for key in body:
                 if key not in INFRA_KEYS and key in arg_keys:
                     new_model[key] = body[key]
@@ -782,7 +762,12 @@ class ArkestraAdmin:
                         "image": None, "runtime": None}
 
             image_tag, runner_type = image_and_runner_for_backend(cm_data, backend_id)
-            containerfile_path = containerfile_for_backend(backend_id)
+
+            # Resolve containerfile path relative to project root
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__),
+            )))
+            containerfile_path = containerfile_for_backend(backend_id, str(project_root))
 
             if _runtime_binary(runner_type) is None:
                 return {"skipped": True,
@@ -794,14 +779,11 @@ class ArkestraAdmin:
                 raise HTTPException(status_code=404,
                                     detail=f"No containerfile found for backend '{backend_id}'")
 
-            # Resolve containerfile path relative to project root
-            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            full_cf_path = os.path.join(project_root, containerfile_path)
-            if not os.path.isfile(full_cf_path):
+            if not os.path.isfile(containerfile_path):
                 raise HTTPException(status_code=404,
                                     detail=f"Containerfile not found: {containerfile_path}")
 
-            result = await asyncio.to_thread(build_image, runner_type, image_tag, full_cf_path, project_root)
+            result = await asyncio.to_thread(build_image, runner_type, image_tag, containerfile_path, project_root)
             return {
                 "backend": backend_id,
                 "image": image_tag,

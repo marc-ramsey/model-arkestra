@@ -11,7 +11,7 @@ from pathlib import Path
 import yaml
 from typing import Any, Callable, Dict, List, Optional, Tuple
 INFRA_KEYS = frozenset({
-    'backend', 'runner', 'tags', 'max-log-lines',
+    'backend', 'runner', 'max_log_lines',
 })
 
 
@@ -554,16 +554,19 @@ def default_image_for_backend(backend_id: Optional[str]) -> str:
     return _DEFAULT_IMAGE
 
 
-def containerfile_for_backend(backend_id: Optional[str]) -> Optional[str]:
+def containerfile_for_backend(
+    backend_id: Optional[str], root_dir: str = ""
+) -> Optional[str]:
     """Return the container build file path for a backend's image.
 
     Reads backends.<id>.container. Returns None if not found.
-    The caller should resolve relative to the project root.
+    Resolved relative to *root_dir* (defaults to current working directory).
     """
     cf = _resolve_backend_config_field(backend_id, "container")
-    if cf:
-        return os.path.join("tests", "files", cf)
-    return None
+    if not cf:
+        return None
+    root = Path(root_dir) if root_dir else Path().resolve()
+    return str(root / cf)
 
 
 def image_and_runner_for_backend(cm_data, backend_id: str) -> tuple[str, str]:
