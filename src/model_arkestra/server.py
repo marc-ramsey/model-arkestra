@@ -38,6 +38,7 @@ except ImportError:
         'Install with: pip install "model-arkestra[proxy]"'
     )
 
+from model_arkestra.base import BaseModelRunner  # noqa: E402
 from model_arkestra.common import resolve_config_path
 from model_arkestra.config_manager import ConfigManager
 from model_arkestra.http_proxy import sse_events
@@ -326,12 +327,18 @@ class ArkestraServer:
                  if c.name == model_name), None
             )
             # Resolve timeout: per-model > default > class constant
+            model_cfg = self._arkestra.get_model(model_name, {}) or {}
             start_timeout = (
-                self._arkestra.get_model(model_name, {})
-                    .get("model-start-timeout")
-                or (self._arkestra.cm.data.get("default", {}) or {}).get("model-start-timeout")
+                model_cfg.get("model-start-timeout")
+                or (self._arkestra.cm.data.get("default") or {}).get("model-start-timeout")
                 or BaseModelRunner.MODEL_START_TIMEOUT
             )
+            # Reject inference on UNCACHED models — no weights to load
+            if ctx is not None and ctx.state.name == 'UNCACHED':
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Model '{model_name}' has no cached weights.",
+                )
             if ctx is None or ctx.state.name not in ('RUNNING', 'LOADING'):
                 try:
                     await self._arkestra.start(model_name)

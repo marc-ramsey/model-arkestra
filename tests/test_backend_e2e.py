@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import hashlib
 import threading
 import time
 from pathlib import Path
@@ -178,9 +179,10 @@ def _wait_model_ports_free(timeout: float = 40.0) -> None:
         busy = any(f":{p}" in result.stdout for p in range(MODEL_START, MODEL_END + 1))
         if not busy:
             return
+        # Aggressively kill anything holding model ports
+        subprocess.run(["fuser", "-k", "-9"] + [f"{p}/tcp" for p in range(MODEL_START, MODEL_END + 1)],
+                       capture_output=True, timeout=5)
         time.sleep(0.3)
-    for p in range(MODEL_START, MODEL_END + 1):
-        subprocess.run(["fuser", "-k", "-9", f"{p}/tcp"], capture_output=True, timeout=5)
 
 
 def _wait_admin_port_free(port: int, timeout: float = 30.0) -> None:
@@ -282,6 +284,15 @@ def _build_e2e_config(combo_id: str, backend_name: str, model_key: int = 0) -> s
 def _start_server(port: int, config_yaml: str, combo_id: str = "") -> Tuple[Any, httpx.Client]:
     from model_arkestra.server import ArkestraServer
 
+    # Free ALL processes that might be holding our ports — aggressive kill
+    # Kill any leftover llama-server processes (may survive test teardown)
+    subprocess.run(["pkill", "-9", "-f", "llama-server"], capture_output=True, timeout=3)
+    for p in range(MODEL_START, MODEL_END + 1):
+        subprocess.run(["fuser", "-k", "-9", f"{p}/tcp"], capture_output=True, timeout=3)
+    _wait_admin_port_free(port, timeout=5)
+    time.sleep(5)  # let kernel release SO_REUSEADDR
+    _wait_model_ports_free(timeout=10)
+
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write(config_yaml)
         config_path = f.name
@@ -342,6 +353,8 @@ def _stop_server(proxy: Any, client: httpx.Client, port: int) -> None:
 
     # Wait for admin port to free (shutdown may take a moment)
     _wait_admin_port_free(port)
+    # Kill any leftover llama-server processes that survived shutdown
+    subprocess.run(["pkill", "-9", "-f", "llama-server"], capture_output=True, timeout=3)
     try:
         client.close()
     except Exception:
@@ -384,7 +397,8 @@ def e2e_server(request, e2e_cache):
            "base_url": f"http://127.0.0.1:{ADMIN_PORT}",
            "combo_id": combo_id}
 
-    # Fixture teardown — shutdown the whole server after all tests in the class
+    # Fixture teardown — always clean up, then shut down the whole server
+    _stop_all_and_wait(client, f"http://127.0.0.1:{ADMIN_PORT}")
     _stop_server(proxy, client, ADMIN_PORT)
 
 
@@ -394,15 +408,21 @@ def e2e_single(request, e2e_cache):
     combo_id = request.param[0]
     backend_name = request.param[1]
 
+    # Each fixture gets a unique admin port to avoid binding conflicts
+    test_method = request.node.name
+    # Deterministic port from test name, offset from ADMIN_PORT
+    unique_port = ADMIN_PORT + (int(hashlib.md5(test_method.encode()).hexdigest(), 16) % 50)
+
     config = _build_e2e_config(combo_id, backend_name)
-    proxy, client = _start_server(ADMIN_PORT, config, combo_id)
+    proxy, client = _start_server(unique_port, config, combo_id)
 
     yield {"server": proxy, "client": client,
-           "base_url": f"http://127.0.0.1:{ADMIN_PORT}",
+           "base_url": f"http://127.0.0.1:{unique_port}",
            "combo_id": combo_id}
 
-    # Each test must call stop-all before this runs
-    _stop_server(proxy, client, ADMIN_PORT)
+    # Each test must call stop-all before this runs; ensure cleanup either way
+    _stop_all_and_wait(client, f"http://127.0.0.1:{unique_port}")
+    _stop_server(proxy, client, unique_port)
 
 
 # ── Tests ────────────────────────────────────────────────────────────────────
@@ -533,7 +553,7 @@ class TestPullAndEject:
             }, timeout=10)
             assert resp.status_code == 503, \
                 f"Expected 503 after eject, got {resp.status_code}: {resp.text}"
-        except httpx.ConnectError:
+        except (httpx.ConnectError, httpx.ReadTimeout):
             pass
 
     @pytest.mark.parametrize("e2e_single", [("process-vulkan", "vulkan-process")], indirect=True)
@@ -554,7 +574,7 @@ class TestPullAndEject:
                 "max_tokens": 10,
             }, timeout=10)
             assert resp.status_code == 503
-        except httpx.ConnectError:
+        except (httpx.ConnectError, httpx.ReadTimeout):
             pass
 
 

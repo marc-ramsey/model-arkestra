@@ -856,7 +856,7 @@ class ModelArkestra:
         if not ctx:
             # No context yet — allowed if model is defined in config (fresh start).
             return self.get_model(model_name) is not None
-        return ctx.state in (RunnerState.STOPPED, RunnerState.ERROR)
+        return ctx.state in (RunnerState.STOPPED, RunnerState.ERROR, RunnerState.UNCACHED)
 
     def can_restart(self, model_name: str) -> bool:
         """Check if model is eligible for a restart."""

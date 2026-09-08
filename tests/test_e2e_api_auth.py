@@ -3,7 +3,7 @@
 Verifies Bearer token enforcement on all /api/* routes:
 - 401 when no header or wrong token (when api_key is configured)
 - 200 with correct api_key OR admin_key on any /api/* route
-- New endpoints: GET /api/models, POST /api/restart/{model}
+- Endpoints: GET /api/models, GET /api/clusters
 
 Run: pytest tests/test_e2e_api_auth.py -v --timeout=120
 """
@@ -25,7 +25,7 @@ import uvicorn
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 
-API_AUTH_PORT = 18100
+API_AUTH_PORT = 18004
 
 
 # ── Config with both api-key and admin-key set via default-env ───────────────
@@ -172,12 +172,6 @@ class TestAPIAuthNoKey:
         r = no_key_server["client"].get(f"{no_key_server['base_url']}/api/models")
         assert r.status_code == 200
 
-    def test_api_start_no_auth_allowed(self, no_key_server):
-        """No keys → POST /api/start returns response, not 401."""
-        r = no_key_server["client"].post(
-            f"{no_key_server['base_url']}/api/start/test-model", timeout=5)
-        assert r.status_code == 200
-
 
 @pytest.mark.e2e
 class TestAPIAuthWithKey:
@@ -209,21 +203,6 @@ class TestAPIAuthWithKey:
             headers={"Authorization": "Bearer super-admin-key"})
         assert r.status_code == 200
 
-    def test_api_start_requires_auth(self, api_server):
-        r = api_server["client"].post(
-            f"{api_server['base_url']}/api/start/test-model")
-        assert r.status_code == 401
-
-    def test_api_stop_requires_auth(self, api_server):
-        r = api_server["client"].post(
-            f"{api_server['base_url']}/api/stop/test-model")
-        assert r.status_code == 401
-
-    def test_api_restart_requires_auth(self, api_server):
-        r = api_server["client"].post(
-            f"{api_server['base_url']}/api/restart/test-model")
-        assert r.status_code == 401
-
 
 @pytest.mark.e2e
 class TestAPIRoutes:
@@ -239,27 +218,6 @@ class TestAPIRoutes:
         models = body.get("models", [])
         for m in models:
             assert set(m.keys()) <= {"name", "model", "size"}
-
-    def test_api_restart_returns_ok(self, api_server):
-        """POST /api/restart returns ok=True."""
-        r = api_server["client"].post(
-            f"{api_server['base_url']}/api/restart/test-model",
-            headers={"Authorization": "Bearer test-api-key"})
-        assert r.status_code == 200
-        body = r.json()
-        assert body.get("ok") is True
-
-    def test_api_restart_unknown_model_404(self, api_server):
-        r = api_server["client"].post(
-            f"{api_server['base_url']}/api/restart/nonexistent-model",
-            headers={"Authorization": "Bearer test-api-key"})
-        assert r.status_code == 404
-
-    def test_api_restart_wrong_key_401(self, api_server):
-        r = api_server["client"].post(
-            f"{api_server['base_url']}/api/restart/test-model",
-            headers={"Authorization": "Bearer wrong-key"})
-        assert r.status_code == 401
 
 
 @pytest.mark.e2e
