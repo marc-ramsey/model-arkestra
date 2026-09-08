@@ -79,6 +79,7 @@ class BaseModelRunner(ABC):
         cfg_lbs = self.cm.data.get('log-buffer-size')
         self.log_buffer_size = log_buffer_size if log_buffer_size is not None else (cfg_lbs or self.LOG_BUFFER_DEFAULT)
         self._watchers: Dict[str, asyncio.Task] = {}
+        self._health_task: Optional[asyncio.Task] = None
         self._inference_kwargs: Dict[str, Dict[str, Any]] = {}
         self._models: Dict[str, _ModelContext] = {}
 
@@ -231,6 +232,53 @@ class BaseModelRunner(ABC):
 
         return True
 
+    # ── Health watcher (shared across all models in this runner) ─────
+    async def start_health_watcher(self, interval: float = 1.0) -> None:
+        """Start a background task that polls /health for every active model."""
+        if self._health_task is not None:
+            return
+        self._health_task = asyncio.create_task(
+            self._health_watch_loop(interval)
+        )
+
+    async def _health_watch_loop(self, interval: float) -> None:
+        """Loop that checks /health on all RUNNING models every *interval* seconds."""
+        while True:
+            for model_name, ctx in list(self._models.items()):
+                if ctx.state != RunnerState.RUNNING or not ctx.port:
+                    continue
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        resp = await session.get(
+                            f"http://127.0.0.1:{ctx.port}/health", timeout=3
+                        )
+                        if resp.status == 200:
+                            data = await resp.json()
+                            status = data.get("status")
+                            if status is None:
+                                # Flat "ok" response — still healthy
+                                continue
+                            value = status.get("value", status) if isinstance(status, dict) else status
+                            if value == "loading":
+                                ctx.state = RunnerState.LOADING
+                            elif value == "error":
+                                ctx.state = RunnerState.ERROR
+                        # 5xx → server died, _watch_process will detect it later
+                except Exception:
+                    pass  # unreachable — will be caught by process watcher
+            await asyncio.sleep(interval)
+
+    async def shutdown_health_watcher(self) -> None:
+        """Cancel the shared health watch loop."""
+        if self._health_task is not None:
+            self._health_task.cancel()
+            try:
+                await self._health_task
+            except asyncio.CancelledError:
+                pass
+            self._health_task = None
+
+    # ── Container lifecycle hook (abstracted from process) ───────────
     async def _watch_container(self, model_name: str, ctx: _ModelContext) -> None:
         """Monitor a detached container's lifecycle and restart on exit."""
         raise NotImplementedError  # pragma: no cover
@@ -495,6 +543,9 @@ class BaseModelRunner(ABC):
 
         ctx.state = RunnerState.RUNNING
 
+        # Start health watcher on first RUNNING model in this runner
+        await self.start_health_watcher()
+
     async def stop(self) -> None:
         """Stop the single model on this runner."""
         for key in list(self._models):
@@ -536,6 +587,7 @@ class BaseModelRunner(ABC):
                 await task
             except asyncio.CancelledError:
                 pass
+        await self.shutdown_health_watcher()
         self._models.clear()
         self._watchers.clear()
 

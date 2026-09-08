@@ -36,7 +36,7 @@ from model_arkestra.http_proxy import model_status_for_ctx
 from model_arkestra.types import RunnerState, _ModelContext
 
 # ── Model config field definitions (single source of truth) ─────────────
-MODEL_CONFIG_FIELDS = frozenset({"backend", "runner", "tags", "max_log_lines", "args"})
+MODEL_CONFIG_FIELDS = frozenset({"backend", "runner", "tags", "max_log_lines"})
 INFRA_KEYS = frozenset({"backend", "runner", "max_log_lines"})
 
 
@@ -103,7 +103,6 @@ class ArkestraAdmin:
         self._add_pull_route()
         self._add_pull_stop_route()
         self._add_api_models_route()
-        self._add_api_restart_route()
         self._add_api_clusters_route()
         self._installed = True
         return self
@@ -293,38 +292,23 @@ class ArkestraAdmin:
                 cfg = self._models_cfg
                 contexts_by_name = {ctx.name: ctx for ctx in self.server._arkestra.get_model_contexts()}
 
-                hf_cache = self.server._arkestra.resolve_config("hf_hub_cache")
-                if not hf_cache:
-                    hf_cache = str(default_cache_root())
-
                 data = []
                 for model_name in self.server._arkestra.get_models():
-                    ctx = contexts_by_name.get(model_name)
+                    ctx = contexts_by_name[model_name]
                     model_cfg = self.server._arkestra.get_model(model_name) or {}
                     model_ref = model_cfg.get("model", "")
 
-                    resolved = None
-                    is_cached = False
+                    # Resolve model reference for HF lookups
+                    default_section = (self.server._arkestra.cm.data.get("default") or {})
+                    resolved = resolve_model_ref(
+                        raw=model_ref,
+                        default_section=default_section,
+                        model_repos=self.server._arkestra.cm.data.get("model-repos"),
+                    )
 
-                    if ctx:
-                        status_val = model_status_for_ctx(ctx)
-                        backend_id = ctx.backend_id or self._resolve_model_backend(ctx.name, model_cfg)
-                        runner_type = ctx.runner_type or ""
-                        is_cached = True
-                    else:
-                        default_section = (self.server._arkestra.cm.data.get("default") or {})
-                        resolved = resolve_model_ref(
-                            raw=model_ref,
-                            default_section=default_section,
-                            model_repos=self.server._arkestra.cm.data.get("model-repos"),
-                        )
-                        cache_path = None
-                        if resolved.cache_path:
-                            cache_path = Path(hf_cache).expanduser() / f"models--{resolved.cache_path}"
-                        is_cached = cache_path.exists() if cache_path else False
-                        backend_id = self._resolve_model_backend(model_name, model_cfg)
-                        _, runner_type = image_and_runner_for_backend(self.server._arkestra.cm.data, backend_id)
-                        status_val = {"value": "cached"} if is_cached else {"value": "uncached"}
+                    status_val = model_status_for_ctx(ctx)
+                    backend_id = ctx.backend_id or self._resolve_model_backend(ctx.name, model_cfg)
+                    runner_type = ctx.runner_type or ""
 
                     # Size and checkpoint-hash from HuggingFace (optional)
                     info = hf_model_info(resolved.ref) or {}
@@ -351,10 +335,6 @@ class ArkestraAdmin:
             if model not in self._models_cfg:
                 raise HTTPException(status_code=404, detail=f"Model '{model}' not configured")
             ctx = self.server._arkestra.find_context(model)
-            if not ctx:
-                raise HTTPException(
-                    status_code=404, detail=f"Model '{model}' not found in runners"
-                )
             prev_state = ctx.state
             if prev_state.is_terminal:
                 return JSONResponse(
@@ -852,30 +832,21 @@ class ArkestraAdmin:
                 ctx.download_task = None
 
             # If model is running or stopping, reject
-            if ctx and ctx.state in (RunnerState.RUNNING, RunnerState.STOPPING):
+            if ctx.state in (RunnerState.RUNNING, RunnerState.STOPPING):
                 raise HTTPException(
                     status_code=409,
                     detail=f"Cannot download: model is {ctx.state.name.lower()}"
                 )
 
             # If already uncached, nothing to download
-            if ctx and ctx.state == RunnerState.UNCACHED:
+            if ctx.state == RunnerState.UNCACHED:
                 raise HTTPException(
                     status_code=409,
                     detail=f"Model '{model}' is already uncached (checkpoint present)"
                 )
 
-            # Create context if it doesn't exist yet
-            if not ctx:
-                model_cfg = cfg.get(model, {})
-                be_id = self._resolve_model_backend(model, model_cfg)
-                cm_data = self.server._arkestra.cm.data
-                _, runner_type = image_and_runner_for_backend(cm_data, be_id)
-                runner = self.server._arkestra.get_runner_instance(runner_type, model)
-                ctx = _ModelContext(model, 0, max_log_lines=2000)
-                ctx.backend_id = be_id
-                ctx.state = RunnerState.DOWNLOADING
-                runner._models[model] = ctx
+            # Transition to downloading and spawn the pull task
+            ctx.state = RunnerState.DOWNLOADING
 
             # Spawn pull task
             task = asyncio.create_task(
@@ -893,7 +864,7 @@ class ArkestraAdmin:
                 raise HTTPException(status_code=404, detail=f"Model '{model}' not in config")
 
             ctx = self.server._arkestra.find_context(model)
-            if not ctx or ctx.state != RunnerState.DOWNLOADING:
+            if ctx.state != RunnerState.DOWNLOADING:
                 raise HTTPException(
                     status_code=404,
                     detail=f"No active download for '{model}'"
@@ -957,30 +928,6 @@ class ArkestraAdmin:
                 })
 
             return {"models": data}
-
-    def _add_api_restart_route(self) -> None:
-        @self._app.post("/api/restart/{model:path}")
-        async def api_restart(model: str):
-            """Thin restart — no params, uses config as-is."""
-            cfg = self._models_cfg
-            if model not in cfg:
-                raise HTTPException(status_code=404, detail=f"Model '{model}' not in config")
-            if not self.server._arkestra.can_restart(model):
-                raise HTTPException(status_code=409, detail="model not available")
-
-            ctx = self.server._arkestra.find_context(model)
-            if ctx and ctx.state in (RunnerState.RUNNING, RunnerState.LOADING):
-                try:
-                    await self.server._arkestra.stop(model)
-                except Exception:
-                    pass
-            try:
-                await self.server._arkestra.start(model)
-                ctx = self.server._arkestra.find_context(model)
-                port = ctx.port if ctx else None
-                return {"ok": True, "model": model, "port": port}
-            except Exception as exc:
-                raise HTTPException(status_code=503, detail=f"Restart failed: {exc}")
 
     def _add_api_clusters_route(self) -> None:
         @self._app.get("/api/clusters")

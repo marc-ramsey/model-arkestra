@@ -81,8 +81,8 @@ def model_status(state: RunnerState, error_message: str | None = None) -> Dict[s
     state_map = {
         RunnerState.LOADING:  {"value": "loading"},
         RunnerState.RUNNING:  {"value": "loaded"},
-        RunnerState.STOPPED:  {"value": "sleeping"},
-        RunnerState.STOPPING: {"value": "sleeping"},
+        RunnerState.STOPPED:  {"value": "stopped"},
+        RunnerState.STOPPING: {"value": "stopped"},
         RunnerState.UNCACHED: {"value": "unloaded"},
         RunnerState.DOWNLOADING: {"value": "downloading"},
     }
@@ -94,7 +94,9 @@ def model_status(state: RunnerState, error_message: str | None = None) -> Dict[s
 
 def model_status_for_ctx(ctx) -> Dict[str, str]:
     """Helper for call sites that hold a _ModelContext or None."""
-    return {"value": "stopped"} if ctx is None else model_status(ctx.state, ctx.last_error)
+    if ctx is None:
+        return {"value": "unloaded"}
+    return model_status(ctx.state, ctx.last_error)
 
 
 def parse_completion(data: Dict[str, Any]) -> Dict[str, Any]:

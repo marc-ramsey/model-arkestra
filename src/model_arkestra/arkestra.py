@@ -6,15 +6,15 @@ import os
 import shutil
 import yaml
 from pathlib import Path
-from typing import Any, AsyncIterator, Dict, List, Optional, Set
+from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple
 
 from model_arkestra.config_manager import ModelConfigManager
 from model_arkestra.gpu_detect import detect_all, has_rocm, has_vulkan, has_nvidia
 from model_arkestra.base import BaseModelRunner
 from model_arkestra.common import (
     _resolve_backend, default_cache_root, resolve_config_path,
-    resolve_model_ref, resolve_tags as _resolve_model_tags,
-    download_hf_model,
+    image_and_runner_for_backend, resolve_model_ref,
+    resolve_tags as _resolve_model_tags, download_hf_model,
 )
 from model_arkestra.docker import DockerModelRunner
 from model_arkestra.onnx_runner import OnnxRunner
@@ -66,6 +66,8 @@ class ModelArkestra:
         self._validate_backend_runtime()
         # ── Device profile detection & matching ────────────────────
         self._matched_profile = self._detect_device_profiles()
+        # ── Pre-create contexts for all configured models ──────────
+        self._pre_create_model_contexts()
 
     # ── port allocation (global) ───────────────────────────────────────
     def log(self, text: str, level: str = "INFO") -> None:
@@ -202,6 +204,74 @@ class ModelArkestra:
             "env": prof.get("env") or {},
             "args": prof.get("args") or {},
         }
+
+    # ── model context pre-creation ───────────────────────────────
+    def _pre_create_model_contexts(self) -> None:
+        """Create a _ModelContext for every configured model.
+
+        Ports are allocated, backends resolved, and state set based on
+        cache existence.  This ensures find_context() always returns a
+        valid context for any configured model — no more None gaps.
+        """
+        hf_cache = self.resolve_config("hf_hub_cache") or str(default_cache_root())
+        models_cfg = self._cm.get("models", {})
+        if not isinstance(models_cfg, dict):
+            return
+
+        default_section = (self._cm.data.get("default") or {})
+
+        for model_name in models_cfg:
+            model_cfg = models_cfg[model_name] or {}
+
+            # Resolve backend and runner type
+            backend_id = _resolve_backend(self._cm, model_cfg, model_name)
+            cm_data = self._cm.data
+            _, runner_type = image_and_runner_for_backend(cm_data, backend_id)
+
+            # Only pre-create contexts for runners that have a process-level
+            # lifecycle (not remote/ONNX which manage their own context logic).
+            if runner_type in ("remote", "onnx"):
+                continue
+
+            # Allocate port from the pool
+            try:
+                port = self.worker_port(model_name)
+            except RuntimeError:
+                port = 0  # fallback: no port available yet
+
+            # Determine initial state based on cache existence
+            resolved = resolve_model_ref(
+                raw=model_cfg.get("model", ""),
+                default_section=default_section,
+                model_repos=self._cm.data.get("model-repos"),
+            )
+            is_cached = False
+            if resolved.cache_path:
+                cache_path = Path(hf_cache).expanduser() / f"models--{resolved.cache_path}"
+                # A usable cache has at least one GGUF blob or snapshot
+                snapshots_dir = cache_path / "snapshots"
+                blobs_dir = cache_path / "blobs"
+                has_snapshots = any(snapshots_dir.glob("*/*.gguf")) if snapshots_dir.exists() else False
+                has_blobs = any(blobs_dir.glob("*.gguf")) if blobs_dir.exists() else False
+                is_cached = has_snapshots or has_blobs
+
+            state = RunnerState.STOPPED if is_cached else RunnerState.UNCACHED
+
+            # Create and register the context
+            from model_arkestra.types import _ModelContext
+            ctx = _ModelContext(model_name, port, max_log_lines=500)
+            ctx.backend_id = backend_id
+            ctx.runner_type = runner_type
+            ctx.state = state
+            if resolved.cache_path:
+                cache_root = default_cache_root()
+                ctx._cache_dir = cache_root / f"models--{resolved.cache_path}"
+                os.makedirs(ctx._cache_dir, exist_ok=True)
+
+            # Register with the correct runner instance
+            runner = self.get_runner_instance(runner_type, model_name)
+            runner._models[model_name] = ctx
+
 
     # ── cluster topology ───────────────────────────────────────────
     def _load_clusters(self) -> None:
@@ -432,20 +502,22 @@ class ModelArkestra:
 
         precedence: explicit constructor args > os.environ > default-env defaults.
         The _env dict is computed once at startup and never written to disk.
-        Keys use kebab-case (e.g. "hf_hub_cache", "admin_key").
+        Keys are normalized to kebab-case regardless of YAML convention used.
         Env var lookup uppercases the key and replaces '-' with '_'.
         """
         defaults = self._cm.get("default-env", {}) or {}
         result: Dict[str, str] = {}
-        for key in defaults:
-            env_name = key.upper().replace("-", "_")
+        for raw_key in defaults:
+            # Normalize any case/convention to kebab-case
+            norm_key = raw_key.lower().replace("_", "-")
+            env_name = norm_key.upper().replace("-", "_")
             os_val = os.environ.get(env_name)
             if os_val:
-                result[key] = os_val
+                result[norm_key] = os_val
             else:
-                val = defaults[key]
+                val = defaults[raw_key]
                 if val is not None:
-                    result[key] = str(val) if not isinstance(val, str) else val
+                    result[norm_key] = str(val) if not isinstance(val, str) else val
         return result
 
     def _ensure_env(self) -> Dict[str, str]:
@@ -457,15 +529,20 @@ class ModelArkestra:
     def resolve_config(self, key: str, explicit: Optional[str] = None) -> Optional[str]:
         """Resolve a config value with unified precedence.
 
-        Keys use kebab-case (e.g. "hf_hub_cache", "admin_key", "api_key").
+        Keys use kebab-case (e.g. "hf-hub-cache", "admin-key", "api-key").
+        Input is normalized to kebab-case before lookup, so underscore or
+        camelCase inputs also work: ``resolve_config("admin_key")`` resolves
+        the same as ``resolve_config("admin-key")``.
         Precedence: explicit arg → _env (default-env + os.environ merged).
         The _env section is never persisted to disk — it's always freshly
         computed from default-env config values plus the actual process env.
         """
         if explicit is not None and explicit != "":
             return explicit
+        # Normalize any input convention to kebab-case for lookup
+        norm_key = key.lower().replace("_", "-")
         env_cfg = self._ensure_env()
-        return env_cfg.get(key) or ""
+        return env_cfg.get(norm_key) or ""
 
     def _cache_root(self) -> Path:
         """Resolve hf_hub_cache to a root Path."""
@@ -768,6 +845,7 @@ class ModelArkestra:
             self.log(f"[pull] model={model_name} cancelled")
             raise
         except Exception as e:
+            self._cleanup_partial_cache(resolved.cache_path)
             ctx.state = RunnerState.ERROR
             ctx.last_error = str(e)
             self.log(f"[pull] model={model_name} FAILED: {e}", level="ERROR")
@@ -783,8 +861,6 @@ class ModelArkestra:
     def can_restart(self, model_name: str) -> bool:
         """Check if model is eligible for a restart."""
         ctx = self.find_context(model_name)
-        if not ctx:
-            return False
         return ctx.state in (RunnerState.STOPPED, RunnerState.ERROR,
                              RunnerState.LOADING, RunnerState.RUNNING)
 
