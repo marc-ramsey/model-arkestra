@@ -521,8 +521,20 @@ class TestPullAndEject:
         r = client.get(f"{base_url}/admin/models", timeout=10)
         for m in r.json()["models"]:
             if m["name"] == eject_model_id:
-                assert m.get("status", {}).get("value") in ("stopped", "uncached"), \
+                assert m.get("status", {}).get("value") == "unloaded", \
                     f"Ejected model in unexpected state: {m['status']}"
+
+        # Inference must fail — no weights on disk after eject
+        try:
+            resp = client.post(f"{base_url}/v1/chat/completions", json={
+                "model": eject_model_id,
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 10,
+            }, timeout=10)
+            assert resp.status_code == 503, \
+                f"Expected 503 after eject, got {resp.status_code}: {resp.text}"
+        except httpx.ConnectError:
+            pass
 
     @pytest.mark.parametrize("e2e_single", [("process-vulkan", "vulkan-process")], indirect=True)
     def test_e2e_eject_stopped_model(self, e2e_single):
@@ -533,7 +545,17 @@ class TestPullAndEject:
 
         resp = client.post(f"{base_url}/admin/eject/{eject_model_id}", timeout=120)
         assert resp.status_code == 200, f"Eject failed: {resp.text}"
-        _stop_all_and_wait(client, base_url)
+
+        # Verify inference fails post-eject
+        try:
+            resp = client.post(f"{base_url}/v1/chat/completions", json={
+                "model": eject_model_id,
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 10,
+            }, timeout=10)
+            assert resp.status_code == 503
+        except httpx.ConnectError:
+            pass
 
 
 @pytest.mark.e2e
