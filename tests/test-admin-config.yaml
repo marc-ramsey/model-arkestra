@@ -10,8 +10,14 @@ env:
 
 backends:
   default: vulkan-radv
-  rocm: {}
-  vulkan-radv: {}
+  rocm:
+    runner: podman
+    container: Containerfile.rocm
+    image: ark-llama:rocm
+  vulkan-radv:
+    runner: podman
+    container: Containerfile.vulkan-radv
+    image: ark-llama:vulkan-radv
 
 models:
   gemma-4-e2b:

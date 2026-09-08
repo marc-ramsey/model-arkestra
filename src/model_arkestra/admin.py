@@ -773,6 +773,14 @@ class ArkestraAdmin:
                 raise HTTPException(status_code=400, detail="Missing 'backend' in request body")
 
             cm_data = self._config_data
+
+            # Validate backend exists before resolving paths
+            backends_cfg = cm_data.get("backends") or {}
+            be_id = backend_id if backend_id in (backends_cfg or {}) else backends_cfg.get("default")
+            if not be_id or backend_id not in backends_cfg:
+                return {"error": f"Unknown backend '{backend_id}'",
+                        "image": None, "runtime": None}
+
             image_tag, runner_type = image_and_runner_for_backend(cm_data, backend_id)
             containerfile_path = containerfile_for_backend(backend_id)
 

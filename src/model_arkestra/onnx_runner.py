@@ -114,9 +114,11 @@ class OnnxRunner(BaseModelRunner):  # type: ignore[name-defined]
                     self.arkestra.log(f"[start] tts '{ctx.name}' loaded voice={ctx.g2p_lang}")
             except ImportError:
                 if self.arkestra:
-                    self.arkestra.error(
+                    self.arkestra.log(
                         f"TTS model '{ctx.name}' requires the `onnx` extra. "
-                        f"Install with: pip install model-arkestra[onnx]")
+                        f"Install with: pip install model-arkestra[onnx]",
+                        level="ERROR",
+                    )
                 raise RuntimeError(f"kokero-onnx not installed — TTS unavailable for '{ctx.name}'")
             return  # Kokoro manages its own session below
 

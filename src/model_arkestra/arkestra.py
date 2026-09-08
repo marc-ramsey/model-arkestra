@@ -9,11 +9,11 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple
 
 from model_arkestra.config_manager import ModelConfigManager
-from model_arkestra.gpu_detect import detect_all, has_rocm, has_vulkan, has_nvidia
+from model_arkestra.gpu_detect import has_rocm, has_vulkan, has_nvidia
 from model_arkestra.base import BaseModelRunner
 from model_arkestra.common import (
-    _resolve_backend, default_cache_root, resolve_config_path,
-    image_and_runner_for_backend, resolve_model_ref,
+    _resolve_backend, _resolve_device_profile, default_cache_root,
+    resolve_config_path, image_and_runner_for_backend, resolve_model_ref,
     resolve_tags as _resolve_model_tags, download_hf_model,
 )
 from model_arkestra.docker import DockerModelRunner
@@ -64,8 +64,7 @@ class ModelArkestra:
         self._global_log_seq: int = 0
         # ── Backend runtime validation (hard error on mismatch) ───────
         self._validate_backend_runtime()
-        # ── Device profile detection & matching ────────────────────
-        self._matched_profile = self._detect_device_profiles()
+        self._device_profile: Optional[Dict[str, Any]] = None
         # ── Pre-create contexts for all configured models ──────────
         self._pre_create_model_contexts()
 
@@ -151,59 +150,19 @@ class ModelArkestra:
                 )
         # CPU backends and unknown IDs pass by default
 
-    def _detect_device_profiles(self) -> Dict[str, Any]:
-        """Detect GPU hardware and find matching engine device-profile.
 
-        Returns {env: {...}, args: {...}} for the best-matching device profile,
-        or empty dict if no match found (backend-specific settings still apply).
 
-        Priority: exact key match → family fallback (rocm/cuda/vulkan) → none.
-        """
-        result = detect_all()
-        primary = result.get("primary_gpu")
-        if not primary:
-            return {}
+    # ── device profile resolution (single init-time query) ───────
+    def _get_device_profile(self) -> Dict[str, Any]:
+        """Lazy-cached GPU detection. Called once on first access."""
+        if self._device_profile is None:
+            self._device_profile = _resolve_device_profile(self.cm)
+        return self._device_profile
 
-        # Collect device-profiles from all engines
-        profiles: Dict[str, Dict] = {}
-        for engine_cfg in (self.cm.get("engines", {}) or {}).values():
-            if isinstance(engine_cfg, dict) and "device-profiles" in engine_cfg:
-                profiles.update(engine_cfg["device-profiles"])
-        if not profiles:
-            return {}
-
-        vendor = primary.get("vendor", "")
-        matched_key: Optional[str] = None
-
-        # ROCm: try exact gfx_family → family fallback
-        if vendor == "amd":
-            gfx = result.get("gfx_family")
-            if gfx and gfx in profiles:
-                matched_key = gfx
-            elif "rocm" in profiles:
-                matched_key = "rocm"
-        # NVIDIA: try GPU name patterns → family fallback
-        elif vendor == "nvidia":
-            gpu_name = primary.get("name", "").lower()
-            for key in profiles:
-                if any(part in gpu_name for part in key.replace('-', ' ').split()):
-                    matched_key = key
-                    break
-            if not matched_key and "cuda" in profiles:
-                matched_key = "cuda"
-        # Vulkan/Intel: family fallback
-        elif vendor in ("intel",):
-            if "vulkan" in profiles:
-                matched_key = "vulkan"
-
-        if matched_key is None:
-            return {}
-
-        prof = profiles[matched_key]
-        return {
-            "env": prof.get("env") or {},
-            "args": prof.get("args") or {},
-        }
+    @property
+    def device_profile(self) -> Dict[str, str]:
+        """GPU device-profile env vars (empty dict if no GPU matched)."""
+        return self._get_device_profile().get("env", {})
 
     # ── model context pre-creation ───────────────────────────────
     def _pre_create_model_contexts(self) -> None:

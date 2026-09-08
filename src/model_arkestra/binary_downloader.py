@@ -42,19 +42,6 @@ class BinaryDownloaderError(Exception):
     """Base exception for binary downloader failures."""
 
 
-class ChecksumMismatch(BinaryDownloaderError):
-    """SHA256 verification failed — downloaded file doesn't match source checksum."""
-
-    def __init__(self, expected: str, actual: str, asset_path: str):
-        self.expected = expected
-        self.actual = actual
-        self.asset_path = asset_path
-        super().__init__(
-            f"SHA256 mismatch for {asset_path}: "
-            f"expected {expected[:12]}… got {actual[:12]}…"
-        )
-
-
 class RuntimeCheckError(BinaryDownloaderError):
     """Runtime prerequisites not satisfied — backend cannot run in process mode."""
 

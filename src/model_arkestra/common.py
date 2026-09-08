@@ -866,20 +866,23 @@ def resolve_tags(model_cfg: Dict | None, global_cfg: Dict,
     return ["chat"]
 
 # ── Engine resolution helpers ───────────────────────────────────
-def _get_device_profile_env(
+def _resolve_device_profile(
     cm: Any,
 ) -> Dict[str, Any]:
-    """Detect GPU and return matching device-profile env vars.
+    """Detect GPU hardware and return matching device-profile (env + args).
 
-    Same detection logic as `_merge_device_profile_args`, but returns
-    the ``env`` sub-dict instead of ``args``.
+    Called once at ModelArkestra init, memoized in self._device_profile.
+    Returns {env: {...}, args: {...}} for the best-matching profile,
+    or empty dict if no match found.
+
+    Priority: exact key match → family fallback (rocm/cuda/vulkan) → none.
     """
     result = detect_all()
     primary = result.get("primary_gpu")
     if not primary:
         return {}
 
-    profiles: Dict[str, Any] = {}
+    profiles: Dict[str, Dict] = {}
     for engine_cfg in (cm.data.get("engines") or {}).values():
         if isinstance(engine_cfg, dict) and "device-profiles" in engine_cfg:
             profiles.update(engine_cfg["device-profiles"])
@@ -911,7 +914,7 @@ def _get_device_profile_env(
         return {}
 
     prof = profiles.get(matched_key, {})
-    return prof.get("env") or {}
+    return {"env": prof.get("env") or {}, "args": prof.get("args") or {}}
 
 
 def hf_model_info(repo_id: str) -> dict | None:

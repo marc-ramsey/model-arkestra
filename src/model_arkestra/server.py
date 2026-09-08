@@ -21,7 +21,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Union
 import aiohttp
 
 try:
-    from fastapi import FastAPI, HTTPException, Request, Response
+    from fastapi import FastAPI, HTTPException, Request, Response, WebSocket
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import StreamingResponse
 except ImportError:
