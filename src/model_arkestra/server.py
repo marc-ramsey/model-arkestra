@@ -41,6 +41,7 @@ except ImportError:
 from model_arkestra.common import resolve_config_path
 from model_arkestra.config_manager import ConfigManager
 from model_arkestra.http_proxy import sse_events
+from model_arkestra.types import RunnerState
 
 
 try:
@@ -324,11 +325,39 @@ class ArkestraServer:
                 (c for c in self._arkestra.get_model_contexts()
                  if c.name == model_name), None
             )
+            # Resolve timeout: per-model > default > class constant
+            start_timeout = (
+                self._arkestra.get_model(model_name, {})
+                    .get("model-start-timeout")
+                or (self._arkestra.cm.data.get("default", {}) or {}).get("model-start-timeout")
+                or BaseModelRunner.MODEL_START_TIMEOUT
+            )
             if ctx is None or ctx.state.name not in ('RUNNING', 'LOADING'):
                 try:
                     await self._arkestra.start(model_name)
+                    # Wait for the runner to become healthy
+                    deadline = time.time() + start_timeout
+                    while time.time() < deadline:
+                        ready_ctx = next(
+                            (c for c in self._arkestra.get_model_contexts()
+                             if c.name == model_name), None
+                        )
+                        if ready_ctx and ready_ctx.state == RunnerState.RUNNING:
+                            break
+                        await asyncio.sleep(0.2)
                 except Exception as e:
                     raise HTTPException(status_code=503, detail=f"Model error: {e}")
+            else:
+                # Model was already LOADING — wait for RUNNING before proxying
+                deadline = time.time() + start_timeout
+                while time.time() < deadline:
+                    ready_ctx = next(
+                        (c for c in self._arkestra.get_model_contexts()
+                         if c.name == model_name), None
+                    )
+                    if ready_ctx and ready_ctx.state == RunnerState.RUNNING:
+                        break
+                    await asyncio.sleep(0.2)
 
             # Detect remote models — proxy directly to the worker
             base_url = self._get_remote_base_url(model_name)

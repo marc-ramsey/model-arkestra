@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 class BaseModelRunner(ABC):
     LOG_BUFFER_DEFAULT = 2000  # max lines in model log ring buffer
+    MODEL_START_TIMEOUT = 300  # seconds to wait for RUNNING state after start
     _DEFAULT_BACKEND = "cpu"
     _DEFAULT_RUNNER = "process"
     _LLAMA_FIELDS = frozenset({
