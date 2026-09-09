@@ -13,8 +13,11 @@ Or embed into your own FastAPI app:
 from __future__ import annotations
 
 import asyncio
+import importlib.metadata
 import json
 import os
+import platform
+import re
 import time
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -998,27 +1001,29 @@ def main(argv: list[str] | None = None) -> None:
     if not hf_cache:
         hf_cache = str(default_cache_root())
 
-    _v = __import__('importlib.metadata', fromlist=['version']).version('model-arkestra')
+    _v = importlib.metadata.version('model-arkestra')
     print(f"ModelArkestra v{_v}")
     print(f"  URL       → {scheme}://{args.host}:{args.port}")
     print(f"  API docs  → {scheme}://{args.host}:{args.port}/docs")
 
     primary = hw.get("primary_gpu")
     if primary:
-        runtime_info = hw.get("has_runtime", {})
-        vendor_map = {
-            True: "NVIDIA",
-        }
-        if runtime_info.get("nvidia"):
-            vendor_name = "NVIDIA"
-        elif runtime_info.get("rocm") or runtime_info.get("vulkan"):
-            vendor_name = "AMD" if primary["vendor"] == "amd" else "Vulkan"
-        else:
-            vendor_name = primary.get("vendor", "GPU").title()
-        gpu_str = f"{vendor_name} {primary['name']} ({primary['backend']})"
+        vendor_map = {"amd": "AMD", "nvidia": "NVIDIA", "intel": "Intel"}
+        vendor_name = vendor_map.get(primary["vendor"], "GPU")
+        raw = primary["name"]
+        # SKU: last bracket group with '/', otherwise last bracket content
+        skus = []
+        for m in re.finditer(r'\[([^\]]+)\]', raw):
+            if "/ " in m.group(1):
+                skus = [s.strip() for s in m.group(1).split(" / ")]
+        short = skus[-1] if skus else (re.findall(r'\[([^\]]+)\]', raw)[-1] if re.findall(r'\[([^\]]+)\]', raw) else raw.split(": ", 1)[-1].strip())
+        line = f"{vendor_name} {short} • {primary['backend']}"
+        gfx = hw.get("gfx_family")
+        if gfx:
+            line += f" ({gfx})"
     else:
         cpu_info = hw.get("cpu", {})
-        gpu_str = f"{cpu_info.get('vendor', 'CPU')} (no GPU detected)"
+        line = f"CPU ({cpu_info.get('arch', platform.machine())})"
     print(f"  Hardware  → {gpu_str}")
     print(f"  Cache     → {hf_cache}")
     print(f"  Config    → {resolved_path}")
