@@ -237,7 +237,7 @@ class ContainerModelRunner(BaseModelRunner, ABC):
         self, image: str, source_ref: Optional[str]
     ) -> str:
         """Resolve image via BinaryDownloader if backend references an OCI-image source."""
-        from model_arkestra.binary_downloader import BinaryDownloaderError
+        from model_arkestra.binary_downloader import BinaryDownloader, BinaryDownloaderError
         if not source_ref or not isinstance(source_ref, str):
             return image
         sources = self.cm.data.get("sources") or {}
@@ -318,8 +318,7 @@ class ContainerModelRunner(BaseModelRunner, ABC):
             backend,
             backend_id=ctx.backend_id,
         )
-        for arg in extra_args:
-            cmd_parts.insert(2, arg)
+        cmd_parts[2:2] = extra_args
 
         proc = await asyncio.create_subprocess_shell(
             shlex.join(cmd_parts),

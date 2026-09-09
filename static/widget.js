@@ -414,18 +414,18 @@ function formatSizeGB(sizeGb) {
 }
 
 function renderModelRow(model, isConfigView) {
-    const name = model.id.includes('/') ? model.id.split('/').pop() : model.id;
+    const name = model.name.includes('/') ? model.name.split('/').pop() : model.name;
     const statusClass = normalizeStatus(model.status);
     const sizeStr = formatSizeGB(model.size_gb);
 
     const row = document.createElement('div');
     row.className = 'model-row';
-    row.dataset.model = model.id;
+    row.dataset.model = model.name;
 
     // Session spawn buttons (always visible)
-    let spawnBtns = `<button type="button" data-action="spawn-chat" data-model="${esc(model.id)}" title="New Chat">+</button>`;
+    let spawnBtns = `<button type="button" data-action="spawn-chat" data-model="${esc(model.name)}" title="New Chat">+</button>`;
     if (HAS_ADMIN_KEY && !isConfigView) {
-        spawnBtns += `<button type="button" data-action="spawn-log" data-model="${esc(model.id)}" title="New Log">+</button>`;
+        spawnBtns += `<button type="button" data-action="spawn-log" data-model="${esc(model.name)}" title="New Log">+</button>`;
     }
 
     // Inline action buttons — gated by auth
@@ -434,7 +434,7 @@ function renderModelRow(model, isConfigView) {
         const adminBtns = ['start','stop','eject'];
         if (isConfigView) adminBtns.push('save','reset','cancel');
         for (const a of adminBtns) {
-            btns += `<button type="button" data-action="${a}" data-model="${esc(model.id)}" title="${a}">${BTN_MAP[a]}</button>`;
+            btns += `<button type="button" data-action="${a}" data-model="${esc(model.name)}" title="${a}">${BTN_MAP[a]}</button>`;
         }
     }
 
@@ -569,8 +569,8 @@ function populateSelect(selectId, models, current) {
     if (!sel) return;
     let html = '<option value="">- none -</option>';
     for (const m of (models||[])) {
-        const name = m.id.includes('/') ? m.id.split('/').pop() : m.id;
-        html += `<option value="${esc(m.id)}"${m.id===current?' selected':''}>${esc(name)}</option>`;
+        const name = m.name.includes('/') ? m.name.split('/').pop() : m.name;
+        html += `<option value="${esc(m.name)}"${m.name===current?' selected':''}>${esc(name)}</option>`;
     }
     sel.innerHTML = html;
 }
@@ -587,7 +587,7 @@ async function _doSendChat(modelName, sessionId, inputEl) {
     const statusEl = document.getElementById('chat-status-' + (sessionId||''));
 
     // ── Auto-start if model is not running ──────────────────────
-    const info = window._modelsCache?.find(m => m.id === modelName);
+    const info = window._modelsCache?.find(m => m.name === modelName);
     const state = info?.status?.value ?? '';
     const canChatState = ['running', 'stopped', 'error'].includes(state) || !state;
 
@@ -655,7 +655,7 @@ function makeBubble(role, content, streaming, sessionId) {
 
 async function doStream(text, modelName, onData, options={}) {
     const { signal } = options;
-    const info = window._modelsCache?.find(m => m.id === modelName);
+    const info = window._modelsCache?.find(m => m.name === modelName);
     if (!info?.port) throw new Error('Model not running');
 
     const params = {};
@@ -667,7 +667,7 @@ async function doStream(text, modelName, onData, options={}) {
     const resp = await fetch(BASE_URL+'/v1/chat/completions', {
         method:'POST', headers:{'Content-Type':'application/json'}, signal,
         body: JSON.stringify({
-            model: info.id || modelName, messages: [], stream:true,
+            model: info.name || modelName, messages: [], stream:true,
             temperature: params.temperature ?? 0.7, top_p: params.top_p ?? 0.95,
             ...(params.max_tokens ? { max_tokens: params.max_tokens } : {}),
         }),

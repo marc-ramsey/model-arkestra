@@ -15,7 +15,8 @@ from model_arkestra.types import RunnerState, _ModelContext
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 
-def _make_cm(backend_cfg: dict | None = None, runner_cfg: dict | None = None) -> ModelArkestra:
+def _make_cm(backend_cfg: dict | None = None, runner_cfg: dict | None = None,
+             models_section: str = "") -> ModelArkestra:
     """Build a minimal ModelArkestra instance with mocked ConfigManager.
 
     The ConfigManager is constructed from an in-memory YAML file that contains only the keys
@@ -82,10 +83,7 @@ runners:
 {default_runners}
 
 models:
-  test-model:
-    model: dummy/dummy:Q4_K_M
-    args:
-      temp: 0.7
+  {models_section}
 """
     with open(cfg_path, "w") as f:
         f.write(yaml_content)
@@ -193,9 +191,10 @@ class TestStartValidation:
         arkestra = _make_cm(
             backend_cfg={"default": "vulkan-radv"},
             runner_cfg={"default": "process"},
+            models_section="ghost-model:\n    model: dummy/x:Q4\n",
         )
         async def run():
-            await arkestra.start("test-model", backend="ghost-backend")
+            await arkestra.start("ghost-model", backend="ghost-backend")
         import asyncio
         with pytest.raises(ValueError, match="Unknown backend"):
             asyncio.run(run())
@@ -272,8 +271,11 @@ class TestCmDelegation:
 
     def test_get_model_delegates(self):
         """.get_model() delegates to ConfigManager."""
-        arkestra = _make_cm(runner_cfg={"default": "process"})
-        model = arkestra.get_model("test-model")
+        arkestra = _make_cm(
+            runner_cfg={"default": "process"},
+            models_section="my-model:\n    model: dummy/x:Q4\n",
+        )
+        model = arkestra.get_model("my-model")
         assert model is not None
         assert isinstance(model, dict)
 

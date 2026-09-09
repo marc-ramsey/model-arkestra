@@ -219,8 +219,14 @@ def _build_e2e_config(combo_id: str, backend_name: str, model_key: int = 0) -> s
         }
     elif combo_id.startswith("no-backends"):
         be = {"runner": "process"}
-    elif "roc-process" in combo_id or "cuda-process" in combo_id:
-        raise pytest.skip(f"No ROCm/CUDA binary for {combo_id}") from None
+    elif "roc" in combo_id or "cuda" in combo_id:
+        gfx = combo_id.split("-", 1)[0]
+        be = {
+            "runner": "process",
+            "binary_dir": f"/home/marc/local/llama.cpp/build-rocm/bin",
+            "binary": "llama-server",
+            "args": {"ngl": 999, "ctx-size": 2048},
+        }
     else:
         runtime = combo_id.rsplit("-", 1)[0]
         be = {
@@ -393,13 +399,16 @@ def e2e_server(request, e2e_cache):
     config = _build_e2e_config(combo_id, backend_name)
     proxy, client = _start_server(ADMIN_PORT, config, combo_id)
 
-    yield {"server": proxy, "client": client,
-           "base_url": f"http://127.0.0.1:{ADMIN_PORT}",
-           "combo_id": combo_id}
-
-    # Fixture teardown — always clean up, then shut down the whole server
-    _stop_all_and_wait(client, f"http://127.0.0.1:{ADMIN_PORT}")
-    _stop_server(proxy, client, ADMIN_PORT)
+    try:
+        yield {"server": proxy, "client": client,
+               "base_url": f"http://127.0.0.1:{ADMIN_PORT}",
+               "combo_id": combo_id}
+    finally:
+        # GUARANTEED cleanup — always runs even on exception/assertion failure
+        try:
+            _stop_all_and_wait(client, f"http://127.0.0.1:{ADMIN_PORT}")
+        finally:
+            _stop_server(proxy, client, ADMIN_PORT)
 
 
 @pytest.fixture()
@@ -416,13 +425,16 @@ def e2e_single(request, e2e_cache):
     config = _build_e2e_config(combo_id, backend_name)
     proxy, client = _start_server(unique_port, config, combo_id)
 
-    yield {"server": proxy, "client": client,
-           "base_url": f"http://127.0.0.1:{unique_port}",
-           "combo_id": combo_id}
-
-    # Each test must call stop-all before this runs; ensure cleanup either way
-    _stop_all_and_wait(client, f"http://127.0.0.1:{unique_port}")
-    _stop_server(proxy, client, unique_port)
+    try:
+        yield {"server": proxy, "client": client,
+               "base_url": f"http://127.0.0.1:{unique_port}",
+               "combo_id": combo_id}
+    finally:
+        # GUARANTEED cleanup — always runs even on exception/assertion failure
+        try:
+            _stop_all_and_wait(client, f"http://127.0.0.1:{unique_port}")
+        finally:
+            _stop_server(proxy, client, unique_port)
 
 
 # ── Tests ────────────────────────────────────────────────────────────────────
@@ -632,21 +644,25 @@ class TestPortExhaustion:
         proxy, client = _start_server(ADMIN_PORT, config_yaml, "process-vulkan-0")
         yield proxy, client, f"http://127.0.0.1:{ADMIN_PORT}"
 
-        # Test calls stop-all explicitly — fixture shutdown is last resort
-        _stop_server(proxy, client, ADMIN_PORT)
-
     def test_two_succeed_then_three_fails(self, e2e_exhaust):
         """First two models start OK; third exceeds model-ports: 2 and fails."""
-        _, client, base_url = e2e_exhaust
+        proxy, client, base_url = e2e_exhaust
+        try:
+            for suffix in ("0", "1"):
+                mid = f"process-vulkan-{suffix}"
+                resp = client.post(f"{base_url}/admin/start/{mid}", timeout=300)
+                assert resp.status_code == 200, f"Model {mid} should start: {resp.text}"
 
-        for suffix in ("0", "1"):
-            mid = f"process-vulkan-{suffix}"
-            resp = client.post(f"{base_url}/admin/start/{mid}", timeout=300)
-            assert resp.status_code == 200, f"Model {mid} should start: {resp.text}"
+            mid = "process-vulkan-2"
+            resp = client.post(f"{base_url}/admin/start/{mid}", timeout=30)
+            assert resp.status_code != 200, \
+                "Starting 3rd model with model-ports: 2 should fail"
 
-        mid = "process-vulkan-2"
-        resp = client.post(f"{base_url}/admin/start/{mid}", timeout=30)
-        assert resp.status_code != 200, \
-            "Starting 3rd model with model-ports: 2 should fail"
-
-        _stop_all_and_wait(client, base_url)
+            _stop_all_and_wait(client, base_url)
+        finally:
+            # GUARANTEED cleanup regardless of test pass/fail/exception
+            client.post(f"{base_url}/admin/stop-all", timeout=30)
+            try:
+                _stop_server(proxy, client, ADMIN_PORT)
+            except Exception:
+                pass

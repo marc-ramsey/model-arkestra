@@ -13,6 +13,7 @@ arkestra-onnx  = "model_arkestra.onnx_server:main"
 asyncio_mode = "auto"
 addopts = "-m 'not slow'"
 norecursedirs = "vendor"
+timeout = 300
 markers = [
     "slow: tests that download & start a real LLM (~5-10 min first run, fast after cache)",
     "e2e: backend runner end-to-end — starts a cached GGUF model, verifies inference, checks logs (no HF download)",

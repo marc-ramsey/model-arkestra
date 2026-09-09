@@ -158,9 +158,8 @@ class TestUnknownRunnerRejected:
                 model: test/x:Q4
                 backend: unknown-backend
         """))
-        mr = ModelArkestra(cfg)
-        with pytest.raises(ValueError, match="unknown runner type"):
-            asyncio_run(mr.start("m1"))
+        with pytest.raises(ValueError, match="nonexistent-runner"):
+            ModelArkestra(cfg)
 
 
 

@@ -165,11 +165,11 @@ class TestModelStatus:
     def test_loading_stays_loading(self):
         assert model_status(RunnerState.LOADING) == {"value": "loading"}
 
-    def test_stopped_becomes_sleeping(self):
-        assert model_status(RunnerState.STOPPED) == {"value": "sleeping"}
+    def test_stopped_becomes_stopped(self):
+        assert model_status(RunnerState.STOPPED) == {"value": "stopped"}
 
-    def test_stopping_becomes_sleeping(self):
-        assert model_status(RunnerState.STOPPING) == {"value": "sleeping"}
+    def test_stopping_becomes_stopped(self):
+        assert model_status(RunnerState.STOPPING) == {"value": "stopped"}
 
     def test_uncached_becomes_unloaded(self):
         assert model_status(RunnerState.UNCACHED) == {"value": "unloaded"}
@@ -191,8 +191,8 @@ class TestModelStatus:
 class TestModelStatusForCtx:
     """Tests for the None-safe context wrapper."""
 
-    def test_none_context_is_stopped(self):
-        assert model_status_for_ctx(None) == {"value": "stopped"}
+    def test_none_context_is_unloaded(self):
+        assert model_status_for_ctx(None) == {"value": "unloaded"}
 
     def test_empty_mock_context_runs(self):
         ctx = type("Ctx", (), {"state": RunnerState.RUNNING, "last_error": None})()

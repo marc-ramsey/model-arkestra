@@ -106,7 +106,7 @@ class TestRemoteIntegration:
         """Master should list gpu-server/gemma in admin/models."""
         r = master_server["client"].get("/admin/models")
         assert r.status_code == 200
-        ids = [m.get("id", "") for m in r.json()["models"]]
+        ids = [m.get("name", "") for m in r.json()["models"]]
         assert "gpu-server/gemma" in ids
 
     def test_start_proxies_to_worker(self, worker_server, master_server):

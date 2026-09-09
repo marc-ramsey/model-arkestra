@@ -86,7 +86,7 @@ function showToast(msg) {
 
             // Update model rows in cluster tree
             for (const m of data.models||[]) {
-                const row = document.querySelector('.model-row[data-model="'+m.id+'"]');
+                const row = document.querySelector('.model-row[data-model="'+m.name+'"]');
                 if (!row) continue;
                 const dot = row.querySelector('.status-dot');
                 if (dot && m.status) dot.className = 'status-dot '+window.normalizeStatus(m.status);
@@ -97,9 +97,9 @@ function showToast(msg) {
                 if (isDL && progEl?.classList.contains('hidden')) {
                     progEl.classList.remove('hidden');
                     window.syncRowButtons(row, {state:'downloading', statusClass:'loading'});
-                    window.pollPullProgress(m.id);
+                    window.pollPullProgress(m.name);
                 } else if (!isDL) {
-                    window.stopPullProgress(m.id);
+                    window.stopPullProgress(m.name);
                     if (progEl && !progEl.querySelector('.pull-status').textContent) progEl.classList.add('hidden');
                 }
 
@@ -127,8 +127,8 @@ function populateClusterTree(models) {
     const remoteModels = {};
 
     for (const m of models) {
-        if (m.id.includes('/')) {
-            const [cluster] = m.id.split('/');
+        if (m.name.includes('/')) {
+            const [cluster] = m.name.split('/');
             if (!remoteModels[cluster]) remoteModels[cluster] = [];
             remoteModels[cluster].push(m);
         } else {
@@ -266,7 +266,7 @@ function updateSessionDock() {
                     let value = SyncStore.get(s.modelId, apiKey);
                     // Server default fallback
                     try {
-                        const modelInfo = window._modelsCache?.find(m => m.id === s.modelId);
+                        const modelInfo = window._modelsCache?.find(m => m.name === s.modelId);
                         if (modelInfo?.config?.args?.[apiKey] !== undefined) {
                             value = value ?? Number(modelInfo.config.args[apiKey]);
                         } else if (value === undefined) {
@@ -296,7 +296,7 @@ function updateSessionDock() {
 }
 
 function getModelStatus(modelId) {
-    return (window._modelsCache || []).find(m => m.id === modelId)?.status;
+    return (window._modelsCache || []).find(m => m.name === modelId)?.status;
 }
 
 // Wire session lifecycle to dock updates
