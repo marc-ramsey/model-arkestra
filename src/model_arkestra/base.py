@@ -575,8 +575,14 @@ class BaseRunner(ABC):
             self.arkestra.log(f"[stop] model={ctx.name} DONE")
 
     async def stop_all(self) -> None:
-        """Stop all model processes, leaving entries in STOPPED state for restart-on-start."""
-        for key in list(self._models):
+        """Stop all active model processes — skip STOPPED/UNCACHED."""
+        stopping = []
+        for key, ctx in list(self._models.items()):
+            if ctx.state in (RunnerState.RUNNING, RunnerState.LOADING, RunnerState.DOWNLOADING):
+                stopping.append(key)
+        if stopping:
+            self.arkestra and self.arkestra.log(f"[action=shutdown] stopping: {', '.join(stopping)}")
+        for key in stopping:
             await self._stop_single(key)
 
     async def shutdown(self) -> None:

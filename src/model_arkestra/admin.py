@@ -342,7 +342,8 @@ class ArkestraAdmin:
         @self._app.post("/admin/stop-all")
         async def admin_stop_all():
             ctxs = list(self.server._arkestra.get_model_contexts())
-            running = [c.name for c in ctxs if not c.state.is_terminal]
+            from model_arkestra.types import RunnerState
+            running = [c.name for c in ctxs if c.state in (RunnerState.RUNNING, RunnerState.LOADING, RunnerState.DOWNLOADING)]
             if not running:
                 return JSONResponse(
                     status_code=200,
