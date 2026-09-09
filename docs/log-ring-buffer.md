@@ -71,7 +71,7 @@ get_lines_since(since: int, max_lines: int) -> [(seq, text), ...], int
   └── ring.read_entries(max_lines=max_lines, next_line=since)
 ```
 
-Callers (`ProcessModelRunner`, `ContainerModelRunner`) invoke `_append_log_line()` from async log capture tasks. The admin SSE endpoint and `get_logs()` call `_get_lines_since()` to stream or snapshot recent output.
+Callers (`ProcessRunner`, `ContainerRunner`) invoke `_append_log_line()` from async log capture tasks. The admin SSE endpoint and `get_logs()` call `_get_lines_since()` to stream or snapshot recent output.
 
 ### Restart Behavior
 

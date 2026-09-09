@@ -49,11 +49,11 @@ ModelArkestra runs LLM models (llama.cpp GGUF) via a lightweight HTTP server wit
 ## Directory layout
 ```
 src/model_arkestra/   — Python package
-  process.py          — ProcessModelRunner (subprocess llama-server)
+  process.py          — ProcessRunner (subprocess llama-server)
   common.py           — arg building, image helpers, config resolution
   admin.py            — FastAPI routes (/admin/*, /, /index.html)
   arkestra.py         — Arkestra core: lifecycle, port allocation, model registry
-  base.py             — BaseModelRunner (lifecycle state machine)
+  base.py             — BaseRunner (lifecycle state machine)
   docker.py / podman.py — Container runners (Docker/Podman)
   llama_cpp.py        — LlamaCppEngine (inference arg filtering for chat/embed)
   types.py            — RunnerState enum, _ModelContext dataclass

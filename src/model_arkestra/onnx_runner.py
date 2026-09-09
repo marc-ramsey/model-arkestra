@@ -1,6 +1,6 @@
 """ONNX model runner — loads models into memory, no subprocesses.
 
-Derives from BaseModelRunner. Manages ONNX InferenceSession objects
+Derives from BaseRunner. Manages ONNX InferenceSession objects
 directly in memory. Inference calls are dispatched to a thread pool
 via asyncio.to_thread() so the event loop is never blocked.
 
@@ -34,14 +34,14 @@ import wave
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from model_arkestra.base import BaseModelRunner
+from model_arkestra.base import BaseRunner
 from model_arkestra.common import default_cache_root, resolve_model_ref
 
 
-class OnnxRunner(BaseModelRunner):
-    """Run ONNX models in-memory via BaseModelRunner lifecycle.
+class OnnxRunner(BaseRunner):
+    """Run ONNX models in-memory via BaseRunner lifecycle.
 
-    Unlike ProcessModelRunner (subprocess) or ContainerModelRunner (podman/docker),
+    Unlike ProcessRunner (subprocess) or ContainerRunner (podman/docker),
     this runner loads the ONNX model directly into memory using onnxruntime.
     Inference calls are dispatched to a thread pool via asyncio.to_thread()
     so the event loop is never blocked.

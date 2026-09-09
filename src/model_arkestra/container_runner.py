@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
-from model_arkestra.base import BaseModelRunner
+from model_arkestra.base import BaseRunner
 from model_arkestra.common import (
     INSPECT_RE, SUBPROCESS_ENV,
     build_model_args, default_cache_root,
@@ -136,7 +136,7 @@ def _build_container_cmd(
     return parts
 
 
-class ContainerModelRunner(BaseModelRunner, ABC):
+class ContainerRunner(BaseRunner, ABC):
     """Abstract base for container-based model runners."""
 
     def __init__(self, *args: Any, **kwargs: Any):

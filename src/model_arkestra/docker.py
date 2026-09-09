@@ -4,12 +4,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from model_arkestra.binary_downloader import BinaryDownloader, BinaryDownloaderError
-from model_arkestra.container_runner import ContainerModelRunner
+from model_arkestra.container_runner import ContainerRunner
 from model_arkestra.common import SUBPROCESS_ENV, safe_container_name
 from model_arkestra.types import _ModelContext
 
 
-class DockerModelRunner(ContainerModelRunner):
+class DockerRunner(ContainerRunner):
     INSIDE_PORT = 8080
 
     def __init__(self, *args: Any, **kwargs: Any):

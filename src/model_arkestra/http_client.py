@@ -1,7 +1,7 @@
 """Lightweight HTTP client wrapper around aiohttp for model_runner.
 
 Encapsulates session management and request/response patterns used by
-BaseModelRunner methods (ainvoke, astream, request, health checks).
+BaseRunner methods (ainvoke, astream, request, health checks).
 Subclassing or patching this class is the supported way to test runner
 HTTP paths without dealing with aiohttp's async context manager internals.
 """

@@ -833,7 +833,7 @@ def _resolve_backend(
         if default_id:
             return str(default_id)
 
-    # Ultimate fallback — matches BaseModelRunner._DEFAULT_BACKEND
+    # Ultimate fallback — matches BaseRunner._DEFAULT_BACKEND
     return "cpu"
 
 # ── Capability resolution helpers ───────────────────────

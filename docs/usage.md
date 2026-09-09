@@ -21,11 +21,11 @@ async with runner:
 Direct runners bind to a `ConfigManager` and manage exactly one model. They also support context managers:
 
 ```python
-from model_arkestra.process import ProcessModelRunner
+from model_arkestra.process import ProcessRunner
 from llm_config_manager.config_manager import ConfigManager
 
 cm = ConfigManager("config.yaml")  # optional: pass ConfigManager directly
-runner = ProcessModelRunner(cm, shutdown_timeout=20.0, ready_timeout=120.0)
+runner = ProcessRunner(cm, shutdown_timeout=20.0, ready_timeout=120.0)
 ```
 
 See [API Reference — Runners](./api/runners.md) for full constructor signatures and parameters.

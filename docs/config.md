@@ -55,7 +55,7 @@ default:
 
 default-env:
   admin_key: whatever
-  hf_hub_cache: ~/.cache/huggingface
+  hf-hub-cache: ~/.cache/huggingface
 
 backends:
   default: rocm        # picks a backend from backends.yaml
@@ -95,7 +95,7 @@ Models marked with `capabilities` run on a separate ONNX inference server, prese
 | Capability | Value | Endpoint | Model Type |
 |---|---|---|---|
 | `embed` | `["embed"]` | `/v1/embeddings` | Embedding encoder (BERT-style) |
-| `stt` | `["stt"]` | `/v1/audio/transcriptions` | Whisper ASR |
+| `asr` | `["asr"]` | `/v1/audio/transcriptions` | Whisper ASR |
 | `tts` | `["tts"]` | `/v1/audio/speech` | Kokoro TTS |
 
 ONNX model keys:
@@ -116,7 +116,7 @@ Resolution: constructor arg → `_env[key]`.
 |---|---|---|
 | `admin_key` | `ADMIN_KEY` | Admin panel API key — gates `/admin/*` paths. |
 | `api_key` | `API_KEY` | Public API key — gates `/api/*` paths. |
-| `hf_hub_cache` | `HF_HUB_CACHE` | HuggingFace model cache directory. |
+| `hf-hub-cache` | `HF_HUB_CACHE` | HuggingFace model cache directory. |
 | `arkestra-base-path` | `ARKESTRA_BASE_PATH` | URL path prefix for all endpoints (e.g. `/ark`). Empty for no prefix. |
 
 Keys can also be overridden at runtime via the actual process environment variable — values in `_env` reflect the merged state of YAML defaults and process env.
@@ -125,7 +125,7 @@ Keys can also be overridden at runtime via the actual process environment variab
 ```yaml
 default-env:
   admin_key: "supersecret"
-  hf_hub_cache: /data/hf-cache
+  hf-hub-cache: /data/hf-cache
   arkestra-base-path: /ark
 ```
 
@@ -139,7 +139,7 @@ default-env:
 | `model-ports` (in `default:`) | `int` | `32` | Number of ports available — valid range is `model-start-port` through `model-start-port + model-ports - 1`. |
 | `warmup-time` (in `default:`) | `float` | `10.0` | Seconds to wait after `/health` returns OK before marking the model as `"running"`. |
 | `app-log-lines` (in `default:`) | `int` | `2000` | Number of server-level log entries retained in the global ring buffer. |
-| `container_type` | `str` | `"process"` | Default container runner when a backend uses `runner: container`. Valid values: `"podman"`, `"docker"`. Set to `"process"` to disable containers by default.
+| `container-type` | `str` | `"process"` | Default container runner when a backend uses `runner: container`. Valid values: `"podman"`, `"docker"`. Set to `"process"` to disable containers by default.
 
 ### `backends.default:` Key
 
@@ -305,7 +305,7 @@ defaults:
 | Key | Type | Description |
 |---|---|---|
 | `description` | str | Human-readable description shown in `list-backends`. |
-| `runner` | str | Runner type: ``"process"``, ``"podman"``, ``"docker"``, or ``"remote"``. Use ``"container"`` to defer to the top-level ``container_type:`` config value. |
+| `runner` | str | Runner type: ``"process"``, ``"podman"``, ``"docker"``, or ``"remote"``. Use ``"container"`` to defer to the top-level ``container-type:`` config value. |
 | `base_url` | str | (Legacy `runner: remote` only) URL of the target arkestra worker. Prefer the `clusters:` top-level key instead. |
 | `admin_key` | str | (Remote optional) API key forwarded as `x-admin-key` header to workers requiring authentication. If the target worker also proxies, forward its `admin_key` value here.
 | `source_ref` | str | Name of a source entry from the `sources:` section below. |
@@ -412,7 +412,7 @@ Arguments are merged in two phases — first a dict merge, then CLI conversion:
 
 1. Backend entry's ``runner:`` field (lowercase: ``process``, ``podman``, ``docker``, ``remote``)
 2. ``runners:`` section mapping type → class name
-3. Hardwired ``"process
+3. Hardwired ``"process"`` fallback
 
 ---
 

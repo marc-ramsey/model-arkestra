@@ -22,7 +22,7 @@ class RunnerState(Enum):
         """True when the model is not currently active (stopped, stopping)."""
         return self in (RunnerState.STOPPED, RunnerState.STOPPING)
 
-class RunnerError(Exception): """Base exception for all ProcessModelRunner failures."""
+class RunnerError(Exception): """Base exception for all ProcessRunner failures."""
 class ServerReadyTimeout(RunnerError): """Server did not become ready within timeout."""
 class ModelNotStarted(RunnerError): """Request on a model that hasn't been started."""
 class MaxRestartsExceeded(RunnerError): """Process has crashed too many times."""
@@ -38,7 +38,7 @@ class _ModelContext:
         self.port = port
         self.runner_type: Optional[str] = None
         self.backend_id: Optional[str] = None
-        self._runner: Optional["BaseModelRunner"] = None
+        self._runner: Optional["BaseRunner"] = None
         self.process: Optional[asyncio.subprocess.Process] = None
         self.container_id: Optional[str] = None
         self.state = RunnerState.STOPPED

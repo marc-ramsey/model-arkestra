@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from model_arkestra.podman import PodmanModelRunner
+from model_arkestra.podman import PodmanRunner
 from model_arkestra.types import RunnerState, _ModelContext
 
 
@@ -26,7 +26,7 @@ def _podman(*args: str) -> subprocess.CompletedProcess:
 def _make_runner():
     mock_cm = MagicMock()
     mock_cm.get_model.return_value = {"image": "alpine:latest", "container_port": 80}
-    return PodmanModelRunner(
+    return PodmanRunner(
         config_manager=mock_cm,
         restart_delay=0.05,
         restart_limit=3,
@@ -226,7 +226,7 @@ class TestFullLifecycle:
         port = 28003
         _kill_port(port)
 
-        runner = PodmanModelRunner(
+        runner = PodmanRunner(
             MagicMock(get_model=lambda n, **kw: {"image": "alpine:latest", "container_port": 80},
                       data={'log-buffer-size': 500}),
             restart_delay=0.5,
@@ -259,8 +259,8 @@ class TestFullLifecycle:
                 raise RuntimeError(stderr.decode().strip())
             ctx_inner.container_id = stdout.decode().strip()
 
-        orig = PodmanModelRunner._start_model_process
-        PodmanModelRunner._start_model_process = patched_start.__get__(runner, PodmanModelRunner)
+        orig = PodmanRunner._start_model_process
+        PodmanRunner._start_model_process = patched_start.__get__(runner, PodmanRunner)
 
         try:
             async with runner as r:
@@ -274,7 +274,7 @@ class TestFullLifecycle:
 
             await asyncio.sleep(1.0)
         finally:
-            PodmanModelRunner._start_model_process = orig
+            PodmanRunner._start_model_process = orig
 
         # Clean up the container (may have been removed by --rm already)
         ctx = runner._models.get("test-model")

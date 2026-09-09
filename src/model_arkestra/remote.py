@@ -6,13 +6,13 @@ import time
 import aiohttp
 from model_arkestra.http_proxy import sse_events, parse_completion
 from typing import Any, AsyncIterator, Dict, Optional
-from model_arkestra.base import BaseModelRunner
+from model_arkestra.base import BaseRunner
 from model_arkestra.types import RunnerState, _ModelContext
 
 logger = logging.getLogger(__name__)
 
 
-class RemoteModelRunner(BaseModelRunner):
+class RemoteRunner(BaseRunner):
     """Proxy inference and lifecycle commands to another arkestra instance.
 
     No local port is allocated, no binary spawned. All HTTP calls are forwarded

@@ -4,14 +4,14 @@ Model Arkestra ships an administrative panel that integrates into the same FastA
 
 ## Public Endpoints (No Auth)
 
-The `/api/*` namespace exposes read and safe lifecycle operations without requiring authentication. When `api_key` is set in `config.default-env.api_key` (via the computed `_env` section), these endpoints require the `X-Api-Key` header instead — enabling gradual rollout of API-level auth.
+The `/api/*` namespace exposes read-only endpoints. When `api_key` is set in `config.default-env.api_key` (via the computed `_env` section), these endpoints require a `Bearer` token matching the key — enabling API-level auth.
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/models` | List all configured models with full runtime status |
-| `GET` | `/api/model/{name}` | Single model info (state, size_gb, port, checkpoint_id) |
-| `POST` | `/api/start/{model}` | Start a model (full body param mirror of admin start) |
-| `POST` | `/api/stop/{model}` | Stop a running model |
+| `GET` | `/api/models` | List all cached models with name, model-ref, size (GB) |
+| `GET` | `/api/clusters` | List federated clusters with name and base-url |
+
+When `api_key` is configured, include `Authorization: Bearer <api_key>` to access these endpoints.
 
 ## Configuring Auth
 
@@ -19,11 +19,11 @@ Both namespaces gate independently. Set the keys in `config.yaml`'s `default-env
 
 ```yaml
 default-env:
-  admin_key: supersecret    # gates /admin/* — header: X-Admin-Key
-  api_key: apipublic        # gates /api/* — header: X-Api-Key
+  admin_key: supersecret    # gates /admin/* — header: Bearer <key>
+  api_key: apipublic        # gates /api/* — header: Bearer <key>
 ```
 
-Neither key is required unless configured. With both keys set, `/admin/*` requires `X-Admin-Key` and `/api/*` requires `X-Api-Key` independently.
+Neither key is required unless configured. With both keys set, `/admin/*` and `/api/*` require `Authorization: Bearer <key>`. Admin routes accept either key; API routes accept either key as well.
 
 ## Initialization
 
@@ -43,7 +43,7 @@ The key resolves with priority: **constructor argument** > `_env.admin_key` (com
 When `admin_key` is provided, every request to `/admin/*` must include the header:
 
 ```http
-X-Admin-Key: your-secret-key
+Authorization: Bearer your-secret-key
 ```
 
 Missing or incorrect keys return `401 Unauthorized`. Public paths (`/`, `/index.html`) are unaffected.
@@ -152,7 +152,7 @@ Create a new model entry in config. Returns `201 Created` on success.
 ```bash
 curl -X POST 'http://localhost:8080/admin/config' \
      -H 'Content-Type: application/json' \
-     -H 'X-Admin-Key: your-secret-key' \
+     -H 'Authorization: Bearer your-secret-key' \
      -d '{
        "name": "my-new-model",
        "repo": "hugging-face",
@@ -180,7 +180,7 @@ Retrieve a single model's configuration:
 
 ```bash
 curl 'http://localhost:8080/admin/config/qwen3.5-4b' \
-     -H 'X-Admin-Key: your-secret-key'
+     -H 'Authorization: Bearer your-secret-key'
 ```
 
 Returns:
@@ -208,7 +208,7 @@ Update an existing model's configuration and write it to disk. **Does not restar
 ```bash
 curl -X PUT 'http://localhost:8080/admin/config/qwen3.5-4b' \
      -H 'Content-Type: application/json' \
-     -H 'X-Admin-Key: your-secret-key' \
+     -H 'Authorization: Bearer your-secret-key' \
      -d '{"args": {"temp": 1.0, "ctx-size": 32768}, "capabilities": ["chat"]}'
 ```
 
@@ -222,7 +222,7 @@ Remove a model from configuration entirely. Stops the model first if running, th
 
 ```bash
 curl -X DELETE 'http://localhost:8080/admin/config/qwen3-4b' \
-     -H 'X-Admin-Key: your-secret-key'
+     -H 'Authorization: Bearer your-secret-key'
 ```
 
 Returns:
@@ -241,12 +241,12 @@ Start a model from a stopped or error state. Returns the port assigned.
 ```bash
 # Start a stopped model
 curl -X POST 'http://localhost:8080/admin/start/qwen3.5-4b' \
-     -H 'X-Admin-Key: your-secret-key'
+     -H 'Authorization: Bearer your-secret-key'
 
 # Start with transient overrides (no config change)
 curl -X POST 'http://localhost:8080/admin/start/qwen3.5-4b' \
      -H 'Content-Type: application/json' \
-     -H 'X-Admin-Key: your-secret-key' \
+     -H 'Authorization: Bearer your-secret-key' \
      -d '{"backend": "docker", "repo": "hugging-face", "model": "unsloth/Qwen3.5-4B-GGUF:Q5_K_M"}'
 ```
 
@@ -271,12 +271,12 @@ Restart a model from a running or loading state. Stops the current instance, the
 
 ```bash
 curl -X POST 'http://localhost:8080/admin/restart/qwen3.5-4b' \
-     -H 'X-Admin-Key: your-secret-key'
+     -H 'Authorization: Bearer your-secret-key'
 
 # Restart with new params
 curl -X POST 'http://localhost:8080/admin/restart/qwen3.5-4b' \
      -H 'Content-Type: application/json' \
-     -H 'X-Admin-Key: your-secret-key' \
+     -H 'Authorization: Bearer your-secret-key' \
      -d '{"temp": 0.7, "top-p": 0.95}'
 ```
 
@@ -300,7 +300,7 @@ Stops all running models at once. Models remain configured and will **restart im
 
 ```bash
 curl -X POST 'http://localhost:8080/admin/stop-all' \
-     -H 'X-Admin-Key: your-secret-key'
+     -H 'Authorization: Bearer your-secret-key'
 ```
 
 **When models are running:**
@@ -321,7 +321,7 @@ Full server teardown — stops the uvicorn HTTP listener and shuts down all mode
 
 ```bash
 curl -X POST 'http://localhost:8080/admin/shutdown' \
-     -H 'X-Admin-Key: your-secret-key'
+     -H 'Authorization: Bearer your-secret-key'
 ```
 
 Returns immediately with `200 OK`:
@@ -344,7 +344,7 @@ List all managed clusters with connectivity health checks.
 
 ```bash
 curl 'http://localhost:8080/admin/clusters' \
-     -H 'X-Admin-Key: your-secret-key'
+     -H 'Authorization: Bearer your-secret-key'
 ```
 
 Returns:
@@ -366,7 +366,7 @@ Add a managed cluster. The cluster name becomes part of model naming convention 
 ```bash
 curl -X POST 'http://localhost:8080/admin/clusters/gpu-lab-3' \
      -H 'Content-Type: application/json' \
-     -H 'X-Admin-Key: your-secret-key' \
+     -H 'Authorization: Bearer your-secret-key' \
      -d '{"base-url": "http://192.168.1.44:18000", "admin-key": "secret"}'
 ```
 
@@ -381,7 +381,7 @@ Remove a managed cluster from configuration.
 
 ```bash
 curl -X DELETE 'http://localhost:8080/admin/clusters/gpu-lab-2' \
-     -H 'X-Admin-Key: your-secret-key'
+     -H 'Authorization: Bearer your-secret-key'
 ```
 
 Returns:
@@ -416,7 +416,7 @@ Start pulling a model's checkpoint from HuggingFace. Returns immediately with `2
 
 ```bash
 curl -X POST 'http://localhost:8080/admin/pull/qwen3.5-4b' \
-     -H 'X-Admin-Key: your-secret-key'
+     -H 'Authorization: Bearer your-secret-key'
 ```
 
 Returns on success:
@@ -448,7 +448,7 @@ Cancel an in-progress model pull. The pull task is cancelled and partially downl
 
 ```bash
 curl -X POST 'http://localhost:8080/admin/cancel-pull/qwen3.5-4b' \
-     -H 'X-Admin-Key: your-secret-key'
+     -H 'Authorization: Bearer your-secret-key'
 ```
 
 Returns on success:
@@ -465,7 +465,7 @@ Return log lines for a running model. This is an **HTTP delta endpoint** — no 
 **Snapshot mode** (no `since` parameter):
 ```bash
 curl 'http://localhost:8080/admin/log/qwen3.5-4b' \
-     -H 'X-Admin-Key: your-secret-key'
+     -H 'Authorization: Bearer your-secret-key'
 ```
 Returns the full current log buffer:
 ```json
@@ -475,7 +475,7 @@ Returns the full current log buffer:
 **Delta mode** (`since` parameter):
 ```bash
 curl 'http://localhost:8080/admin/log/qwen3.5-4b?since=847&lines=50' \
-     -H 'X-Admin-Key: your-secret-key'
+     -H 'Authorization: Bearer your-secret-key'
 ```
 Returns only log lines with sequence number greater than `847`:
 ```json
@@ -503,7 +503,7 @@ Returns only log lines with sequence number greater than `847`:
 3. On reconnect, client sends its last known `since` value
 4. If `X-Missed-Lines > 0`, the client knows some log lines were lost
 
-**Implementation notes:** Log lines are tagged with a per-model monotonic sequence number as they are appended to the ring buffer by subprocess watchers (`ProcessModelRunner`) or container log streaming (`podman logs -f` / `docker logs -f`). The buffer uses a fixed-size ring (default 2000 lines, configurable via `max_log_lines` in config or startup override). Only lines within the current window are available — older entries are automatically evicted.
+**Implementation notes:** Log lines are tagged with a per-model monotonic sequence number as they are appended to the ring buffer by subprocess watchers (`ProcessRunner`) or container log streaming (`podman logs -f` / `docker logs -f`). The buffer uses a fixed-size ring (default 2000 lines, configurable via `max_log_lines` in config or startup override). Only lines within the current window are available — older entries are automatically evicted.
 
 ### GET /admin/logs?since=N&lines=M
 
@@ -512,7 +512,7 @@ Return **server-level** log entries for the entire ModelArkestra instance. This 
 **Request format:**
 ```bash
 curl 'http://localhost:8080/admin/logs?since=0&lines=200' \
-     -H 'X-Admin-Key: your-secret-key'
+     -H 'Authorization: Bearer your-secret-key'
 ```
 
 **Response (same shape as per-model log):**
@@ -641,7 +641,7 @@ At the very top of the script block is a single configurable constant:
 const ADMIN_KEY = 'whatever';   // must match admin_key in ArkestraServer
 ```
 
-This is the only thing you need to change before deploying. The dashboard automatically attaches it as the `X-Admin-Key` header on every API call.
+The dashboard automatically attaches it as the `Authorization: Bearer` header on every API call.
 
 ### Layout
 

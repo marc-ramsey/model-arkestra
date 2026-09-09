@@ -1,4 +1,4 @@
-"""Unit tests for BaseModelRunner.resolve_defaults().
+"""Unit tests for BaseRunner.resolve_defaults().
 
 Tests that effective (backend_id, runner_type) resolution follows the correct
 priority chain with hardwired fallbacks:
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from model_arkestra.base import BaseModelRunner
+from model_arkestra.base import BaseRunner
 
 
 # ── Fixtures ───────────────────────────────────────────────────────────────
@@ -38,19 +38,19 @@ def runners_cfg():
 class TestBackendPriority:
     def test_model_backend_takes_precedence(self, backends_cfg):
         """model["backend"] overrides everything."""
-        backend_id, _ = BaseModelRunner.resolve_defaults(
+        backend_id, _ = BaseRunner.resolve_defaults(
             backends_cfg, {}, {"backend": "rocm"}
         )
         assert backend_id == "rocm"
 
     def test_falls_back_to_config_default(self, backends_cfg):
         """No model backend → backends.default."""
-        backend_id, _ = BaseModelRunner.resolve_defaults(backends_cfg, {})
+        backend_id, _ = BaseRunner.resolve_defaults(backends_cfg, {})
         assert backend_id == "vulkan-radv"
 
     def test_hardwired_default_when_no_backends_section(self, runners_cfg):
         """No backends at all → _DEFAULT_BACKEND ("cpu")."""
-        backend_id, _ = BaseModelRunner.resolve_defaults(None, runners_cfg)
+        backend_id, _ = BaseRunner.resolve_defaults(None, runners_cfg)
         assert backend_id == "cpu"
 
     def test_hardwired_default_when_no_backends_default_key(self, runners_cfg):
@@ -58,14 +58,14 @@ class TestBackendPriority:
         backends_no_default = {
             "rocm": {"runner": "podman"},
         }
-        backend_id, _ = BaseModelRunner.resolve_defaults(
+        backend_id, _ = BaseRunner.resolve_defaults(
             backends_no_default, runners_cfg
         )
         assert backend_id == "cpu"
 
     def test_empty_backend_config_uses_hardwired(self):
         """{} backends → _DEFAULT_BACKEND."""
-        backend_id, _ = BaseModelRunner.resolve_defaults({}, {})
+        backend_id, _ = BaseRunner.resolve_defaults({}, {})
         assert backend_id == "cpu"
 
 
@@ -75,7 +75,7 @@ class TestBackendPriority:
 class TestRunnerPriority:
     def test_runner_from_backend_config(self, backends_cfg):
         """backend.runner takes precedence over runners.default."""
-        _, runner = BaseModelRunner.resolve_defaults(backends_cfg, {}, {"backend": "rocm"})
+        _, runner = BaseRunner.resolve_defaults(backends_cfg, {}, {"backend": "rocm"})
         assert runner == "podman"
 
     def test_falls_back_to_runners_default(self, backends_cfg, runners_cfg):
@@ -85,7 +85,7 @@ class TestRunnerPriority:
             "default": "stub",
             "stub": {"image": "test"},
         }
-        _, runner = BaseModelRunner.resolve_defaults(backends_no_runner, runners_cfg)
+        _, runner = BaseRunner.resolve_defaults(backends_no_runner, runners_cfg)
         assert runner == "process"
 
     def test_hardwired_runner_when_no_backend_runner_and_no_runners_section(
@@ -95,12 +95,12 @@ class TestRunnerPriority:
         backends_no_runner = {
             "vulkan-radv": {"image": "ark-llama:vulkan-radv"},
         }
-        _, runner = BaseModelRunner.resolve_defaults(backends_no_runner, {})
+        _, runner = BaseRunner.resolve_defaults(backends_no_runner, {})
         assert runner == "process"
 
     def test_hardwired_runner_when_both_sections_missing(self):
         """No backends and no runners → both hardwired."""
-        backend_id, runner = BaseModelRunner.resolve_defaults(None, None)
+        backend_id, runner = BaseRunner.resolve_defaults(None, None)
         assert backend_id == "cpu"
         assert runner == "process"
 
@@ -110,7 +110,7 @@ class TestRunnerPriority:
 
 class TestHardwiredConstants:
     def test_default_backend_is_class_constant(self):
-        assert BaseModelRunner._DEFAULT_BACKEND == "cpu"
+        assert BaseRunner._DEFAULT_BACKEND == "cpu"
 
     def test_default_runner_is_class_constant(self):
-        assert BaseModelRunner._DEFAULT_RUNNER == "process"
+        assert BaseRunner._DEFAULT_RUNNER == "process"

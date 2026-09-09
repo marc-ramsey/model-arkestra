@@ -63,7 +63,7 @@ the pull may take considerably longer than the server startup.
 3. Progress is streamed to the model's log buffer — visible via the log pane.
 4. On success, state transitions to `STOPPED` (checkpoint present, ready to start).
 5. On failure, state transitions to `ERROR` with error message in `last_error`.
-6. `POST /admin/pull/stop/{model}` cancels the pull task.
+6. `POST /admin/cancel-pull/{model}` cancels the pull task.
 
 **Cancellation:**
 

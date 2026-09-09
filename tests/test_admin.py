@@ -295,13 +295,13 @@ class TestShutdown:
 # ── Backend resolution fallback integration ───────────────────────
 
 class TestBackendResolutionFallback:
-    """Model with no backend field falls back to BaseModelRunner default."""
+    """Model with no backend field falls back to BaseRunner default."""
 
     def test_no_backend_resolves_to_cpu(self, live_server):
         """Verify that _resolve_backend chain resolves a model without 'backend:' via the /admin/models route.
 
         The model 'no-default-test' has no 'backend' key and no global 'backends.default'
-        in its config. Resolution should fall back to BaseModelRunner._DEFAULT_BACKEND
+        in its config. Resolution should fall back to BaseRunner._DEFAULT_BACKEND
         (cpu) end-to-end through the admin API.
         """
         import tempfile, os

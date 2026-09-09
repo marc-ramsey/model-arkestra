@@ -51,15 +51,15 @@ def _make_cm(backend_cfg: dict | None = None, runner_cfg: dict | None = None,
     if not runner_section:
         default_runners = (
             "  process:\n"
-            "    class-name: ProcessModelRunner\n"
+            "    class-name: ProcessRunner\n"
             "  podman:\n"
-            "    class-name: PodmanModelRunner\n"
+            "    class-name: PodmanRunner\n"
             "  docker:\n"
-            "    class-name: DockerModelRunner\n"
+            "    class-name: DockerRunner\n"
             "  onnx:\n"
             "    class-name: OnnxRunner\n"
             "  remote:\n"
-            "    class-name: RemoteModelRunner\n"
+            "    class-name: RemoteRunner\n"
         )
     else:
         default_runners = runner_section

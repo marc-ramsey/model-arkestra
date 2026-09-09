@@ -1,4 +1,4 @@
-"""Unit tests for DockerModelRunner command building and backend resolution.
+"""Unit tests for DockerRunner command building and backend resolution.
 
 Tests the shared ``_build_container_cmd`` function via the Docker-specific code
 paths: same-port mapping (no INSIDE_PORT override), localhost image prefix,
@@ -14,7 +14,7 @@ import os
 import pytest
 
 from model_arkestra.container_runner import _build_container_cmd
-from model_arkestra.process import ProcessModelRunner
+from model_arkestra.process import ProcessRunner
 from model_arkestra.types import RunnerState, _ModelContext, ModelNotStarted, ModelShutdown, MaxRestartsExceeded
 
 
@@ -142,12 +142,12 @@ class TestBuildDockerCmdNewArch:
 
 class TestDispatch:
     def test_dispatch_model_not_found(self):
-        runner = ProcessModelRunner(MagicMock())
+        runner = ProcessRunner(MagicMock())
         with pytest.raises(ModelNotStarted, match="no-such-model"):
             asyncio.run(runner._dispatch("no-such-model"))
 
     def test_dispatch_stopped_raises_shutdown(self):
-        runner = ProcessModelRunner(MagicMock())
+        runner = ProcessRunner(MagicMock())
         ctx = _ModelContext("stopped", 18000)
         ctx.state = RunnerState.STOPPED
         runner._models["stopped"] = ctx
@@ -155,7 +155,7 @@ class TestDispatch:
             asyncio.run(runner._dispatch("stopped"))
 
     def test_dispatch_stopping_raises_shutdown(self):
-        runner = ProcessModelRunner(MagicMock())
+        runner = ProcessRunner(MagicMock())
         ctx = _ModelContext("stopping", 18001)
         ctx.state = RunnerState.STOPPING
         runner._models["stopping"] = ctx
@@ -163,7 +163,7 @@ class TestDispatch:
             asyncio.run(runner._dispatch("stopping"))
 
     def test_dispatch_error_raises_max_restarts(self):
-        runner = ProcessModelRunner(MagicMock())
+        runner = ProcessRunner(MagicMock())
         ctx = _ModelContext("errored", 18002)
         ctx.state = RunnerState.ERROR
         ctx.restart_count = 4
@@ -172,7 +172,7 @@ class TestDispatch:
             asyncio.run(runner._dispatch("errored"))
 
     def test_dispatch_running_succeeds(self):
-        runner = ProcessModelRunner(MagicMock())
+        runner = ProcessRunner(MagicMock())
         ctx = _ModelContext("running", 18002)
         ctx.state = RunnerState.RUNNING
         runner._models["running"] = ctx

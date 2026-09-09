@@ -20,7 +20,7 @@ from model_arkestra.types import (
 logger = logging.getLogger(__name__)
 
 
-class BaseModelRunner(ABC):
+class BaseRunner(ABC):
     LOG_BUFFER_DEFAULT = 2000  # max lines in model log ring buffer
     MODEL_START_TIMEOUT = 300  # seconds to wait for RUNNING state after start
     _DEFAULT_BACKEND = "cpu"
@@ -127,7 +127,7 @@ class BaseModelRunner(ABC):
     def running_models(self) -> Set[str]:
         return {key for key, ctx in self._models.items() if ctx.state == RunnerState.RUNNING}
 
-    async def __aenter__(self) -> BaseModelRunner:
+    async def __aenter__(self) -> BaseRunner:
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):

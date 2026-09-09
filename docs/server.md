@@ -116,7 +116,7 @@ def custom_endpoint():
 | `GET` | `/health` | Health check — returns running model count |
 | `GET` | `/v1/health` | Alias for `/health` (OpenAI compat) |
 | `POST` | `/v1/embeddings` | Text embeddings — ONNX models with `capabilities: [embed]` |
-| `POST` | `/v1/audio/transcriptions` | Speech-to-text (Whisper) — ONNX models with `capabilities: [stt]` |
+| `POST` | `/v1/audio/transcriptions` | Speech-to-text (Whisper) — ONNX models with `tags: [asr]` |
 | `POST` | `/v1/audio/speech` | Text-to-speech (Kokoro) — ONNX models with `capabilities: [tts]` |
 | `WS`   | `/ark/audio/stream` | Streaming voice chat — live ASR partial transcripts + TTS audio chunks |
 

@@ -10,17 +10,17 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple
 
 from model_arkestra.config_manager import ModelConfigManager
 from model_arkestra.gpu_detect import has_rocm, has_vulkan, has_nvidia
-from model_arkestra.base import BaseModelRunner
+from model_arkestra.base import BaseRunner
 from model_arkestra.common import (
     _resolve_backend, _resolve_device_profile, default_cache_root,
     resolve_config_path, image_and_runner_for_backend, resolve_model_ref,
     resolve_tags as _resolve_model_tags, download_hf_model,
 )
-from model_arkestra.docker import DockerModelRunner
+from model_arkestra.docker import DockerRunner
 from model_arkestra.onnx_runner import OnnxRunner
-from model_arkestra.podman import PodmanModelRunner
-from model_arkestra.process import ProcessModelRunner
-from model_arkestra.remote import RemoteModelRunner
+from model_arkestra.podman import PodmanRunner
+from model_arkestra.process import ProcessRunner
+from model_arkestra.remote import RemoteRunner
 from model_arkestra.types import RunnerState, _ModelContext
 from model_arkestra.unicode_ringbuffer import UnicodeRingBuffer
 from model_arkestra.http_proxy import model_status_for_ctx
@@ -51,7 +51,7 @@ class ModelArkestra:
         default_section = self._cm.get("default", {})
         self._next_port = self._cm.get("default/model-start-port", start_port)
 
-        self._runners: Dict[str, BaseModelRunner] = {}
+        self._runners: Dict[str, BaseRunner] = {}
         self._runner_kwargs = runner_kwargs
         # ── Cluster topology ───────────────────────────────────────
         self._load_clusters()
@@ -371,14 +371,14 @@ class ModelArkestra:
     # ── runner class map — one hop, no magic ─────────────────────────
 
     _RUNNER_CLASSES: Dict[str, type] = {
-        "process": ProcessModelRunner,
-        "podman": PodmanModelRunner,
-        "docker": DockerModelRunner,
+        "process": ProcessRunner,
+        "podman": PodmanRunner,
+        "docker": DockerRunner,
         "onnx": OnnxRunner,
-        "remote": RemoteModelRunner,
+        "remote": RemoteRunner,
     }
 
-    def get_runner_instance(self, runner_type: str, model_name: Optional[str] = None) -> BaseModelRunner:
+    def get_runner_instance(self, runner_type: str, model_name: Optional[str] = None) -> BaseRunner:
         """Instantiate a fresh runner per ``model_name`` (one runner per model)."""
         key = f"{runner_type}:{model_name}" if model_name else runner_type
         if key not in self._runners:
@@ -394,19 +394,19 @@ class ModelArkestra:
     # ── backward-compat shims (delegate to unified lazy factory) ─────────
 
     @property
-    def process_runner(self) -> ProcessModelRunner:
+    def process_runner(self) -> ProcessRunner:
         if "process" not in self._runners:
             self.get_runner_instance("process")
         return self._runners["process"]  # type: ignore[return-value]
 
     @property
-    def podman_runner(self) -> PodmanModelRunner:
+    def podman_runner(self) -> PodmanRunner:
         if "podman" not in self._runners:
             self.get_runner_instance("podman")
         return self._runners["podman"]  # type: ignore[return-value]
 
     @property
-    def docker_runner(self) -> DockerModelRunner:
+    def docker_runner(self) -> DockerRunner:
         if "docker" not in self._runners:
             self.get_runner_instance("docker")
         return self._runners["docker"]  # type: ignore[return-value]
@@ -422,7 +422,7 @@ class ModelArkestra:
         model = self.get_model(model_name) or {}
         return _resolve_backend(self._cm, model, model_name, None)
 
-    def _get_runner(self, model_name: str, env_vars: Dict[str, Any], backend: Optional[str] = None) -> BaseModelRunner:
+    def _get_runner(self, model_name: str, env_vars: Dict[str, Any], backend: Optional[str] = None) -> BaseRunner:
         # Find the runner that has this model
         for r in self._runners.values():
             if model_name in r._models and r._models[model_name].state == RunnerState.RUNNING:

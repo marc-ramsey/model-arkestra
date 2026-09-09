@@ -1,6 +1,6 @@
 """Shared HTTP helpers for SSE streaming and chat completion proxying.
 
-Used by BaseRunner (local llama-server), RemoteModelRunner, and ArkestraServer.
+Used by BaseRunner (local llama-server), RemoteRunner, and ArkestraServer.
 """
 from __future__ import annotations
 import asyncio

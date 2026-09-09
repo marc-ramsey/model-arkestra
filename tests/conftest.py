@@ -189,7 +189,7 @@ def _wait_for_port_free(port: int, timeout: float = 10.0) -> bool:
 
 
 def _kill_runner(runner: Any) -> None:
-    """Kill all models on a ``BaseModelRunner`` using synchronous OS signals.
+    """Kill all models on a ``BaseRunner`` using synchronous OS signals.
 
     This is the ONLY reliable way to shut down runners from sync teardown code
     (e.g. module-scoped fixtures where asyncio may not be available).

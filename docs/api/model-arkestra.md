@@ -153,7 +153,7 @@ Returns the last *N* log lines for a model, delegated to whichever runner owns t
 | `lines` | `int` | `100` | Number of recent log lines to return |
 
 Returns a list of log line strings (empty list if model not found). The underlying source is the ring buffer — populated by live stream capture during execution:
-- **ProcessModelRunner**: reads from subprocess stdout/stderr pipes in real time.
+- **ProcessRunner**: reads from subprocess stdout/stderr pipes in real time.
 - **Container runners**: reads from `<podman\|docker> logs -f --tail 0` streaming into the same buffer.
 
 ```python

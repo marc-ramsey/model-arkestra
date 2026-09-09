@@ -3,14 +3,14 @@ import asyncio
 import os
 import signal
 from typing import Any, Dict, List
-from model_arkestra.base import BaseModelRunner
+from model_arkestra.base import BaseRunner
 from model_arkestra.common import build_model_args, _resolve_device_profile
 from model_arkestra.llama_cpp import LlamaCppEngine
 from model_arkestra.types import _ModelContext
 
 
 
-class ProcessModelRunner(BaseModelRunner):
+class ProcessRunner(BaseRunner):
 
     async def get_logs(self, model_name: str, lines: int = 100) -> List[str]:
         """Return the last N log line texts for a model (backward compat)."""

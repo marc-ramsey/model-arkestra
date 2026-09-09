@@ -1,4 +1,4 @@
-"""Tests for BaseModelRunner HTTP paths against a real local aiohttp server."""
+"""Tests for BaseRunner HTTP paths against a real local aiohttp server."""
 
 from __future__ import annotations
 import json
@@ -8,7 +8,7 @@ from aiohttp import web as aiohttp_web
 from aiohttp.test_utils import TestServer
 import pytest
 
-from model_arkestra.process import ProcessModelRunner
+from model_arkestra.process import ProcessRunner
 from model_arkestra.types import RunnerState, _ModelContext
 
 
@@ -24,7 +24,7 @@ async def server():
     app.router.add_post("/v1/chat/completions", handler.handle_completion)
     app.router.add_post("/custom/path", handler.handle_request)
 
-    runner = ProcessModelRunner(MagicMock())
+    runner = ProcessRunner(MagicMock())
     test_server = TestServer(app)
     await test_server.start_server()
     port = test_server.port
@@ -49,7 +49,7 @@ async def stream_server():
     # Only stream handler — used by TestAsyncStream tests.
     app.router.add_post("/v1/chat/completions", handler.handle_stream)
 
-    runner = ProcessModelRunner(MagicMock())
+    runner = ProcessRunner(MagicMock())
     test_server = TestServer(app)
     await test_server.start_server()
     port = test_server.port

@@ -66,7 +66,6 @@ Then hit `POST /v1/chat/completions` with any OpenAI-compatible client, or visit
 ```bash
 arkestra chat -m qwen3-4b            # interactive chat (auto-starts if stopped)
 arkestra pull qwen3-4b                # download checkpoint from HuggingFace
-arkestra unload qwen3-4b              # stop and delete cache
 arkestra models [-m qwen3-4b]        # list all or single model status
 ```
 
@@ -78,6 +77,7 @@ arkestra-admin start qwen3-4b temp=0.7 backend=vulkan-radv
 arkestra-admin config get qwen3-4b
 arkestra-admin logs qwen3-4b --lines 100
 arkestra-admin images list
+arkestra-admin eject qwen3-4b         # stop and delete checkpoint cache
 arkestra-admin shutdown -x http://localhost:8080
 ```
 
@@ -184,7 +184,7 @@ Models are downloaded via HuggingFace Hub. Control where they land by setting `H
 - **Via config.yaml** in the `default-env:` section (resolved through `_env` at startup):
   ```yaml
   default-env:
-    hf_hub_cache: /data/hf-cache
+    hf-hub-cache: /data/hf-cache
   ```
 - **Or as an environment variable** in the host shell (`HF_HUB_CACHE`).
 
@@ -198,7 +198,7 @@ The default is `~/.cache/huggingface/hub`. The [`config.md`](./docs/config.md#de
 | **Container Runners** | Podman or Docker isolation — pick the runtime globally (`container_type:`) and every backend inherits it. |
 | **Remote Federation** | The `runner: remote` type proxies inference and lifecycle commands to another arkestra worker on a different machine. Model names use the `<worker-name>/<model-id>` convention (e.g., `gpu-server/qwen3`). Master servers never download, spawn, or allocate ports for remote models — all HTTP calls are forwarded transparently. |
 | **ONNX Inference** | Native in-memory sessions for embeddings (`bge-*`), Whisper STT, and Kokoro TTS. No subprocesses, no ports — loads directly into Python via `onnxruntime`. Exposed on OpenAI-compatible `/v1/embeddings`, `/v1/audio/transcriptions`, `/v1/audio/speech`. |
-| **Open WebUI Ready** | Admin dashboard at `http://localhost:8080/` with live model management, SSE chat streaming, and structured status reporting (`loaded`, `sleeping`, `unloaded`) for auto-load integration. |
+| **Open WebUI Ready** | Admin dashboard at `http://localhost:8080/` with live model management, SSE chat streaming, and structured status reporting (`loaded`, `stopped`, `unloaded`) for auto-load integration. |
 | **Auto-Start on Inference** | Chat to a stopped or sleeping model starts it automatically. Chat to an uncached model (no checkpoint) fails cleanly with 503. Configure wait timeout per-model: `model-start-timeout: 600`. |
 | **Eject Preserves Visibility** | `unload` removes the cache but keeps the model visible in the admin panel as `unloaded`, ready for re-pull or config edit. |
 | **XDG Config Defaults** | Config files default to `~/.config/arkestra/config.yaml` — no CLI flag needed. Backends resolved from a companion `backends.yaml`. |
@@ -208,7 +208,7 @@ The default is `~/.cache/huggingface/hub`. The [`config.md`](./docs/config.md#de
 ## Configuration Notes
 
 - **Flat keys**: All model parameters (e.g., `temp`, `ctx-size`) are flat keys at the model level — no nested `args:` dict support.
-- **Status mapping**: Internal states map to Open WebUI vocabulary: `STOPPED → sleeping`, `UNCACHED → unloaded`, `RUNNING → loaded`.
+- **Status mapping**: Internal states map to Open WebUI vocabulary: `STOPPED → stopped`, `UNCACHED → unloaded`, `RUNNING → loaded`.
 - **Admin routes only**: Lifecycle control (`start`, `stop`, `restart`) is available via `/admin/*` endpoints — inference-only clients trigger auto-start automatically.
 
 ## Architecture Overview
@@ -224,17 +224,17 @@ For details see [Architecture](./docs/architecture.md) and [Lifecycle](./docs/li
 ```python
 from llm_config_manager.config_manager import ConfigManager    # data layer
 from model_arkestra.arkestra import ModelArkestra              # orchestration (recommended)
-from model_arkestra.base import BaseModelRunner                # abstract base class
-from model_arkestra.process import ProcessModelRunner          # process runner
-from model_arkestra.podman import PodmanModelRunner            # podman runner
-from model_arkestra.docker import DockerModelRunner            # docker runner
-from model_arkestra.container_runner import ContainerModelRunner  # container base class
+from model_arkestra.base import BaseRunner                # abstract base class
+from model_arkestra.process import ProcessRunner          # process runner
+from model_arkestra.podman import PodmanRunner            # podman runner
+from model_arkestra.docker import DockerRunner            # docker runner
+from model_arkestra.container_runner import ContainerRunner  # container base class
 from model_arkestra.unicode_ringbuffer import UnicodeRingBuffer  # log buffer internals
 from model_arkestra.langchain_adapter import LangChainModelAdapter  # LangChain LCEL wrapper
 from model_arkestra.server import ArkestraServer             # OpenAI v1-compatible API server
 from model_arkestra.onnx_server import OnnxServer            # ONNX inference (auxiliary workloads)
 from model_arkestra.onnx_runner import OnnxRunner              # in-memory ONNX runner
-from model_arkestra.remote import RemoteModelRunner             # proxy to remote worker
+from model_arkestra.remote import RemoteRunner             # proxy to remote worker
 
 # Convenience re-exports from __init__.py:
 from model_arkestra import RunnerState, RunnerError, ServerReadyTimeout

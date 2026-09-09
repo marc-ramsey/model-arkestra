@@ -5,9 +5,9 @@ with any of the three runner types (process, podman, docker) via the
 `backends.<id>.runner:` configuration key.
 
 Documented behavior:
-  backends.rocm.runner → "process"    → ProcessModelRunner
-  backends.rocm.runner → "podman"     → PodmanModelRunner
-  backends.rocm.runner → "docker"     → DockerModelRunner
+  backends.rocm.runner → "process"    → ProcessRunner
+  backends.rocm.runner → "podman"     → PodmanRunner
+  backends.rocm.runner → "docker"     → DockerRunner
 
 See docs/config.md and docs/architecture.md for the full specification.
 
@@ -173,7 +173,7 @@ class TestBackendResolution:
     def test_no_backend_falls_back(self):
         cfg = _write_config("models:\n  m1:\n    repo: hugging-face\n    model: test/x:Q4\n")
         mr = ModelArkestra(cfg)
-        # Falls back to BaseModelRunner._DEFAULT_BACKEND when no backend set
+        # Falls back to BaseRunner._DEFAULT_BACKEND when no backend set
         assert mr.resolve_backend_id("m1", {}, None) == "cpu"
 
     def test_flat_backend_default_key(self):

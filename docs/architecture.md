@@ -16,7 +16,7 @@ Model Arkestra handles port allocation and backend→runner routing.
        │                  │
        ▼                  ▼
 ┌──────────────┐  ┌────────────────────────┐
-│ProcessModel  │  │ ContainerModelRunner   │
+│ProcessModel  │  │ ContainerRunner   │
 │    Runner    │  │     (abstract base)     │
 │              │  ├────────────┬───────────┤
 │subprocesses  │  │PodmanModel │ DockerModel│
@@ -51,10 +51,10 @@ Runner type resolution follows a strict precedence: **explicit arguments take pr
 When `runner=` is supplied, that value is used directly:
 
 ```
-runner="podman" → PodmanModelRunner   (verified against registry)
-runner="docker" → DockerModelRunner   (verified against registry)
-runner="process" → ProcessModelRunner  (verified against registry)
-runner="onnx" → OnnxModelRunner       (ONNX inference server)
+runner="podman" → PodmanRunner   (verified against registry)
+runner="docker" → DockerRunner   (verified against registry)
+runner="process" → ProcessRunner  (verified against registry)
+runner="onnx" → OnnxRunner             (ONNX inference server)
 ```
 
 When `backend=` is supplied without `runner=`, the backend's ``runner:`` field (or its engine mapping) determines the runner type.
@@ -109,7 +109,7 @@ Backend identifiers serve as the single naming hub — they connect config, imag
 |---|---|
 | `backends:` key in YAML | `rocm`, `vulkan-radv` |
 | Image tag (per-backend) | Same IDs; each defines its ``image`` tag in backends.yaml |
-| Runner type dispatch | `runner: podman` + backend ID → resolves to correct ContainerModelRunner subclass |
+| Runner type dispatch | `runner: podman` + backend ID → resolves to correct ContainerRunner subclass |
 
 The backend ID never changes across the system — it is the anchor that ties config, images, and runtime execution together.
 
@@ -124,7 +124,7 @@ The starting port and range are driven entirely by config:
 
 When `ModelArkestra.start()` is called without an explicit `port`, it allocates the next available number from this range sequentially. Once all ports in the pool are exhausted, `RuntimeError("Port range exceeded: …")` is raised immediately.
 
-A **direct** runner instance (e.g. ``ProcessModelRunner(cm)``) does **not** use a global counter — it picks ``model-start-port`` as the default for its first model, and subsequent calls reuse existing ports via `_dispatch()` / in-place restart.
+A **direct** runner instance (e.g. ``ProcessRunner(cm)``) does **not** use a global counter — it picks ``model-start-port`` as the default for its first model, and subsequent calls reuse existing ports via `_dispatch()` / in-place restart.
 
 Stopped models **retain their port assignments** in both the orchestrator and direct runner instances. Calling `start()` again on a stopped model restarts it on the same port (in-place). New models are assigned the next unused port from the pool when using `ModelArkestra`.
 

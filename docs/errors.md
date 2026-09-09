@@ -16,7 +16,7 @@ except RunnerError as e:
 | Exception | When raised |
 |---|---|
 | `ServerReadyTimeout` | The server did not become ready (health check returned no 200 within `ready_timeout`). Raised only on total health-check exhaustion. |
-| `ModelNotStarted` | A request was made for a model name that doesn't exist in the config, or the model hasn't been started yet (`start()` not called). Raised by `_dispatch` when no tracked context exists, and during `BaseModelRunner.start()` when model config lookup fails. |
+| `ModelNotStarted` | A request was made for a model name that doesn't exist in the config, or the model hasn't been started yet (`start()` not called). Raised by `_dispatch` when no tracked context exists, and during `BaseRunner.start()` when model config lookup fails. |
 | `ModelShutdown` | A request was made to a model that has been explicitly stopped via `stop()` or `stop_all()` (state is STOPPED or STOPPING). Raised by `_dispatch`. |
 | `MaxRestartsExceeded` | The runner crashed and exhausted all automatic restart attempts (`restart_limit`). State transitions to ERROR; raised by `_dispatch` on any subsequent request. |
 | `RunnerError` | Generic base class for all runner failures, including HTTP errors (502, 503, 504) from the server, connection failures, and general request errors. |
