@@ -1024,7 +1024,7 @@ def main(argv: list[str] | None = None) -> None:
     else:
         cpu_info = hw.get("cpu", {})
         line = f"CPU ({cpu_info.get('arch', platform.machine())})"
-    print(f"  Hardware  → {gpu_str}")
+    print(f"  Hardware  → {line}")
     print(f"  Cache     → {hf_cache}")
     print(f"  Config    → {resolved_path}")
 
