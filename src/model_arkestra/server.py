@@ -16,6 +16,7 @@ import asyncio
 import json
 import os
 import time
+from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 import aiohttp
@@ -39,7 +40,7 @@ except ImportError:
     )
 
 from model_arkestra.base import BaseRunner  # noqa: E402
-from model_arkestra.common import resolve_config_path
+from model_arkestra.common import resolve_config_path, DEFAULT_CONFIG_DIR, default_cache_root
 from model_arkestra.config_manager import ConfigManager
 from model_arkestra.http_proxy import sse_events
 from model_arkestra.types import RunnerState
@@ -976,9 +977,52 @@ def main(argv: list[str] | None = None) -> None:
 
     # ── Startup banner ────────────────────────────────────────────────
     scheme = "https" if args.ssl_certfile else "http"
-    print(f"ModelArkestra OpenAI Server")
+
+    # Resolve hardware info (one-time subprocess call)
+    try:
+        from model_arkestra.gpu_detect import detect_all as _detect_hw
+        hw = _detect_hw()
+    except Exception:
+        hw = {}
+
+    # Resolve cache path from config / env / default
+    hf_cache = None
+    if args.config or Path(resolved_path).exists():
+        try:
+            cm = ConfigManager(str(resolved_path))
+            hc = cm.get("default-env/hf-hub-cache") or os.environ.get("HF_HUB_CACHE")
+            if hc:
+                hf_cache = str(Path(hc).expanduser())
+        except Exception:
+            pass
+    if not hf_cache:
+        hf_cache = str(default_cache_root())
+
+    _v = __import__('importlib.metadata', fromlist=['version']).version('model-arkestra')
+    print(f"ModelArkestra v{_v}")
     print(f"  URL       → {scheme}://{args.host}:{args.port}")
     print(f"  API docs  → {scheme}://{args.host}:{args.port}/docs")
+
+    primary = hw.get("primary_gpu")
+    if primary:
+        runtime_info = hw.get("has_runtime", {})
+        vendor_map = {
+            True: "NVIDIA",
+        }
+        if runtime_info.get("nvidia"):
+            vendor_name = "NVIDIA"
+        elif runtime_info.get("rocm") or runtime_info.get("vulkan"):
+            vendor_name = "AMD" if primary["vendor"] == "amd" else "Vulkan"
+        else:
+            vendor_name = primary.get("vendor", "GPU").title()
+        gpu_str = f"{vendor_name} {primary['name']} ({primary['backend']})"
+    else:
+        cpu_info = hw.get("cpu", {})
+        gpu_str = f"{cpu_info.get('vendor', 'CPU')} (no GPU detected)"
+    print(f"  Hardware  → {gpu_str}")
+    print(f"  Cache     → {hf_cache}")
+    print(f"  Config    → {resolved_path}")
+
     if aliases:
         for k, v in aliases.items():
             print(f"  Alias     {k:20s} → {v}")

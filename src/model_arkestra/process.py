@@ -4,7 +4,7 @@ import os
 import signal
 from typing import Any, Dict, List
 from model_arkestra.base import BaseRunner
-from model_arkestra.common import build_model_args, _resolve_device_profile
+from model_arkestra.common import build_model_args
 from model_arkestra.llama_cpp import LlamaCppEngine
 from model_arkestra.types import _ModelContext
 
@@ -52,9 +52,10 @@ class ProcessRunner(BaseRunner):
         env = os.environ.copy()
         for k, v in (self.cm.data.get("env") or {}).items():
             env[k] = str(v)
-        # Device-profile env vars from detected GPU
-        for k, v in _resolve_device_profile(self.cm).get("env", {}).items():
-            env[k] = str(v)
+        # Device-profile env vars from detected GPU (cached on Arkestra)
+        if self.arkestra:
+            for k, v in self.arkestra.device_profile.items():
+                env[k] = str(v)
         for k, v in (backend.get("env_container") or {}).items():
             env[k] = str(v)
 

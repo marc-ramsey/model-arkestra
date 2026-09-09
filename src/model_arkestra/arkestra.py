@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple
 
 from model_arkestra.config_manager import ModelConfigManager
-from model_arkestra.gpu_detect import has_rocm, has_vulkan, has_nvidia
+from model_arkestra.gpu_detect import has_rocm, has_vulkan, has_nvidia, detect_all as _detect_all
 from model_arkestra.base import BaseRunner
 from model_arkestra.common import (
     _resolve_backend, _resolve_device_profile, default_cache_root,
@@ -62,9 +62,10 @@ class ModelArkestra:
         app_log_lines = int(self._cm.get("default/app-log-lines", 2000))
         self._global_log_buf = UnicodeRingBuffer(app_log_lines * _ModelContext.AVG_LINE_BYTES)
         self._global_log_seq: int = 0
-        # ── Backend runtime validation (hard error on mismatch) ───────
+        # ── Hardware detection (GPU/CPU, single init-time query) ───
         self._validate_backend_runtime()
         self._device_profile: Optional[Dict[str, Any]] = None
+        self._hardware_detection: Optional[Dict[str, Any]] = None
         # ── Pre-create contexts for all configured models ──────────
         self._pre_create_model_contexts()
 
@@ -164,7 +165,24 @@ class ModelArkestra:
         """GPU device-profile env vars (empty dict if no GPU matched)."""
         return self._get_device_profile().get("env", {})
 
-    # ── model context pre-creation ───────────────────────────────
+    @property
+    def device_detection(self) -> Dict[str, Any]:
+        """Raw GPU/CPU detection result — cached once at first access."""
+        if self._hardware_detection is None:
+            self._hardware_detection = _detect_all()
+        return self._hardware_detection
+
+    # ── hardware detection (public API) ────────────────────────
+    @property
+    def hardware(self) -> Dict[str, Any]:
+        """Full GPU/CPU detection result — cached once at first access.
+
+        Returns:
+            Dict with keys: gpus, primary_gpu, primary_backend, gfx_family,
+            multi_gpu_warn, cpu, has_runtime, recommendation, warnings.
+        """
+        return self.device_detection
+
     def _pre_create_model_contexts(self) -> None:
         """Create a _ModelContext for every configured model.
 
