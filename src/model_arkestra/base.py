@@ -423,68 +423,54 @@ class BaseRunner(ABC):
         eff_port = port  # default — overwritten by each path
         model_data = None
 
-        # ── Restart path: reuse existing port ────────────────────────
-        if ctx and ctx.state in (RunnerState.STOPPED, RunnerState.STOPPING):
-            new_size = inference_kwargs.get("max_log_lines", self.log_buffer_size)
-            await self._before_restart(ctx, new_size)
-            eff_port = port if port is not None else ctx.port
-            model_data = None  # reset — will be fetched below
-
         # ── Already running: health-check shortcut ───────────────────
-        elif ctx is not None and ctx.state == RunnerState.RUNNING:
+        if ctx is not None and ctx.state == RunnerState.RUNNING:
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(
                         f"http://127.0.0.1:{ctx.port}/health", timeout=3
                     ) as resp:
                         if resp.status == 200:
-                            # Already healthy — store kwargs for potential restart
                             self._inference_kwargs[model_name] = inference_kwargs
                             return
             except Exception:
                 pass
 
-        # ── New model: allocate port & create context ────────────────
+        # ── Restart or first start: resolve port ─────────────────────
+        if ctx and ctx.state in (RunnerState.STOPPED, RunnerState.STOPPING):
+            new_size = inference_kwargs.get("max_log_lines", self.log_buffer_size)
+            await self._before_restart(ctx, new_size)
+            model_data = None  # reset — will be fetched below
+
+        if port is not None:
+            eff_port = port
+        elif ctx and ctx.port is not None:
+            eff_port = ctx.port
         else:
-            eff_port = port if port is not None else int(
+            eff_port = int(
                 (self.cm.data.get("default") or {}).get('model-start-port', 18000)
             )
-            if not isinstance(eff_port, int) or eff_port < 1 or eff_port > 65535:
-                raise ValueError(f"Invalid port: {eff_port}")
 
+        if not isinstance(eff_port, int) or eff_port < 1 or eff_port > 65535:
+            raise ValueError(f"Invalid port: {eff_port}")
+
+        if model_data is None:
             model_data = self.cm.get_model(model_name, env_vars={"PORT": str(eff_port)})
             if not model_data:
                 raise ModelNotStarted(model_name)
-
             effective_backend = backend or model_data.get("backend")
             effective_backend = _resolve_backend(self.cm, model_data, model_name, effective_backend)
             if not effective_backend:
                 raise RuntimeError(f"No backend resolved for model '{model_name}'")
-            log_size = inference_kwargs.get("max_log_lines", self.log_buffer_size)
 
-            ctx = _ModelContext(model_name, eff_port, max_log_lines=log_size)
-            ctx.backend_id = effective_backend
-            ctx.broadcast_addr = self.broadcast_addr
-            # Resolve cache directory — private attr, never serialized
-            default_section = (self.cm.data.get("default") or {})
-            resolved = resolve_model_ref(
-                raw=model_data.get("model"),
-                default_section=default_section,
-                model_repos=self.cm.data.get("model-repos"),
-            )
-            if resolved.cache_path:
-                cache_root = default_cache_root()
-                ctx._cache_dir = cache_root / f"models--{resolved.cache_path}"
-                os.makedirs(ctx._cache_dir, exist_ok=True)
-            self._models[model_name] = ctx
-            ctx.state = RunnerState.LOADING
-            if self.arkestra:
-                self.arkestra.log(f"[start] model={model_name} port={eff_port} backend={effective_backend}")
+        # Update existing context — pre-creation set backend_id, runner_type, cache.
+        ctx.port = eff_port
+        ctx.backend_id = effective_backend
+        ctx.state = RunnerState.LOADING
+        if self.arkestra:
+            self.arkestra.log(f"[start] model={model_name} port={eff_port} backend={effective_backend}")
 
         await self._ensure_port_available(eff_port)
-
-        if not model_data:
-            model_data = self.cm.get_model(model_name, env_vars={"PORT": str(eff_port)})
 
         # ── Apply transient overrides from inference_kwargs ──────────
         for key in ('args', 'model'):
@@ -567,9 +553,6 @@ class BaseRunner(ABC):
         if self.arkestra:
             self.arkestra.log(f"[stop] model={ctx.name} port={ctx.port}")
         await self._stop_model_process(ctx)
-        # Release port but keep entry for restart-on-start semantics
-        if hasattr(ctx, 'port'):
-            await self._release_port(ctx.port)
         ctx.state = RunnerState.STOPPED
         if self.arkestra:
             self.arkestra.log(f"[stop] model={ctx.name} DONE")

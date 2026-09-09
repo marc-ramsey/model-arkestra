@@ -210,12 +210,6 @@ class ModelArkestra:
             if runner_type in ("remote", "onnx"):
                 continue
 
-            # Allocate port from the pool
-            try:
-                port = self.worker_port(model_name)
-            except RuntimeError:
-                port = 0  # fallback: no port available yet
-
             # Determine initial state based on cache existence
             resolved = resolve_model_ref(
                 raw=model_cfg.get("model", ""),
@@ -234,9 +228,9 @@ class ModelArkestra:
 
             state = RunnerState.STOPPED if is_cached else RunnerState.UNCACHED
 
-            # Create and register the context
+            # Create and register the context — port assigned at first start only.
             from model_arkestra.types import _ModelContext
-            ctx = _ModelContext(model_name, port, max_log_lines=500)
+            ctx = _ModelContext(model_name, None, max_log_lines=500)
             ctx.backend_id = backend_id
             ctx.runner_type = runner_type
             ctx.state = state
