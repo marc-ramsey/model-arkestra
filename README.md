@@ -14,6 +14,7 @@ For more developed applications with similar function, see [llama-swap](https://
 | Start using Model Arkestra in Python code | [Usage Guide](./docs/usage.md) |
 | Run the OpenAI-compatible API server | [Server Documentation](./docs/server.md) |
 | Manage models via web UI / Admin panel | [Admin API & Dashboard](./docs/admin.md) |
+| Use the `arkestra` CLI (models, chat, init) | See below |
 | Use the `arkestra-admin` CLI | See below |
 | Offload embeddings/TTS/STT to ONNX | [ONNX Server](./docs/onnx-server.md) |
 | Federate inference across multiple machines | [Remote Federation](#quick-start---remote-federation) |
@@ -33,7 +34,7 @@ After setup, CLI commands work from any directory — no activation needed:
 
 ```bash
 arkestra-server --config config.yaml --port 8080
-arkestra list
+arkestra models
 ```
 
 ### Quick Start — Python API
@@ -64,10 +65,24 @@ Then hit `POST /v1/chat/completions` with any OpenAI-compatible client, or visit
 ### Quick Start — User CLI
 
 ```bash
+arkestra init                        # scaffold config.yaml + backends.yaml
+arkestra models [-m qwen3-4b]        # list cached models (name, size)
 arkestra chat -m qwen3-4b            # interactive chat (auto-starts if stopped)
-arkestra pull qwen3-4b                # download checkpoint from HuggingFace
-arkestra models [-m qwen3-4b]        # list all or single model status
+arkestra chat -m qwen3-4b -T 0.5 --max-tokens 256   # with inference flags
 ```
+
+Connection resolution (same for `arkestra` and `arkestra-server`):
+
+| Priority | Source | Example |
+|---|---|---|
+| 1 | CLI flag | `--host 10.0.0.1 --port 9000` |
+| 2 | Environment | `ARKESTRA_HOST=10.0.0.1 ARKESTRA_PORT=9000` |
+| 3 | Config | `default: admin-port: 9000` in `config.yaml` |
+| 4 | Default | `127.0.0.1:8080` |
+
+Config location: `--config` / `ARKESTRA_CONFIG` / `ARKESTRA_DIR` / `~/.config/arkestra/config.yaml`.
+
+In-loop commands during chat: `/help`, `/quit`, `/clear`, `/history`, `/system <txt>`, `/temperature <n>`, `/top-p <n>`, `/max-tokens <n>`, `/frequency-penalty <n>`, `/presence-penalty <n>`, `/stop <txt>`.
 
 ### Quick Start — Admin CLI
 
@@ -203,7 +218,7 @@ The default is `~/.cache/huggingface/hub`. The [`config.md`](./docs/config.md#de
 | **Eject Preserves Visibility** | `unload` removes the cache but keeps the model visible in the admin panel as `unloaded`, ready for re-pull or config edit. |
 | **XDG Config Defaults** | Config files default to `~/.config/arkestra/config.yaml` — no CLI flag needed. Backends resolved from a companion `backends.yaml`. |
 | **Restart Resilience** | Crash detection with configurable restart limits and backoff delays. Stopped models reuse their original port on restart. |
-| **CLI Tooling** | `arkestra` for user-facing commands: chat, pull, unload, status. `arkestra-admin` for server ops: start, stop, config, logs, images, shutdown. API-key secured. |
+| **CLI Tooling** | `arkestra` for user-facing commands: models, chat, init. `arkestra-admin` for server ops: start, stop, config, logs, images, shutdown. API-key secured. |
 
 ## Configuration Notes
 

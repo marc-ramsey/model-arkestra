@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project.scripts]
 arkestra       = "model_arkestra.cli:main"
 arkestra-admin = "model_arkestra.admin_cli:main"
-arkestra-init  = "model_arkestra.cli:cmd_init_wrapper"
+arkestra-init  = "model_arkestra.cli:cmd_init"
 arkestra-server = "model_arkestra.server:main"
 arkestra-onnx  = "model_arkestra.onnx_server:main"
 

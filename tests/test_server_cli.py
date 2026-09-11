@@ -22,11 +22,11 @@ def _make_config(data: dict, tmp_path: Path) -> Path:
 
 
 class TestPortResolution:
-    """Resolution order for --port: CLI > env PORT > config admin-port > 8080."""
+    """Resolution order for --port: CLI > env ARKESTRA_PORT > config admin-port > 8080."""
 
     def test_cli_port_takes_all_precedence(self, tmp_path):
         cfg = _make_config({"admin-port": 9090}, tmp_path)
-        with patch.dict(os.environ, {"PORT": "9091"}):
+        with patch.dict(os.environ, {"ARKESTRA_PORT": "9091"}):
             mock_app = MagicMock()
             with patch("model_arkestra.server.ArkestraServer") as MockAs, \
                  patch("model_arkestra.server.uvicorn.run"):
@@ -38,7 +38,7 @@ class TestPortResolution:
 
     def test_env_port_overrides_config(self, tmp_path):
         cfg = _make_config({"admin-port": 9090}, tmp_path)
-        with patch.dict(os.environ, {"PORT": "9091"}):
+        with patch.dict(os.environ, {"ARKESTRA_PORT": "9091"}):
             mock_app = MagicMock()
             with patch("model_arkestra.server.ArkestraServer") as MockAs, \
                  patch("model_arkestra.server.uvicorn.run"):
@@ -50,7 +50,7 @@ class TestPortResolution:
 
     def test_config_admin_port_used(self, tmp_path):
         cfg = _make_config({"default": {"admin-port": 9092}}, tmp_path)
-        env = {k: v for k, v in os.environ.items() if k != "PORT"}
+        env = {k: v for k, v in os.environ.items() if k != "ARKESTRA_PORT"}
         with patch.dict(os.environ, env, clear=True):
             mock_app = MagicMock()
             with patch("model_arkestra.server.ArkestraServer") as MockAs, \
@@ -63,7 +63,7 @@ class TestPortResolution:
 
     def test_hardwired_default_8080(self, tmp_path):
         cfg = _make_config({}, tmp_path)
-        env = {k: v for k, v in os.environ.items() if k not in ("PORT",)}
+        env = {k: v for k, v in os.environ.items() if k not in ("ARKESTRA_PORT",)}
         with patch.dict(os.environ, env, clear=True):
             mock_app = MagicMock()
             with patch("model_arkestra.server.ArkestraServer") as MockAs, \
@@ -76,7 +76,7 @@ class TestPortResolution:
 
     def test_missing_config_uses_default(self, tmp_path):
         cfg = _make_config({}, tmp_path)
-        env = {k: v for k, v in os.environ.items() if k not in ("PORT",)}
+        env = {k: v for k, v in os.environ.items() if k not in ("ARKESTRA_PORT",)}
         with patch.dict(os.environ, env, clear=True):
             mock_app = MagicMock()
             with patch("model_arkestra.server.ArkestraServer") as MockAs, \
@@ -126,7 +126,7 @@ class TestTimeoutResolution:
 
 
 class TestHostResolution:
-    """Resolution for --host: CLI > env HOST > default '0.0.0.0'."""
+    """Resolution for --host: CLI > env ARKESTRA_HOST > default '0.0.0.0'."""
 
     def test_cli_host_precedence(self, tmp_path):
         cfg = _make_config({}, tmp_path)
@@ -141,7 +141,7 @@ class TestHostResolution:
 
     def test_env_host_overrides_default(self, tmp_path):
         cfg = _make_config({}, tmp_path)
-        with patch.dict(os.environ, {"HOST": "127.0.0.1"}):
+        with patch.dict(os.environ, {"ARKESTRA_HOST": "127.0.0.1"}):
             mock_app = MagicMock()
             with patch("model_arkestra.server.ArkestraServer") as MockAs, \
                  patch("model_arkestra.server.uvicorn.run"):
@@ -151,7 +151,7 @@ class TestHostResolution:
 
     def test_default_is_0000(self, tmp_path):
         cfg = _make_config({}, tmp_path)
-        env = {k: v for k, v in os.environ.items() if k not in ("HOST",)}
+        env = {k: v for k, v in os.environ.items() if k not in ("ARKESTRA_HOST",)}
         with patch.dict(os.environ, env, clear=True):
             mock_app = MagicMock()
             with patch("model_arkestra.server.ArkestraServer") as MockAs, \

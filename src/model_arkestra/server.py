@@ -45,6 +45,7 @@ except ImportError:
 from model_arkestra.base import BaseRunner  # noqa: E402
 from model_arkestra.common import resolve_config_path, DEFAULT_CONFIG_DIR, default_cache_root
 from model_arkestra.config_manager import ConfigManager
+from model_arkestra.conn import add_common_args, resolve_conn
 from model_arkestra.http_proxy import sse_events
 from model_arkestra.types import RunnerState
 
@@ -834,21 +835,6 @@ def main(argv: list[str] | None = None) -> None:
         description="ModelArkestra OpenAI-compatible server",
     )
     parser.add_argument(
-        "--config", "-c",
-        default=None,
-        help="Path to YAML config file (default: ~/.config/arkestra/config.yaml)",
-    )
-    parser.add_argument(
-        "--port", "-p",
-        type=int, default=None,
-        help="HTTP port to listen on (default: 8080)",
-    )
-    parser.add_argument(
-        "--host", "-H",
-        default=None,
-        help='Bind address — use "127.0.0.1" for localhost-only (default: 0.0.0.0)',
-    )
-    parser.add_argument(
         "--ready-timeout", "-t",
         type=float, default=None,
         help='Seconds to wait for models during startup (default: 120)',
@@ -861,11 +847,6 @@ def main(argv: list[str] | None = None) -> None:
             'OpenAI model alias mapping in KEY=VALUE form. Repeat for multiple '
             'e.g. -a gpt-4=qwen3.5-4b -a claude=gemma-4-e2b'
         ),
-    )
-    parser.add_argument(
-        "--api-key",
-        default=None,
-        help="Require this Bearer token on every request (basic auth bypass)",
     )
     parser.add_argument(
         "--cors",
@@ -901,6 +882,7 @@ def main(argv: list[str] | None = None) -> None:
             'localhost only. Overrides config.runners.broadcast_addr. Default: auto (0.0.0.0)'
         ),
     )
+    add_common_args(parser)
 
     args = parser.parse_args(argv)
 
@@ -919,21 +901,10 @@ def main(argv: list[str] | None = None) -> None:
         return cfg_cm.get(path, default) if cfg_cm else default  # type: ignore[union-attr]
 
     # ── Resolve args in order: CLI > env > config > hardwired default ───
-    if args.port is None:
-        env_port = os.environ.get("PORT")
-        if env_port:
-            try:
-                args.port = int(env_port)
-            except ValueError:
-                pass
-        if args.port is None:
-            args.port = _cfg_get("default/admin-port", 8080)
-    if args.host is None:
-        env_host = os.environ.get("HOST")
-        if env_host:
-            args.host = env_host
-        else:
-            args.host = "0.0.0.0"
+    conn = resolve_conn(args, server=True, cfg_get=_cfg_get)
+    args.host = conn.host
+    args.port = conn.port
+    args.api_key = conn.api_key
     if args.ready_timeout is None:
         cfg_to = _cfg_get("default/warmup-time")
         if cfg_to is not None:

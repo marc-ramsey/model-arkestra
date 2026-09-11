@@ -2,6 +2,52 @@
 
 This guide walks through common Model Arkestra operations: initializing the orchestrator or a direct runner, starting and stopping models, sending prompts, streaming responses, and graceful shutdown.
 
+## CLI
+
+The `arkestra` CLI provides user-facing commands. Connection resolution follows: **CLI flag > env > config > default**.
+
+```bash
+arkestra init                        # scaffold config.yaml + backends.yaml
+arkestra models [-m qwen3-4b]        # list cached models (name, size)
+arkestra chat -m qwen3-4b            # interactive chat (auto-starts if stopped)
+```
+
+### Chat inference flags
+
+```bash
+arkestra chat -m qwen3-4b -T 0.5 --top-p 0.9 --max-tokens 256 \
+              --frequency-penalty 0.3 --presence-penalty 0.5 --stop "\n\n"
+```
+
+### In-loop commands
+
+During chat, type `/`-commands to adjust parameters or manage the conversation:
+
+| Command | Description |
+|---|---|
+| `/help` | Show all commands |
+| `/quit` or `/exit` | Exit the chat |
+| `/clear` | Clear conversation history |
+| `/history` | Show full conversation history |
+| `/system <txt>` | Change the system prompt |
+| `/temperature <n>` | Set sampling temperature (no value shows current) |
+| `/top-p <n>` | Set nucleus sampling |
+| `/max-tokens <n>` | Set max tokens to generate |
+| `/frequency-penalty <n>` | Set frequency penalty |
+| `/presence-penalty <n>` | Set presence penalty |
+| `/stop <txt>` | Set stop sequence |
+
+### Environment variables
+
+| Variable | Purpose |
+|---|---|
+| `ARKESTRA_CONFIG` | Path to config.yaml |
+| `ARKESTRA_DIR` | Directory containing config.yaml |
+| `ARKESTRA_HOST` | Target host (client) or bind address (server) |
+| `ARKESTRA_PORT` | HTTP port |
+| `ARKESTRA_API_KEY` | Bearer token for auth |
+| `ARKESTRA_BASE_PATH` | URL path prefix |
+
 ## Basic Initialization
 
 ### Orchestration layer (recommended)

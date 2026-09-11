@@ -7,7 +7,7 @@ Model Arkestra ships a production-ready OpenAI v1-compatible API server that sit
 The simplest way to start is as a standalone process:
 
 ```bash
-python -m model_arkestra.server --config config.yaml --port 8080
+arkestra-server --config config.yaml --port 8080
 ```
 
 This launches a FastAPI server backed by ModelArkestra on port 8080. Models load lazily — the first request to `/v1/chat/completions` for a given model triggers its startup.
@@ -16,18 +16,31 @@ This launches a FastAPI server backed by ModelArkestra on port 8080. Models load
 
 | Option | Short | Default | Description |
 |---|---|---|---|
-| `--config` / `-c` | *(optional)* | `~/.config/arkestra/config.yaml` | Path to YAML config file |
-| `--port` / `-p` | — | `8080` | HTTP port to listen on |
-| `--host` / `-H` | — | `0.0.0.0` | Bind address — use `127.0.0.1` for localhost-only |
+| `--config` / `-c` | *(optional)* | `~/.config/arkestra/config.yaml` | Path to YAML config file (env: `ARKESTRA_CONFIG` / `ARKESTRA_DIR`) |
+| `--port` / `-p` | — | `8080` | HTTP port to listen on (env: `ARKESTRA_PORT`) |
+| `--host` / `-H` | — | `0.0.0.0` | Bind address — use `127.0.0.1` for localhost-only (env: `ARKESTRA_HOST`) |
+| `--api-key` | — | — | Require this Bearer token on every request (env: `ARKESTRA_API_KEY`) |
 | `--ready-timeout` / `-t` | — | `120` | Seconds to wait for models during startup |
 | `--alias` / `-a` | — | — | OpenAI model alias mapping (`KEY=VALUE`). Repeat for multiple, e.g. `-a gpt-4=qwen3 -a claude=gemma` |
-| `--api-key` | — | — | Require this Bearer token on every request (basic auth bypass) |
 | `--cors` | — | `false` | Enable full CORS via CORSMiddleware — handles preflight OPTIONS, all standard Access-Control headers. Accepts any origins (`"*"`) by default. |
 | `--ssl-certfile` | — | — | Path to TLS certificate file (PEM) |
 | `--ssl-keyfile` | — | — | Path to TLS private key file (PEM) |
 | `--log-level` | — | `info` | Uvicorn log level |
 | `--workers` / `-w` | — | `1` | Number of worker processes |
 | `--broadcast-addr` | — | auto | Address models bind to (`0.0.0.0` or `127.0.0.1`). No CLI value defers to config ``runners.broadcast_addr``, then global default ``0.0.0.0``. |
+
+### Environment Variables
+
+All connection flags can be set via environment variables instead of CLI flags. Resolution order: **CLI flag > env > config > default**.
+
+| Variable | Purpose |
+|---|---|
+| `ARKESTRA_CONFIG` | Path to config.yaml |
+| `ARKESTRA_DIR` | Directory containing config.yaml (resolved to `$DIR/config.yaml`) |
+| `ARKESTRA_HOST` | Bind address (server) or target host (client) |
+| `ARKESTRA_PORT` | HTTP port |
+| `ARKESTRA_API_KEY` | Bearer token for auth |
+| `ARKESTRA_BASE_PATH` | URL path prefix (e.g. `/arkestra` for reverse-proxy setups) |
 
 ## Usage — Embed Into an Existing App
 

@@ -187,13 +187,26 @@ SUBPROCESS_ENV: Dict[str, str] = dict(os.environ)
 # ── Default config directory ───────────────────────────────────────────────
 DEFAULT_CONFIG_DIR = Path.home() / ".config" / "arkestra"
 
+# Shared env-var names for config location (connection-side names live in conn.py).
+ENV_CONFIG = "ARKESTRA_CONFIG"   # full path to config.yaml (overrides the dir)
+ENV_DIR = "ARKESTRA_DIR"         # config directory (config.yaml + backends.yaml)
+
+
+def config_dir() -> Path:
+    """Config directory: ``$ARKESTRA_DIR`` (expanded) or ``~/.config/arkestra``."""
+    val = os.environ.get(ENV_DIR)
+    if val:
+        return Path(os.path.expandvars(val)).expanduser()
+    return DEFAULT_CONFIG_DIR
+
 
 def resolve_config_path(config_path: Optional[str] = None) -> Path:
-    """Resolve config.yaml path from explicit arg or default location.
+    """Resolve the config.yaml path.
 
     Resolution order:
       1. Explicit ``config_path`` argument (absolute or relative)
-      2. ``DEFAULT_CONFIG_DIR / 'config.yaml'``
+      2. ``$ARKESTRA_CONFIG`` (full path)
+      3. ``$ARKESTRA_DIR/config.yaml`` (or ``~/.config/arkestra/config.yaml``)
 
     Does NOT create the directory — that's left to ConfigManager which will
     raise FileNotFoundError with a clear message pointing users to
@@ -201,20 +214,23 @@ def resolve_config_path(config_path: Optional[str] = None) -> Path:
     """
     if config_path:
         return Path(os.path.expandvars(config_path)).expanduser()
-    return DEFAULT_CONFIG_DIR / "config.yaml"
+    val = os.environ.get(ENV_CONFIG)
+    if val:
+        return Path(os.path.expandvars(val)).expanduser()
+    return config_dir() / "config.yaml"
 
 
 def resolve_backends_path(config_dir: Optional[str] = None) -> Optional[Path]:
-    """Resolve backends.yaml path from explicit arg or default location.
+    """Resolve backends.yaml path from an explicit dir or the config directory.
 
     Resolution order:
       1. Explicit ``config_dir`` argument → ``{config_dir}/backends.yaml``
-      2. ``DEFAULT_CONFIG_DIR / 'backends.yaml'``
+      2. ``$ARKESTRA_DIR/backends.yaml`` (or ``~/.config/arkestra/backends.yaml``)
 
     Returns None if neither resolves to an existing file (caller should
     treat as "no backends configured" and fall back to Containerfile builds).
     """
-    base = Path(os.path.expandvars(config_dir)).expanduser() if config_dir else DEFAULT_CONFIG_DIR
+    base = Path(os.path.expandvars(config_dir)).expanduser() if config_dir else config_dir()
     path = base / "backends.yaml"
     return path if path.exists() else None
 
