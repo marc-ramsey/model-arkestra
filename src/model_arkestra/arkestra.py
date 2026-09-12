@@ -36,6 +36,7 @@ class ModelArkestra:
         config_path: Optional[str] = None,
         start_port: int = 18000,
         backends_config: Optional[Dict[str, Any]] = None,
+        local_url: str = "",
         **runner_kwargs: Any,
     ):
         # Resolve config path — defaults to ~/.config/arkestra/config.yaml
@@ -53,15 +54,16 @@ class ModelArkestra:
 
         self._runners: Dict[str, BaseRunner] = {}
         self._runner_kwargs = runner_kwargs
-        # ── Cluster topology ───────────────────────────────────────
-        self._load_clusters()
-        # Extract sources section for binary_downloader compatibility
-        self._sources: Dict[str, Any] = self._cm.get("sources", {})
         # ── Global log buffer (single ring for all server-level events) ─
         default_section = self._cm.get("default", {})
         app_log_lines = int(self._cm.get("default/app-log-lines", 2000))
         self._global_log_buf = UnicodeRingBuffer(app_log_lines * _ModelContext.AVG_LINE_BYTES)
         self._global_log_seq: int = 0
+        # ── Cluster topology ───────────────────────────────────────
+        self._local_cluster_key: str = self._cm.get("default/local-cluster-key", "local")
+        self._load_clusters(local_url=local_url)
+        # Extract sources section for binary_downloader compatibility
+        self._sources: Dict[str, Any] = self._cm.get("sources", {})
         # ── Hardware detection (GPU/CPU, single init-time query) ───
         self._validate_backend_runtime()
         self._device_profile: Optional[Dict[str, Any]] = None
@@ -245,24 +247,32 @@ class ModelArkestra:
 
 
     # ── cluster topology ───────────────────────────────────────────
-    def _load_clusters(self) -> None:
+    def _load_clusters(self, local_url: str = "") -> None:
         """Load managed arkestra clusters from config.
+
+        A cluster entry is just ``{name, url}`` in the same URL form as the
+        server's public address (``ARKESTRA_URL`` / ``default.url``).  The local
+        cluster is synthesized from that same canonical URL so it always agrees
+        with the server's bind/prefix.
 
         Config structure::
 
             clusters:
               worker0:                    # remote managed
-                base-url: http://worker0:8080
+                url: http://worker0:8080/base
                 admin-key: secret         # optional
         """
         self._clusters: Dict[str, Dict[str, Any]] = {}
 
-        # Auto-create the local cluster
-        host = self._cm.get("default/host", "0.0.0.0")
-        port = self._cm.get("default/admin-port", 8080)
+        # Auto-create the local cluster from the canonical public URL.
+        # Fallback (no default.url) reconstructs it from bind host + port.
+        if not local_url:
+            host = self._cm.get("default/host", "127.0.0.1")
+            port = self._cm.get("default/admin-port", 8080)
+            local_url = f"http://{host}:{port}"
         self._local_cluster_key: str = self._cm.get("default/local-cluster-key", "local")
         self._clusters[self._local_cluster_key] = {
-            "base-url": f"http://{host}:{port}",
+            "url": local_url.rstrip("/"),
             "admin-key": self._cm.get("env/ADMIN_KEY"),
         }
 
@@ -273,14 +283,13 @@ class ModelArkestra:
         for name, cfg in raw_clusters.items():
             if not isinstance(cfg, dict):
                 continue
-            base_url = cfg.get("base-url", "")
-            if not base_url:
-                self.log(f"[config] skipping cluster '{name}': missing base-url", level="WARNING")
+            url = cfg.get("url", "")
+            if not url:
+                self.log(f"[config] skipping cluster '{name}': missing url", level="WARNING")
                 continue
             # Strip trailing slash for consistency
             cfg = dict(cfg)
-            if isinstance(base_url, str):
-                cfg["base-url"] = base_url.rstrip("/")
+            cfg["url"] = str(url).rstrip("/")
             self._clusters[name] = cfg
 
     def _parse_cluster_prefix(self, model_name: str) -> Tuple[str, str]:
@@ -314,8 +323,19 @@ class ModelArkestra:
             raise ValueError(f"Unknown cluster '{cluster_name}' for model '{model_name}'. "
                              f"Declare it in the 'clusters:' top-level key or add a backend "
                              f"entry with runner='remote' and base_url.")
-        base_url = cfg.get("base-url") if cluster_name != self._local_cluster_key else None
+        base_url = cfg.get("url") if cluster_name != self._local_cluster_key else None
         return cluster_name, base_url, local_id
+
+    def local_model_name(self, model_name: str) -> str:
+        """Strip a ``<cluster>/`` prefix; unknown prefixes pass through.
+
+        Runner contexts are always tracked under the local model id, so every
+        dispatch path resolves through this helper first.
+        """
+        try:
+            return self.resolve_model_cluster_addr(model_name)[2]
+        except ValueError:
+            return model_name
 
     # ── ConfigManager delegation ───────────────────────────────────────
     @property
@@ -435,9 +455,10 @@ class ModelArkestra:
         return _resolve_backend(self._cm, model, model_name, None)
 
     def _get_runner(self, model_name: str, env_vars: Dict[str, Any], backend: Optional[str] = None) -> BaseRunner:
-        # Find the runner that has this model
+        # Find the runner that has this model (cluster names tracked under local id)
+        local_name = self.local_model_name(model_name)
         for r in self._runners.values():
-            if model_name in r._models and r._models[model_name].state == RunnerState.RUNNING:
+            if local_name in r._models and r._models[local_name].state == RunnerState.RUNNING:
                 return r
         runner_type = self.resolve_runner_type(model_name, env_vars, backend)
         return self.get_runner_instance(runner_type, model_name)
@@ -650,6 +671,10 @@ class ModelArkestra:
         ctx = runner._models[local_name]
         ctx.runner_type = resolved_runner
         ctx._runner = runner
+        if resolved_runner == "remote" and not ctx._remote_base_url:
+            # Legacy remote backend (runner: remote + base_url, no cluster prefix)
+            ctx._remote_base_url = str(be_cfg.get("base_url", "")).rstrip("/")
+            ctx._admin_key = be_cfg.get("admin_key") or be_cfg.get("admin-key") or ""
         self.log(f"[action=start model={model_name} port={port}]")
 
     async def execute(self, model_name: str, capability: str, **kwargs) -> Any:
@@ -720,6 +745,7 @@ class ModelArkestra:
         inference_kwargs = {k: v for k, v in overrides.items() if k not in {"port", "backend", "runner"}}
 
         # Find or create the remote runner (shared per model instance)
+        cluster_cfg = self._clusters.get(cluster_name) or {}
         ctx = self.find_context(local_name)
         if ctx is None:
             log_size = inference_kwargs.get("max_log_lines", self._cm.get("default/log-buffer-size", 2000))
@@ -728,6 +754,7 @@ class ModelArkestra:
             ctx.backend_id = "remote"
             ctx.cluster = cluster_name
             ctx._remote_base_url = base_url
+            ctx._admin_key = cluster_cfg.get("admin-key") or cluster_cfg.get("admin_key") or ""
             runner = self.get_runner_instance("remote")
             runner._models[local_name] = ctx  # noqa: SLF001
             ctx._runner = runner
@@ -745,7 +772,7 @@ class ModelArkestra:
         Returns OpenAI-compatible response with ``data[].embedding`` list.
         """
         runner = self._get_runner(model_name, {}, None)
-        return await runner.embed(model_name, text)  # type: ignore[attr-defined]
+        return await runner.embed(self.local_model_name(model_name), text)  # type: ignore[attr-defined]
 
     async def transcribe(self, model_name: str, audio_bytes: bytes,
                          language: Optional[str] = None) -> Dict[str, Any]:
@@ -961,27 +988,36 @@ class ModelArkestra:
     # ── request API ────────────────────────────────────────────────────
     async def ainvoke(self, model_name: str, prompt: str = "", backend: Optional[str] = None,
                       messages: Optional[list] = None, **kwargs: Any) -> str:
+        return (await self.ainvoke_full(model_name, prompt, backend=backend,
+                                        messages=messages, **kwargs)).get("content", "")
+
+    async def ainvoke_full(self, model_name: str, prompt: str = "", backend: Optional[str] = None,
+                           messages: Optional[list] = None, **kwargs: Any) -> Dict[str, Any]:
+        """Run inference, returning the full ``{"content", "usage"}`` dict."""
         runner = self._get_runner(model_name, {}, backend)
+        local_name = self.local_model_name(model_name)
         if messages is not None:
-            return await runner.ainvoke(model_name, "", messages=messages, **kwargs)
-        return await runner.ainvoke(model_name, prompt, **kwargs)
+            return await runner.ainvoke_full(local_name, "", messages=messages, **kwargs)
+        return await runner.ainvoke_full(local_name, prompt, **kwargs)
 
     async def astream(self, model_name: str, payload: Dict[str, Any], backend: Optional[str] = None) -> AsyncIterator[Dict[str, Any]]:
         runner = self._get_runner(model_name, {}, backend)
+        local_name = self.local_model_name(model_name)
         if "messages" not in payload and "prompt" in payload:
             # Keep prompt-based flow (backward compat)
             pass
         # If messages are already in payload (list of dicts), they go through as-is
-        async for chunk in runner.astream(model_name, payload):
+        async for chunk in runner.astream(local_name, payload):
             yield chunk
 
     async def request(self, model_name: str, path: str, **kwargs: Any) -> Any:
         runner = self._get_runner(model_name, {}, None)
-        return await runner.request(model_name, path, **kwargs)
+        return await runner.request(self.local_model_name(model_name), path, **kwargs)
 
     async def get_logs(self, model_name: str, lines: int = 100) -> List[str]:
         """Return the last N log lines for a model."""
+        local_name = self.local_model_name(model_name)
         for r in self._runners.values():
-            if model_name in r._models:  # noqa: SLF001
-                return await r.get_logs(model_name, lines)
+            if local_name in r._models:  # noqa: SLF001
+                return await r.get_logs(local_name, lines)
         return []

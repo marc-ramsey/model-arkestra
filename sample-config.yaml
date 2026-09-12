@@ -1,6 +1,8 @@
 # ModelArkestra configuration — reference schema
 
 default:
+  url: http://127.0.0.1:8080   # public address (host+port+optional /prefix). Env: ARKESTRA_URL, CLI: --url
+  bind: 127.0.0.1              # server bind; use 0.0.0.0 to expose on the LAN. CLI: --bind
   model-start-port: 18000     # first port in the allocated range
   model-ports: 32              # number of ports available
   warmup-time: 10              # seconds to wait after model start

@@ -117,7 +117,6 @@ Resolution: constructor arg → `_env[key]`.
 | `admin_key` | `ADMIN_KEY` | Admin panel API key — gates `/admin/*` paths. |
 | `api_key` | `API_KEY` | Public API key — gates `/api/*` paths. |
 | `hf-hub-cache` | `HF_HUB_CACHE` | HuggingFace model cache directory. |
-| `arkestra-base-path` | `ARKESTRA_BASE_PATH` | URL path prefix for all endpoints (e.g. `/ark`). Empty for no prefix. |
 
 Keys can also be overridden at runtime via the actual process environment variable — values in `_env` reflect the merged state of YAML defaults and process env.
 
@@ -126,7 +125,6 @@ Keys can also be overridden at runtime via the actual process environment variab
 default-env:
   admin_key: "supersecret"
   hf-hub-cache: /data/hf-cache
-  arkestra-base-path: /ark
 ```
 
 ## Configuration Keys
@@ -135,6 +133,8 @@ default-env:
 
 | Key | Type | Default | Description |
 |---|---|---|---|
+| `url` (in `default:`) | `str` | `http://127.0.0.1:8080` | Public address `scheme://host:port/prefix`. The path component is the URL prefix. Env: `ARKESTRA_URL`, CLI: `--url`. |
+| `bind` (in `default:`) | `str` | `127.0.0.1` | Server bind address — `127.0.0.1` for local only, `0.0.0.0` to expose on the LAN. CLI: `--bind`. |
 | `model-start-port` (in `default:`) | `int` | `18000` | First port in the auto-allocated range. |
 | `model-ports` (in `default:`) | `int` | `32` | Number of ports available — valid range is `model-start-port` through `model-start-port + model-ports - 1`. |
 | `warmup-time` (in `default:`) | `float` | `10.0` | Seconds to wait after `/health` returns OK before marking the model as `"running"`. |
@@ -358,16 +358,14 @@ backends:
 
 ### Federated Clusters
 
-The `clusters:` top-level key defines managed arkestra instances. Model names prefixed `<cluster>/<model-id>` route to the matching cluster:
+The `clusters:` top-level key defines managed arkestra instances. Each entry is just `{name, url}` in the same URL form as the server's public address (`ARKESTRA_URL` / `default.url`). The **local** cluster is auto-created from that same canonical URL, so it always agrees with the server's bind/prefix. Model names prefixed `<cluster>/<model-id>` route to the matching cluster:
 
 ```yaml
 clusters:
-  local:                          # auto-created from server host/port
-    base-url: "http://127.0.0.1:18000"
   gpu-server:
-    base-url: "http://192.168.1.42:18000"
+    url: "http://192.168.1.42:18000/base"
   cpu-worker:
-    base-url: "http://192.168.1.43:8080"
+    url: "http://192.168.1.43:8080"
 
 models:
   gpu-server/gemma-4b:
@@ -380,7 +378,7 @@ models:
 
 **How it works:**
 - The master **never downloads, spawns, or allocates ports** for remote-cluster models.
-- All requests proxy through the cluster's `base-url`.
+- All requests proxy through the cluster's `url`.
 - Model names use `<cluster>/<model-id>` convention (e.g., `gpu-server/qwen3`) to identify routing.
 - Local cluster uses port pool for subprocesses; remote clusters proxy all traffic.
 

@@ -22,7 +22,6 @@ import time
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
-import aiohttp
 
 try:
     from fastapi import FastAPI, HTTPException, Request, Response, WebSocket
@@ -45,9 +44,8 @@ except ImportError:
 from model_arkestra.base import BaseRunner  # noqa: E402
 from model_arkestra.common import resolve_config_path, DEFAULT_CONFIG_DIR, default_cache_root
 from model_arkestra.config_manager import ConfigManager
-from model_arkestra.conn import add_common_args, resolve_conn
-from model_arkestra.http_proxy import sse_events
-from model_arkestra.types import RunnerState
+from model_arkestra.conn import add_common_args, add_server_args, resolve_conn
+from model_arkestra.types import ModelNotStarted, ModelShutdown, RunnerState
 
 
 try:
@@ -79,12 +77,6 @@ class ChatCompletionRequest(BaseModel):
 class ChoiceDelta(BaseModel):
     role: Optional[str] = None
     content: Optional[str] = None
-
-
-class Choice(BaseModel):
-    index: int
-    message: Optional[ChoiceDelta] = None
-    finish_reason: Optional[str] = None
 
 
 class UsageInfo(BaseModel):
@@ -159,8 +151,12 @@ class ArkestraServer:
         admin_key: Admin panel API key — gates all /admin/* paths. Falls back
             to config.default_env.admin_key (via _env) if not provided.
         base_url: URL path prefix for all endpoints (e.g. "/ark"). Defaults
-            to no prefix. Resolved: constructor arg > os.environ[ARKESTRA_BASE_PATH]
-            > config.default_env.arkestra-base-path > "".
+            to no prefix. Resolved from the public URL's path component
+            (``--url`` / ``ARKESTRA_URL`` / config ``default.url``).
+        bind_host: Address the server binds to — 127.0.0.1 for local only,
+            0.0.0.0 to expose on the LAN (default 127.0.0.1). May differ from
+            the public URL's host in the LAN-exposure posture.
+        scheme: URL scheme of the public address (http/https).
         allow_origins: List of origins allowed for CORS (e.g. ["*"] or
             ["http://localhost:3000"]). When set, installs CORSMiddleware with
             full preflight support. Mutually exclusive with manual
@@ -184,6 +180,8 @@ class ArkestraServer:
         broadcast_addr: Optional[str] = None,
         allow_origins: Optional[List[str]] = None,
         base_url: str = "",
+        bind_host: str = "127.0.0.1",
+        scheme: str = "http",
     ):
         self.port = port
         self.openai_aliases = openai_aliases or {}
@@ -191,6 +189,8 @@ class ArkestraServer:
         self.admin_key = admin_key
         self.base_url = base_url
         self.allow_origins = allow_origins
+        self.bind_host = bind_host
+        self.scheme = scheme
 
         from model_arkestra.arkestra import ModelArkestra
         # Resolve config path — defaults to ~/.config/arkestra/config.yaml
@@ -199,96 +199,26 @@ class ArkestraServer:
             resolved_path,
             ready_timeout=ready_timeout,
             broadcast_addr=broadcast_addr,
+            local_url=f"{scheme}://{bind_host}:{port}{base_url}",
         )
         self._app: Optional[FastAPI] = None
         self._server: Any = None
+        self._started_at = time.time()
 
-    # ── ONNX auxiliary model management ───────────────────────────
+    # ── Readiness / model-lookup helpers ──────────────────────────
 
-
-
-
-
-    async def _proxy_stream(self, model_name: str, payload: Dict[str, Any], base_url: str) -> AsyncIterator[str]:
-        """Proxy a streaming request to a remote worker and yield SSE lines."""
-        url = f"{base_url}/v1/chat/completions"
-        headers: Dict[str, str] = {"Content-Type": "application/json"}
-        admin_key = self.admin_key or ""
-        if admin_key:
-            headers["x-admin-key"] = admin_key
-
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers=headers, timeout=120) as resp:
-                if resp.status != 200:
-                    detail = await resp.text()
-                    raise HTTPException(status_code=503, detail=f"Remote inference failed ({resp.status}): {detail}")
-
-                async for event in sse_events(resp.content):
-                    if "token" in event:
-                        chunk = {
-                            "id": "cmpl-stream-default",
-                            "object": "chat.completion.chunk",
-                            "model": model_name,
-                            "choices": [{"index": 0, "delta": {"content": event["token"]}}],
-                        }
-                        yield f"data: {json.dumps(chunk)}\n\n"
-                    elif "usage" in event:
-                        chunk = {
-                            "id": "cmpl-stream-default",
-                            "object": "chat.completion.chunk",
-                            "model": model_name,
-                            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-                        }
-                        yield f"data: {json.dumps(chunk)}\n\n"
-                        yield "data: [DONE]\n\n"
-                        return
-
-    async def _proxy_complete(self, model_name: str, req: ChatCompletionRequest, base_url: str) -> Response:
-        """Proxy a non-streaming request to a remote worker and return JSON."""
-        url = f"{base_url}/v1/chat/completions"
-        payload = {
-            "model": model_name,
-            "messages": [m.model_dump() for m in req.messages],
-            "stream": False,
-        }
-        for k, v in {"temperature": req.temperature, "max_tokens": req.max_tokens,
-                      "top_p": req.top_p, "frequency_penalty": req.frequency_penalty,
-                      "presence_penalty": req.presence_penalty,
-                      "stop": req.stop}.items():
-            if v is not None:
-                payload[k] = v
-
-        headers: Dict[str, str] = {"Content-Type": "application/json"}
-        admin_key = self.admin_key or ""
-        if admin_key:
-            headers["x-admin-key"] = admin_key
-
-        async with aiohttp.ClientSession() as session:
-            try:
-                async with session.post(url, json=payload, headers=headers, timeout=120) as resp:
-                    if resp.status != 200:
-                        detail = await resp.text()
-                        raise HTTPException(status_code=503, detail=f"Remote inference failed ({resp.status}): {detail}")
-                    data = await resp.json()
-            except Exception as e:
-                raise HTTPException(status_code=503, detail=f"Remote server error: {e}")
-
-    # ── ONNX auxiliary model management ───────────────────────────
-
-    def _wait_for_ready(self, model_name: str, timeout: float) -> bool:
+    async def _wait_for_ready(self, model_name: str, timeout: float) -> bool:
         """Poll until a model context reaches RUNNING state or timeout."""
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            ready_ctx = next(
-                (c for c in self._arkestra.get_model_contexts()
-                 if c.name == model_name), None
-            )
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                ready_ctx = self._arkestra.find_context(model_name)
+            except ValueError:
+                ready_ctx = None
             if ready_ctx and ready_ctx.state == RunnerState.RUNNING:
                 return True
-            time.sleep(0.2)
+            await asyncio.sleep(0.2)
         return False
-
-    # ── ONNX auxiliary model management ───────────────────────────
 
     def _find_model_by_tag(self, tag: str) -> Optional[str]:
         """Find first model with the given tag in its tags list."""
@@ -304,6 +234,54 @@ class ArkestraServer:
         except ValueError:
             return None
         return str(base_url).rstrip("/") if base_url else None
+
+    # ── Shared request helpers ────────────────────────────────────
+
+    @staticmethod
+    def _inference_params(req: ChatCompletionRequest) -> Dict[str, Any]:
+        """Sampling params from a chat request, with unset (None) values dropped."""
+        return {k: v for k, v in {
+            "temperature": req.temperature,
+            "max_tokens": req.max_tokens,
+            "top_p": req.top_p,
+            "frequency_penalty": req.frequency_penalty,
+            "presence_penalty": req.presence_penalty,
+            "stop": req.stop,
+        }.items() if v is not None}
+
+    async def _run_with_autostart(self, model_name: str, fn, *args: Any, **kwargs: Any) -> Any:
+        """Run *fn*; if the model isn't up, start it and retry once.
+
+        Catches the typed not-started/stopped errors rather than matching
+        exception text, so unrelated failures (OOM, timeouts) surface as 500.
+        """
+        try:
+            try:
+                return await fn(*args, **kwargs)
+            except (ModelNotStarted, ModelShutdown):
+                await self._arkestra.start(model_name)
+                return await fn(*args, **kwargs)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    def _resolve_tagged_model(self, requested: str, tag: str, detail: str,
+                              legacy_key: Optional[str] = None) -> str:
+        """Resolve a model: explicit config name → tag → legacy default key.
+
+        *detail* is the 404 message when nothing resolves.
+        """
+        models_cfg = self._arkestra.cm.data.get("models", {})
+        requested_ok = bool(models_cfg.get(requested))
+        model_name = requested if requested_ok else self._find_model_by_tag(tag)
+        if not requested_ok and legacy_key:
+            legacy = (self._arkestra.cm.data.get("default") or {}).get(legacy_key)
+            if legacy and models_cfg.get(legacy):
+                model_name = legacy
+        if not model_name or not models_cfg.get(model_name):
+            raise HTTPException(status_code=404, detail=detail)
+        return model_name
 
     # ── FastAPI app factory ───────────────────────────────────────
 
@@ -341,11 +319,12 @@ class ArkestraServer:
         @app.post("/v1/chat/completions")
         async def chat_completions(req: ChatCompletionRequest):
             model_name = self.openai_aliases.get(req.model, req.model)
-            # Auto-start if no context exists or model is stopped/sleeping
-            ctx = next(
-                (c for c in self._arkestra.get_model_contexts()
-                 if c.name == model_name), None
-            )
+            # Resolve context (cluster-prefixed names map to their local id);
+            # remote-cluster models are routed through RemoteRunner like locals.
+            try:
+                ctx = self._arkestra.find_context(model_name)
+            except ValueError as e:
+                raise HTTPException(status_code=503, detail=f"Model error: {e}")
             # Resolve timeout: per-model > default > class constant
             model_cfg = self._arkestra.get_model(model_name, {}) or {}
             start_timeout = (
@@ -362,37 +341,15 @@ class ArkestraServer:
             if ctx is None or ctx.state.name not in ('RUNNING', 'LOADING'):
                 try:
                     await self._arkestra.start(model_name)
-                    if not self._wait_for_ready(model_name, start_timeout):
+                    if not await self._wait_for_ready(model_name, start_timeout):
                         raise HTTPException(status_code=503, detail="Model failed to start")
                 except HTTPException:
                     raise
                 except Exception as e:
                     raise HTTPException(status_code=503, detail=f"Model error: {e}")
             else:
-                # Model was already LOADING — wait for RUNNING before proxying
-                self._wait_for_ready(model_name, start_timeout)
-
-            # Detect remote models — proxy directly to the worker
-            base_url = self._get_remote_base_url(model_name)
-            if base_url:
-                payload = {
-                    "model": model_name,
-                    "messages": [m.model_dump() for m in req.messages],
-                }
-                for k, v in {"temperature": req.temperature, "max_tokens": req.max_tokens,
-                              "top_p": req.top_p, "frequency_penalty": req.frequency_penalty,
-                              "presence_penalty": req.presence_penalty,
-                              "stop": req.stop}.items():
-                    if v is not None:
-                        payload[k] = v
-                if req.stream:
-                    return StreamingResponse(
-                        self._proxy_stream(model_name, payload, base_url),
-                        media_type="text/event-stream",
-                        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
-                    )
-                else:
-                    return await self._proxy_complete(model_name, req, base_url)
+                # Model was already LOADING — wait for RUNNING before inferring
+                await self._wait_for_ready(model_name, start_timeout)
 
             if req.stream:
                 return StreamingResponse(
@@ -401,8 +358,7 @@ class ArkestraServer:
                     headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
                 )
             else:
-                response_data = await self._complete_chat(model_name, req)
-                return response_data
+                return await self._complete_chat(model_name, req)
 
         # ── Route: GET /v1/models ─────────────────────────────────
 
@@ -415,10 +371,13 @@ class ArkestraServer:
 
             models: List[ModelInfo] = []
             for entry in v1_data.get("data", []):
+                status = entry.get("status")
+                if isinstance(status, dict):  # WebUI shape: {"value": "loaded", ...}
+                    status = status.get("value", "stopped")
                 models.append(ModelInfo(
                     id=entry.get("name", entry.get("id", "unknown")),
                     owned_by=entry.get("owned_by", "local"),
-                    status=entry.get("status", "stopped"),
+                    status=status or "stopped",
                 ))
 
             return ListModelsResponse(data=models).model_dump()
@@ -433,7 +392,7 @@ class ArkestraServer:
             except Exception:
                 running = 0
 
-            return {"status": "ok", "uptime_seconds": time.time(), "models_running": running}
+            return {"status": "ok", "uptime_seconds": round(time.time() - self._started_at, 1), "models_running": running}
 
         @app.get("/v1/health")
         async def health_v1():
@@ -447,42 +406,17 @@ class ArkestraServer:
         ) -> Any:
             """Embedding endpoint — routes to model with 'embed' tag."""
             model_name = req_body.get("model", "")
+            input_text = req_body.get("input", "")
 
-            # Check for remote model first — proxy directly
-            base_url = self._get_remote_base_url(model_name)
-            if base_url:
-                payload = {"model": model_name, "input": input_text}
-                headers: Dict[str, str] = {"Content-Type": "application/json"}
-                admin_key = self.admin_key or ""
-                if admin_key:
-                    headers["x-admin-key"] = admin_key
-
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(f"{base_url}/v1/embeddings", json=payload, headers=headers, timeout=30) as resp:
-                        if resp.status != 200:
-                            detail = await resp.text()
-                            raise HTTPException(status_code=503, detail=f"Remote embed failed ({resp.status})")
-                        return Response(content=await resp.text(), media_type="application/json")
-
-            # Look up model by name or fallback to a model with 'embed' tag
-            cfg = self._arkestra.cm.data.get("models", {}).get(model_name)
-            if not cfg:
-                model_name = self._find_model_by_tag("embed")
-            if not model_name:
-                raise HTTPException(
-                    status_code=404,
-                    detail="No embedding model available. Configure a model with tags: [embed]",
+            # Remote cluster models resolve directly; local names get
+            # tag/legacy fallbacks before inference (autostart included).
+            if not self._get_remote_base_url(model_name):
+                model_name = self._resolve_tagged_model(
+                    model_name, "embed",
+                    "No embedding model available. Configure a model with tags: [embed]",
                 )
 
-            input_text = req_body.get("input", "")
-            try:
-                result = await self._arkestra.embed(model_name, input_text)
-            except Exception as e:
-                if "not started" in str(e).lower() or "not found in config" not in str(e).lower():
-                    await self._arkestra.start(model_name)
-                    result = await self._arkestra.embed(model_name, input_text)
-                else:
-                    raise HTTPException(status_code=500, detail=str(e))
+            result = await self._run_with_autostart(model_name, self._arkestra.embed, input_text)
             return Response(content=json.dumps(result), media_type="application/json")
 
         # ── Route: POST /v1/audio/transcriptions (tag-based routing) ───
@@ -514,20 +448,12 @@ class ArkestraServer:
                 else:
                     audio_bytes = b""
 
-            # Validate model exists — resolve via config lookup or tag fallback
-            cfg = self._arkestra.cm.data.get("models", {}).get(model_name)
-            if not cfg:
-                model_name = self._find_model_by_tag("asr")
-            # Legacy fallback (for configs still using default-stt-model key)
-            if not cfg or (model_name and not self._arkestra.cm.data.get("models", {}).get(model_name)):
-                legacy = (self._arkestra.cm.data.get("default") or {}).get("stt-model")
-                if legacy and self._arkestra.cm.data.get("models", {}).get(legacy):
-                    model_name = legacy
-            if not model_name or not self._arkestra.cm.data.get("models", {}).get(model_name):
-                raise HTTPException(
-                    status_code=404,
-                    detail="No STT model available. Configure a model with tags: [asr]",
-                )
+            # Resolve via config lookup → 'asr' tag → legacy default-stt-model key
+            model_name = self._resolve_tagged_model(
+                model_name, "asr",
+                "No STT model available. Configure a model with tags: [asr]",
+                legacy_key="stt-model",
+            )
 
             lang = None
             if request.headers.get("Content-Type", "").startswith("multipart"):
@@ -535,14 +461,7 @@ class ArkestraServer:
             else:
                 lang = str(req_body.get("language")) if req_body.get("language") else None
 
-            try:
-                result = await self._arkestra.transcribe(model_name, audio_bytes, lang)
-            except Exception as e:
-                if "not started" in str(e).lower() or "not found in config" not in str(e).lower():
-                    await self._arkestra.start(model_name)
-                    result = await self._arkestra.transcribe(model_name, audio_bytes, lang)
-                else:
-                    raise HTTPException(status_code=500, detail=str(e))
+            result = await self._run_with_autostart(model_name, self._arkestra.transcribe, audio_bytes, lang)
             return Response(content=json.dumps(result), media_type="application/json")
 
         # ── Route: POST /v1/audio/speech (tag-based routing) ───────
@@ -556,30 +475,16 @@ class ArkestraServer:
             voice = req_body.get("voice", "af_bella")
             speed = float(req_body.get("speed", 1.0))
 
-            # Validate model exists — resolve via config lookup or tag fallback
-            cfg = self._arkestra.cm.data.get("models", {}).get(model_name)
-            if not cfg:
-                model_name = self._find_model_by_tag("tts")
-            # Legacy fallback (for configs still using default-tts-model key)
-            if not cfg or (model_name and not self._arkestra.cm.data.get("models", {}).get(model_name)):
-                legacy = (self._arkestra.cm.data.get("default") or {}).get("tts-model")
-                if legacy and self._arkestra.cm.data.get("models", {}).get(legacy):
-                    model_name = legacy
-            if not model_name or not self._arkestra.cm.data.get("models", {}).get(model_name):
-                raise HTTPException(
-                    status_code=404,
-                    detail="No TTS model available. Configure a model with tags: [tts]",
-                )
+            # Resolve via config lookup → 'tts' tag → legacy default-tts-model key
+            model_name = self._resolve_tagged_model(
+                model_name, "tts",
+                "No TTS model available. Configure a model with tags: [tts]",
+                legacy_key="tts-model",
+            )
 
             text_input = req_body.get("input", "")
-            try:
-                wav_bytes = await self._arkestra.synthesize(model_name, text_input, voice=voice, speed=speed)
-            except Exception as e:
-                if "not started" in str(e).lower() or "not found in config" not in str(e).lower():
-                    await self._arkestra.start(model_name)
-                    wav_bytes = await self._arkestra.synthesize(model_name, text_input, voice=voice, speed=speed)
-                else:
-                    raise HTTPException(status_code=500, detail=str(e))
+            wav_bytes = await self._run_with_autostart(
+                model_name, self._arkestra.synthesize, text_input, voice=voice, speed=speed)
             return Response(content=wav_bytes, media_type="audio/wav")
 
         # ── Streaming audio WebSocket (dev endpoint — may become /v1/...) ─
@@ -674,29 +579,27 @@ class ArkestraServer:
     # ── Completion (non-streaming) ────────────────────────────────
 
     async def _complete_chat(self, model_name: str, req: ChatCompletionRequest) -> Response:
-        """Blocking completion → full response string."""
+        """Blocking completion → full response."""
         t0 = time.monotonic()
         try:
-            content = await self._arkestra.ainvoke(
+            res = await self._arkestra.ainvoke_full(
                 model_name,
                 prompt="",
                 messages=[m.model_dump() for m in req.messages],
                 backend=req.model,  # allow model field as backend hint if needed
-                **{k: v for k, v in {
-                    "temperature": req.temperature,
-                    "max_tokens": req.max_tokens,
-                    "top_p": req.top_p,
-                    "frequency_penalty": req.frequency_penalty,
-                    "presence_penalty": req.presence_penalty,
-                    "stop": req.stop,
-                }.items() if v is not None},
+                **self._inference_params(req),
             )
         except Exception as e:
             raise HTTPException(status_code=503, detail=f"Model error: {e}")
 
+        content = res.get("content", "")
+        usage = res.get("usage") or {}
+        completion_tokens = usage.get("completion_tokens") or max(1, len(content.split()) // 4)
+        prompt_tokens = usage.get("prompt_tokens") or max(
+            1, sum(len(str(m.content).split()) for m in req.messages) // 4
+        )
         latency_ms = round((time.monotonic() - t0) * 1000)
-        tokens = len(content.split())
-        self._arkestra.log(f"[action=req model={model_name} method=POST path=/v1/chat/completions status=200 latency_ms={latency_ms} tokens={tokens}]")
+        self._arkestra.log(f"[action=req model={model_name} method=POST path=/v1/chat/completions status=200 latency_ms={latency_ms} tokens={completion_tokens}]")
 
         return Response(
             content=ChatCompletionResponse(
@@ -707,7 +610,11 @@ class ArkestraServer:
                     message=ChoiceDelta(role="assistant", content=content),
                     finish_reason="stop",
                 )],
-                usage=UsageInfo(total_tokens=len(content.split()) + 10),  # rough estimate
+                usage=UsageInfo(
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    total_tokens=prompt_tokens + completion_tokens,
+                ),
             ).model_dump_json(),
             media_type="application/json",
         )
@@ -727,14 +634,7 @@ class ArkestraServer:
                 model_name,
                 payload={
                     "messages": [m.model_dump() for m in req.messages],
-                    **{k: v for k, v in {
-                        "temperature": req.temperature,
-                        "max_tokens": req.max_tokens,
-                        "top_p": req.top_p,
-                        "frequency_penalty": req.frequency_penalty,
-                        "presence_penalty": req.presence_penalty,
-                        "stop": req.stop,
-                    }.items() if v is not None},
+                    **self._inference_params(req),
                 },
             ):
                 if "token" in event:
@@ -753,7 +653,6 @@ class ArkestraServer:
                     yield _sse_format(chunk.model_dump())
 
                 elif "usage" in event:
-                    usage = event["usage"]
                     chunk = ChatCompletionStreamResponse(
                         model=model_name,
                         choices=[ChatCompletionStreamChoice(
@@ -799,10 +698,10 @@ class ArkestraServer:
 
         Sets ``self._server`` so the admin shutdown route can stop uvicorn cleanly.
         """
-        self._arkestra.log(f"[action=start server port={self.port}]")
+        self._arkestra.log(f"[action=start server port={self.port} bind={self.bind_host}]")
 
         app = self.get_app()
-        config = uvicorn.Config(app, host="0.0.0.0", port=self.port, log_level="info")
+        config = uvicorn.Config(app, host=self.bind_host, port=self.port, log_level="info")
         server = uvicorn.Server(config)
         self._server = server
         try:
@@ -883,11 +782,15 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     add_common_args(parser)
+    add_server_args(parser)
 
     args = parser.parse_args(argv)
 
-    # Load config early so we can resolve defaults from it.
-    import yaml
+    if args.workers > 1:
+        parser.error(
+            "--workers > 1 is not supported: the app is built in-process "
+            "(admin routes close over a single ModelArkestra instance)"
+        )
 
     # Load config — use ConfigManager for consistent default/ path resolution
     resolved_path = str(resolve_config_path(args.config))
@@ -905,6 +808,7 @@ def main(argv: list[str] | None = None) -> None:
     args.host = conn.host
     args.port = conn.port
     args.api_key = conn.api_key
+    args.bind = conn.bind_host
     if args.ready_timeout is None:
         cfg_to = _cfg_get("default/warmup-time")
         if cfg_to is not None:
@@ -931,6 +835,9 @@ def main(argv: list[str] | None = None) -> None:
         openai_aliases=aliases,
         allow_origins=["*"] if args.cors else None,
         broadcast_addr=args.broadcast_addr,
+        base_url=conn.base_path,
+        bind_host=conn.bind_host,
+        scheme=conn.scheme,
     )
     app = proxy.get_app()
 
@@ -950,7 +857,8 @@ def main(argv: list[str] | None = None) -> None:
             return await call_next(request)
 
     # ── Startup banner ────────────────────────────────────────────────
-    scheme = "https" if args.ssl_certfile else "http"
+    scheme = "https" if args.ssl_certfile else conn.scheme
+    public_url = f"{scheme}://{args.host}:{args.port}{conn.base_path}"
 
     # Resolve hardware info (one-time subprocess call)
     try:
@@ -974,8 +882,8 @@ def main(argv: list[str] | None = None) -> None:
 
     _v = importlib.metadata.version('model-arkestra')
     print(f"ModelArkestra v{_v}")
-    print(f"  URL       → {scheme}://{args.host}:{args.port}")
-    print(f"  API docs  → {scheme}://{args.host}:{args.port}/docs")
+    print(f"  URL       → {public_url}")
+    print(f"  API docs  → {public_url}/docs")
 
     primary = hw.get("primary_gpu")
     if primary:
@@ -983,11 +891,9 @@ def main(argv: list[str] | None = None) -> None:
         vendor_name = vendor_map.get(primary["vendor"], "GPU")
         raw = primary["name"]
         # SKU: last bracket group with '/', otherwise last bracket content
-        skus = []
-        for m in re.finditer(r'\[([^\]]+)\]', raw):
-            if "/ " in m.group(1):
-                skus = [s.strip() for s in m.group(1).split(" / ")]
-        short = skus[-1] if skus else (re.findall(r'\[([^\]]+)\]', raw)[-1] if re.findall(r'\[([^\]]+)\]', raw) else raw.split(": ", 1)[-1].strip())
+        brackets = re.findall(r'\[([^\]]+)\]', raw)
+        skus = [s.strip() for b in brackets if "/ " in b for s in b.split(" / ")]
+        short = skus[-1] if skus else (brackets[-1] if brackets else raw.split(": ", 1)[-1].strip())
         line = f"{vendor_name} {short} • {primary['backend']}"
         gfx = hw.get("gfx_family")
         if gfx:
@@ -1009,7 +915,7 @@ def main(argv: list[str] | None = None) -> None:
     # ── Launch uvicorn ────────────────────────────────────────────────
     uvicorn_kwargs = {
         "app": app,
-        "host": args.host,
+        "host": args.bind,
         "port": args.port,
         "log_level": args.log_level,
         "workers": args.workers,

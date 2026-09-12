@@ -9,7 +9,7 @@ The `/api/*` namespace exposes read-only endpoints. When `api_key` is set in `co
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/models` | List all cached models with name, model-ref, size (GB) |
-| `GET` | `/api/clusters` | List federated clusters with name and base-url |
+| `GET` | `/api/clusters` | List federated clusters with name and url |
 
 When `api_key` is configured, include `Authorization: Bearer <api_key>` to access these endpoints.
 
@@ -351,13 +351,13 @@ Returns:
 ```json
 {
   "clusters": [
-    {"name": "gpu-lab-1", "base-url": "http://192.168.1.42:18000", "healthy": true},
-    {"name": "gpu-lab-2", "base-url": "http://192.168.1.43:18000", "healthy": false}
+    {"name": "gpu-lab-1", "url": "http://192.168.1.42:18000", "healthy": true},
+    {"name": "gpu-lab-2", "url": "http://192.168.1.43:18000", "healthy": false}
   ]
 }
 ```
 
-Each cluster entry includes `name`, `base-url`, and `healthy` (bool, based on `/health` ping).
+Each cluster entry includes `name`, `url`, and `healthy` (bool, based on `/health` ping).
 
 ### POST /admin/clusters/{name}
 
@@ -367,7 +367,7 @@ Add a managed cluster. The cluster name becomes part of model naming convention 
 curl -X POST 'http://localhost:8080/admin/clusters/gpu-lab-3' \
      -H 'Content-Type: application/json' \
      -H 'Authorization: Bearer your-secret-key' \
-     -d '{"base-url": "http://192.168.1.44:18000", "admin-key": "secret"}'
+     -d '{"url": "http://192.168.1.44:18000", "admin-key": "secret"}'
 ```
 
 Returns:
@@ -706,15 +706,15 @@ Non-admin users see only **one ChatPane** — no left panel, no log viewer. Logs
 
 ## `arkestra-admin` CLI Tool
 
-A command-line interface for all admin endpoints, installed alongside `arkestra` and `arkestra-server`. Reads `ADMIN_KEY` from config.yaml by default.
+A command-line interface for all admin endpoints, installed alongside `arkestra` and `arkestra-server`. It targets the server via the shared connection surface (`--url` / `ARKESTRA_URL` / config `default.url`) and reads the admin key from config.yaml by default.
 
 ```bash
-arkestra-admin --server http://localhost:8080 --api-key SECRET <command>
+arkestra-admin --url http://localhost:8080 --api-key SECRET <command>
 ```
 
 ### Authentication Priority
 1. `--api-key KEY` flag (highest)
-2. `$ADMIN_KEY` environment variable
+2. `$ARKESTRA_API_KEY` environment variable
 3. `admin_key` from `config.yaml`'s `default-env:` section
 
 ### Commands
@@ -746,8 +746,8 @@ arkestra-admin --server http://localhost:8080 --api-key SECRET <command>
 ### Examples
 
 ```bash
-# List models (auto-reads ADMIN_KEY from config)
-arkestra-admin --server http://127.0.0.1:8080 models
+# List models (auto-reads admin key from config)
+arkestra-admin --url http://127.0.0.1:8080 models
 
 # Start with overrides
 arkestra-admin start qwen3-4b --backend vulkan-radv temp=0.7 top-k=20
@@ -760,7 +760,7 @@ arkestra-admin images build rocm-container --tag rocm-7.14
 arkestra-admin images list
 
 # Full server shutdown on remote host
-arkestra-admin shutdown -x http://remote-host:8080 --api-key mysecret
+arkestra-admin --url http://remote-host:8080 --api-key mysecret shutdown
 ```
 
 ### JSON Output
@@ -768,5 +768,5 @@ arkestra-admin shutdown -x http://remote-host:8080 --api-key mysecret
 Add `--json` to any command for machine-readable output:
 
 ```bash
-arkestra-admin --server http://localhost:8080 config get qwen3-4b --json
+arkestra-admin --url http://localhost:8080 config get qwen3-4b --json
 ```

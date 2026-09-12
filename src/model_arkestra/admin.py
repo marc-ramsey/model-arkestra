@@ -41,6 +41,31 @@ from model_arkestra.types import RunnerState, _ModelContext
 MODEL_CONFIG_FIELDS = frozenset({"backend", "runner", "tags", "max_log_lines"})
 
 
+def _build_start_kwargs(body: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Split a start/restart body into infra + inference kwargs.
+
+    Infra keys pass through (``max_log_lines`` coerced to int); any other
+    non-None keys are inference params forwarded to the runner.
+    """
+    kw: Dict[str, Any] = {}
+    if not body:
+        return kw
+    for key in INFRA_KEYS:
+        if body.get(key) is None:
+            continue
+        val = body[key]
+        if key == "max_log_lines":
+            try:
+                val = int(val)
+            except (ValueError, TypeError):
+                continue
+        kw[key] = val
+    for key, value in body.items():
+        if key not in INFRA_KEYS and value is not None:
+            kw[key] = value
+    return kw
+
+
 
 class ArkestraAdmin:
     """Admin subcomponent that installs routes on an ArkestraServer's app."""
@@ -61,6 +86,15 @@ class ArkestraAdmin:
         """Load named schemas from schemas.yaml or bundled fallback."""
         self._schemas = _load_schema_registry(
             getattr(self.server._arkestra, "_config_path", None),
+        )
+
+    def _resolve_ref(self, model_ref: str):
+        """Resolve a raw model reference against config defaults/repos."""
+        cm = self.server._arkestra.cm
+        return resolve_model_ref(
+            raw=model_ref,
+            default_section=(cm.data.get("default") or {}),
+            model_repos=cm.data.get("model-repos"),
         )
 
     def install(self) -> "ArkestraAdmin":
@@ -156,7 +190,7 @@ class ArkestraAdmin:
             clusters = self.server._arkestra._clusters
             result = []
             for name, cfg in clusters.items():
-                base_url = str(cfg.get("base-url", ""))
+                base_url = str(cfg.get("url", ""))
                 # Ping the health endpoint to check reachability
                 healthy = False
                 try:
@@ -167,7 +201,7 @@ class ArkestraAdmin:
                     pass
                 result.append({
                     "name": name,
-                    "base-url": base_url,
+                    "url": base_url,
                     "healthy": healthy,
                 })
             return JSONResponse(status_code=200, content={"clusters": result})
@@ -183,7 +217,7 @@ class ArkestraAdmin:
             if name in clusters:
                 raise HTTPException(status_code=409, detail=f"Cluster '{name}' already exists")
             clusters[name] = {
-                "base-url": body.get("base-url", ""),
+                "url": body.get("url", ""),
                 "admin-key": body.get("admin-key"),
             }
             cm.export(cm.config_path)
@@ -280,13 +314,7 @@ class ArkestraAdmin:
                     model_cfg = self.server._arkestra.get_model(model_name) or {}
                     model_ref = model_cfg.get("model", "")
 
-                    # Resolve model reference for HF lookups
-                    default_section = (self.server._arkestra.cm.data.get("default") or {})
-                    resolved = resolve_model_ref(
-                        raw=model_ref,
-                        default_section=default_section,
-                        model_repos=self.server._arkestra.cm.data.get("model-repos"),
-                    )
+                    resolved = self._resolve_ref(model_ref)
 
                     status_val = model_status_for_ctx(ctx)
                     backend_id = (
@@ -296,8 +324,8 @@ class ArkestraAdmin:
                     )
                     runner_type = ctx.runner_type or ""
 
-                    # Size and checkpoint-hash from HuggingFace (optional)
-                    info = hf_model_info(resolved.ref) or {}
+                    # Size and checkpoint-hash from HuggingFace (optional, cached)
+                    info = await asyncio.to_thread(hf_model_info, resolved.ref) or {}
                     size_gb = round(info.get("size_gb", 0) or 0, 1)
                     checkpoint_hash = info.get("checkpoint_id") if info else None
 
@@ -566,25 +594,8 @@ class ArkestraAdmin:
             if not self.server._arkestra.can_start(model):
                 raise HTTPException(status_code=409, detail="model not available")
 
-            # Build raw kwargs — infra keys handled by ModelArkestra, rest are inference params
-            kw = {}
-            for key in INFRA_KEYS:
-                if body and key in body and body[key] is not None:
-                    val = body[key]
-                    if key == "max_log_lines":
-                        try:
-                            val = int(val)
-                        except (ValueError, TypeError):
-                            continue
-                    kw[key] = val
-            # Any other keys in body are inference params — pass through as-is
-            if body:
-                for key, value in body.items():
-                    if key not in INFRA_KEYS and value is not None:
-                        kw[key] = value
-
             try:
-                await self.server._arkestra.start(model, **kw)
+                await self.server._arkestra.start(model, **_build_start_kwargs(body))
                 ctx = self.server._arkestra.find_context(model)
                 port = ctx.port if ctx else None
                 return {"ok": True, "model": model, "port": port}
@@ -601,23 +612,6 @@ class ArkestraAdmin:
             if not self.server._arkestra.can_restart(model):
                 raise HTTPException(status_code=409, detail="model not available")
 
-            # Build raw kwargs — infra keys handled by ModelArkestra, rest are inference params
-            kw = {}
-            for key in INFRA_KEYS:
-                if body and key in body and body[key] is not None:
-                    val = body[key]
-                    if key == "max_log_lines":
-                        try:
-                            val = int(val)
-                        except (ValueError, TypeError):
-                            continue
-                    kw[key] = val
-            # Any other keys in body are inference params — pass through as-is
-            if body:
-                for key, value in body.items():
-                    if key not in INFRA_KEYS and value is not None:
-                        kw[key] = value
-
             # Stop current instance if running/loading, then start fresh
             ctx = self.server._arkestra.find_context(model)
             if ctx and ctx.state in (RunnerState.RUNNING, RunnerState.LOADING):
@@ -627,7 +621,7 @@ class ArkestraAdmin:
                     pass
 
             try:
-                await self.server._arkestra.start(model, **kw)
+                await self.server._arkestra.start(model, **_build_start_kwargs(body))
                 ctx = self.server._arkestra.find_context(model)
                 port = ctx.port if ctx else None
                 return {"ok": True, "model": model, "port": port}
@@ -899,10 +893,7 @@ class ArkestraAdmin:
             # Clean up partial cache and return to UNCACHED
             model_cfg = cfg.get(model, {})
             raw = model_cfg.get("model", "")
-            resolved = resolve_model_ref(
-                raw,
-                default_section=self.server._arkestra.cm.data.get("default") or {},
-            )
+            resolved = self._resolve_ref(raw)
             if resolved.cache_path:
                 self.server._arkestra._cleanup_partial_cache(resolved.cache_path)
             ctx.state = RunnerState.UNCACHED
@@ -921,12 +912,7 @@ class ArkestraAdmin:
                 model_cfg = self._models_cfg.get(model_name, {})
                 model_ref = model_cfg.get("model", "")
 
-                default_section = (self.server._arkestra.cm.data.get("default") or {})
-                resolved = resolve_model_ref(
-                    raw=model_ref,
-                    default_section=default_section,
-                    model_repos=self.server._arkestra.cm.data.get("model-repos"),
-                )
+                resolved = self._resolve_ref(model_ref)
 
                 # Only include cached models
                 cache_path = None
@@ -936,7 +922,7 @@ class ArkestraAdmin:
                 if not is_cached:
                     continue
 
-                info = hf_model_info(resolved.ref) or {}
+                info = await asyncio.to_thread(hf_model_info, resolved.ref) or {}
                 size_gb = round(info.get("size_gb", 0) or 0, 1)
                 data.append({
                     "name": model_name,
@@ -949,12 +935,12 @@ class ArkestraAdmin:
     def _add_api_clusters_route(self) -> None:
         @self._app.get("/api/clusters")
         async def api_clusters():
-            """Cluster list: name and base-url pairs."""
+            """Cluster list: name and url pairs."""
             clusters = self.server._arkestra._clusters
             result = []
             for name, cfg in clusters.items():
-                base_url = str(cfg.get("base-url", ""))
-                result.append({"name": name, "base-url": base_url})
+                base_url = str(cfg.get("url", ""))
+                result.append({"name": name, "url": base_url})
             return {"clusters": result}
 
 

@@ -1,8 +1,14 @@
-"""Tests for arkestra-admin CLI resolution of --server and --api-key."""
+"""Tests for arkestra-admin CLI connection resolution (shared conn surface).
+
+arkestra-admin now resolves its target via the shared ``conn.resolve_conn``:
+    --url  >  ARKESTRA_URL env  >  config default.url  >  http://127.0.0.1:8080
+and auth via  --api-key  >  ARKESTRA_API_KEY  >  config default-env.admin_key.
+The resolved ``Conn`` is attached to ``args.conn`` before dispatch.
+"""
 from __future__ import annotations
 
 import os
-import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -33,7 +39,7 @@ class TestLoadConfig:
 
 
 # ═══════════════════════════════════════════════════════════════
-# _read_admin_key — default_env section reader
+# _read_admin_key — default-env section reader
 # ═══════════════════════════════════════════════════════════════
 
 
@@ -49,130 +55,87 @@ class TestReadAdminKey:
         assert _read_admin_key(str(cfg)) is None
 
 
-# ═══════════════════════════════════════════════════════════════
-# main() server URL resolution
-# ═══════════════════════════════════════════════════════════════
-
-
-def _make_config(data: dict, tmp_path) -> str:
-    """Write a config file and return its path."""
+def _make_config(data: dict, tmp_path: Path) -> str:
     p = tmp_path / "config.yaml"
     with open(p, "w") as f:
         yaml.dump(data, f)
     return str(p)
 
 
-class TestServerURLResolution:
-    """Resolution order: CLI > env ARKESTRA_ADMIN_URL > config admin-port > default."""
+def _run_main(argv, env=None):
+    """Run admin_cli.main() with dispatch mocked; return the args namespace."""
+    captured = {}
 
-    def test_cli_server_takes_precedence(self):
-        with patch("model_arkestra.admin_cli._dispatch", create=True) as mock_dispatch:
-            from model_arkestra.admin_cli import build_parser
-            parser = build_parser()
-            args = parser.parse_args(["-x", "http://custom:9999", "models"])
-            # Simulate main's resolution logic
-            server_url = args.server
-            if not server_url:
-                url_env = os.environ.get("ARKESTRA_ADMIN_URL")
-                if url_env:
-                    server_url = url_env
-                else:
-                    data = {}  # no config in this test
-                    port = data.get("admin-port")
-                    if port is not None:
-                        server_url = f"http://127.0.0.1:{port}"
-            if not server_url:
-                server_url = "http://127.0.0.1:8080"
-            assert server_url == "http://custom:9999"
+    def fake_dispatch(args):
+        captured["args"] = args
 
-    def test_env_overrides_default(self):
-        with patch.dict(os.environ, {"ARKESTRA_ADMIN_URL": "http://remote:7777"}):
-            with patch("model_arkestra.admin_cli._dispatch", create=True):
-                from model_arkestra.admin_cli import build_parser
-                parser = build_parser()
-                args = parser.parse_args(["models"])
-                server_url = args.server or os.environ.get("ARKESTRA_ADMIN_URL") or "http://127.0.0.1:8080"
-            assert server_url == "http://remote:7777"
+    with patch("model_arkestra.admin_cli._dispatch", side_effect=fake_dispatch):
+        from model_arkestra.admin_cli import main
+        if env is not None:
+            with patch.dict(os.environ, env, clear=True):
+                main(argv)
+        else:
+            main(argv)
+    return captured["args"]
 
-    def test_config_admin_port_used(self, tmp_path):
-        cfg = _make_config({"admin-port": 9090}, tmp_path)
-        with patch("model_arkestra.admin_cli._dispatch", create=True):
-            from model_arkestra.admin_cli import build_parser, _load_config
-            parser = build_parser()
-            args = parser.parse_args(["--config", cfg, "models"])
-            # Simulate resolution (no CLI arg, no env)
-            server_url = args.server
-            if not server_url:
-                data = _load_config(args.config)
-                port = data.get("admin-port")
-                if port is not None:
-                    server_url = f"http://127.0.0.1:{port}"
-            if not server_url:
-                server_url = "http://127.0.0.1:8080"
-            assert server_url == "http://127.0.0.1:9090"
 
-    def test_config_default_port_fallback(self, tmp_path):
-        cfg = _make_config({"default": {"admin-port": 9091}}, tmp_path)
-        with patch("model_arkestra.admin_cli._dispatch", create=True):
-            from model_arkestra.admin_cli import build_parser, _load_config
-            parser = build_parser()
-            args = parser.parse_args(["--config", cfg, "models"])
-            server_url = args.server
-            if not server_url:
-                data = _load_config(args.config)
-                default_section = data.get("default") or {}
-                port = (default_section.get("admin-port")
-                        or data.get("admin-port"))
-                if port is not None:
-                    server_url = f"http://127.0.0.1:{port}"
-            if not server_url:
-                server_url = "http://127.0.0.1:8080"
-            assert server_url == "http://127.0.0.1:9091"
+class TestConnResolution:
+    """The resolved Conn attached to args.conn reflects the shared precedence."""
 
-    def test_admin_port_takes_precedence_over_config(self, tmp_path):
-        cfg = _make_config({"admin-port": 9092}, tmp_path)
-        with patch("model_arkestra.admin_cli._dispatch", create=True):
-            from model_arkestra.admin_cli import build_parser, _load_config
-            parser = build_parser()
-            args = parser.parse_args(["--config", cfg, "models"])
-            server_url = args.server
-            if not server_url:
-                data = _load_config(args.config)
-                port = data.get("admin-port")
-                if port is not None:
-                    server_url = f"http://127.0.0.1:{port}"
-            if not server_url:
-                server_url = "http://127.0.0.1:8080"
-            assert server_url == "http://127.0.0.1:9092"
+    def test_cli_url_takes_precedence(self):
+        with patch.dict(os.environ, {"ARKESTRA_API_KEY": "k"}):
+            args = _run_main(["--url", "http://custom:9999/base", "models"])
+        assert args.conn.host == "custom"
+        assert args.conn.port == 9999
+        assert args.conn.base_path == "/base"
 
-    def test_hardwired_default_when_nothing_set(self):
-        with patch.dict(os.environ, {}, clear=False):
-            # Ensure no interfering env vars
-            os.environ.pop("ARKESTRA_ADMIN_URL", None)
-            with patch("model_arkestra.admin_cli._dispatch", create=True):
-                from model_arkestra.admin_cli import build_parser
-                parser = build_parser()
-                args = parser.parse_args(["models"])
-                server_url = args.server or os.environ.get("ARKESTRA_ADMIN_URL") or "http://127.0.0.1:8080"
-            assert server_url == "http://127.0.0.1:8080"
+    def test_env_url_overrides_default(self):
+        with patch.dict(os.environ, {"ARKESTRA_URL": "http://remote:7777", "ARKESTRA_API_KEY": "k"}):
+            args = _run_main(["models"])
+        assert (args.conn.host, args.conn.port) == ("remote", 7777)
 
-    def test_env_server_overrides_config(self, tmp_path):
-        cfg = _make_config({"admin-port": 9094}, tmp_path)
-        with patch.dict(os.environ, {"ARKESTRA_ADMIN_URL": "http://from-env:6543"}):
-            with patch("model_arkestra.admin_cli._dispatch", create=True):
-                from model_arkestra.admin_cli import build_parser, _load_config
-                parser = build_parser()
-                args = parser.parse_args(["--config", cfg, "models"])
-                server_url = args.server
-                if not server_url:
-                    url_env = os.environ.get("ARKESTRA_ADMIN_URL")
-                    if url_env:
-                        server_url = url_env
-                    else:
-                        data = _load_config(args.config)
-                        port = data.get("admin-port")
-                        if port is not None:
-                            server_url = f"http://127.0.0.1:{port}"
-                if not server_url:
-                    server_url = "http://127.0.0.1:8080"
-            assert server_url == "http://from-env:6543"
+    def test_config_default_url_used(self, tmp_path):
+        cfg = _make_config({"default": {"url": "http://cfg:9090/pfx"}}, tmp_path)
+        with patch.dict(os.environ, {"ARKESTRA_API_KEY": "k"}):
+            args = _run_main(["--config", cfg, "models"])
+        assert (args.conn.host, args.conn.port, args.conn.base_path) == ("cfg", 9090, "/pfx")
+
+    def test_hardwired_default_when_nothing_set(self, tmp_path):
+        cfg = _make_config({}, tmp_path)
+        env = {k: v for k, v in os.environ.items() if k not in ("ARKESTRA_URL",)}
+        with patch.dict(os.environ, env, clear=True), \
+             patch("model_arkestra.admin_cli._read_admin_key", return_value="k"):
+            args = _run_main(["--config", cfg, "models"])
+        assert (args.conn.host, args.conn.port) == ("127.0.0.1", 8080)
+
+    def test_env_url_overrides_config(self, tmp_path):
+        cfg = _make_config({"default": {"url": "http://cfg:9094"}}, tmp_path)
+        with patch.dict(os.environ, {"ARKESTRA_URL": "http://from-env:6543", "ARKESTRA_API_KEY": "k"}):
+            args = _run_main(["--config", cfg, "models"])
+        assert (args.conn.host, args.conn.port) == ("from-env", 6543)
+
+
+class TestApiKeyResolution:
+    def test_api_key_flag(self):
+        with patch.dict(os.environ, {}, clear=True):
+            args = _run_main(["--api-key", "flagkey", "models"])
+        assert args.api_key == "flagkey"
+
+    def test_api_key_env(self):
+        with patch.dict(os.environ, {"ARKESTRA_API_KEY": "envkey"}, clear=True):
+            args = _run_main(["models"])
+        assert args.conn.api_key == "envkey"
+
+    def test_api_key_from_config(self, tmp_path):
+        cfg = _make_config({"default-env": {"admin_key": "cfgkey"}}, tmp_path)
+        env = {k: v for k, v in os.environ.items() if k != "ARKESTRA_API_KEY"}
+        with patch.dict(os.environ, env, clear=True):
+            args = _run_main(["--config", cfg, "models"])
+        assert args.conn.api_key == "cfgkey"
+
+    def test_missing_api_key_exits(self, tmp_path):
+        cfg = _make_config({}, tmp_path)
+        env = {k: v for k, v in os.environ.items() if k != "ARKESTRA_API_KEY"}
+        with patch.dict(os.environ, env, clear=True), \
+             pytest.raises(SystemExit):
+            _run_main(["--config", cfg, "models"])

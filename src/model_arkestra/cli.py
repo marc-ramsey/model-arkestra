@@ -97,8 +97,9 @@ def _make_conn(args) -> "object":
     api_key = conn.api_key or _read_api_key(conn.config_path)
     if api_key == conn.api_key:
         return conn
-    return conn.__class__(host=conn.host, port=conn.port, config_path=conn.config_path,
-                          base_path=conn.base_path, api_key=api_key)
+    return conn.__class__(scheme=conn.scheme, host=conn.host, port=conn.port,
+                          config_path=conn.config_path, base_path=conn.base_path,
+                          api_key=api_key)
 
 
 # ── models ────────────────────────────────────────────────────────────

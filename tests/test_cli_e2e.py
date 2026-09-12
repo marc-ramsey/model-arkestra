@@ -69,7 +69,7 @@ class TestCliModels:
 
     @pytest.mark.parametrize("e2e_cli_server", COMBOS, indirect=True)
     def test_list_models(self, e2e_cli_server):
-        env = {"ARKESTRA_HOST": "127.0.0.1", "ARKESTRA_PORT": str(ADMIN_PORT)}
+        env = {"ARKESTRA_URL": f"http://127.0.0.1:{ADMIN_PORT}"}
         result = _run_cli("models", env_extra=env)
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert e2e_cli_server["combo_id"] in result.stdout
@@ -77,7 +77,7 @@ class TestCliModels:
     @pytest.mark.parametrize("e2e_cli_server", COMBOS, indirect=True)
     def test_list_models_filter(self, e2e_cli_server):
         model_name = e2e_cli_server["combo_id"]
-        env = {"ARKESTRA_HOST": "127.0.0.1", "ARKESTRA_PORT": str(ADMIN_PORT)}
+        env = {"ARKESTRA_URL": f"http://127.0.0.1:{ADMIN_PORT}"}
         result = _run_cli("models", "-m", model_name, env_extra=env)
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert model_name in result.stdout
@@ -90,7 +90,7 @@ class TestCliChat:
     def test_chat_single_message(self, e2e_cli_server):
         """Send a message via stdin, get a response, then /quit."""
         model_name = e2e_cli_server["combo_id"]
-        env = {"ARKESTRA_HOST": "127.0.0.1", "ARKESTRA_PORT": str(ADMIN_PORT)}
+        env = {"ARKESTRA_URL": f"http://127.0.0.1:{ADMIN_PORT}"}
 
         client = e2e_cli_server["client"]
         base_url = e2e_cli_server["base_url"]
@@ -108,7 +108,7 @@ class TestCliChat:
     def test_chat_with_inference_flags(self, e2e_cli_server):
         """Chat with -T and --max-tokens flags, send a message, quit."""
         model_name = e2e_cli_server["combo_id"]
-        env = {"ARKESTRA_HOST": "127.0.0.1", "ARKESTRA_PORT": str(ADMIN_PORT)}
+        env = {"ARKESTRA_URL": f"http://127.0.0.1:{ADMIN_PORT}"}
 
         client = e2e_cli_server["client"]
         base_url = e2e_cli_server["base_url"]
@@ -127,7 +127,7 @@ class TestCliChat:
     def test_chat_slash_commands(self, e2e_cli_server):
         """Test /help, /system, /temperature in-loop commands."""
         model_name = e2e_cli_server["combo_id"]
-        env = {"ARKESTRA_HOST": "127.0.0.1", "ARKESTRA_PORT": str(ADMIN_PORT)}
+        env = {"ARKESTRA_URL": f"http://127.0.0.1:{ADMIN_PORT}"}
 
         client = e2e_cli_server["client"]
         base_url = e2e_cli_server["base_url"]

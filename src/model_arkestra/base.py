@@ -384,8 +384,12 @@ class BaseRunner(ABC):
         raise RunnerError(f"Server not reachable after {attempt + 1} attempts") from last_err
 
     async def ainvoke(self, model_name: str, prompt: str = "", **kwargs) -> str:
-        res = await self._complete_async(model_name, prompt, **kwargs)
+        res = await self.ainvoke_full(model_name, prompt, **kwargs)
         return res.get("content", "")
+
+    async def ainvoke_full(self, model_name: str, prompt: str = "", **kwargs) -> Dict[str, Any]:
+        """Run inference, returning the full ``{"content", "usage"}`` dict."""
+        return await self._complete_async(model_name, prompt, **kwargs)
 
     async def request(self, model_name: str, path: str, **kwargs) -> Any:
         await self._dispatch(model_name)

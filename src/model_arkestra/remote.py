@@ -1,13 +1,11 @@
 from __future__ import annotations
 import asyncio
-import json
 import logging
-import time
 import aiohttp
 from model_arkestra.http_proxy import sse_events, parse_completion
 from typing import Any, AsyncIterator, Dict, Optional
 from model_arkestra.base import BaseRunner
-from model_arkestra.types import RunnerState, _ModelContext
+from model_arkestra.types import RunnerState, _ModelContext, ModelNotStarted
 
 logger = logging.getLogger(__name__)
 
@@ -28,17 +26,23 @@ class RemoteRunner(BaseRunner):
         super().__init__(config_manager, restart_delay=restart_delay,
                          ready_timeout=ready_timeout, warmup_delay=warmup_delay,
                          **kwargs)
-        self._backend_id: Optional[str] = None  # set by arkestra.py
+        # Per-model URLs/keys live on the context (ctx._remote_base_url,
+        # ctx._admin_key); these runner-level values are fallbacks only.
         self._remote_base_url: str = ""
-        self._admin_key: Optional[str] = ""
-        # Resolve base_url and admin_key from backend config
-        be_id = self._backend_id or ""
-        backends = (self.cm.data.get("backends") or {})
-        if isinstance(backends, dict):
-            be = backends.get(str(be_id), {})
-            if isinstance(be, dict):
-                self._remote_base_url = str(be.get("base_url", "")).rstrip("/")
-                self._admin_key = be.get("admin_key") or ""
+        self._admin_key: str = ""
+
+    def _headers(self, ctx: Optional[_ModelContext] = None) -> Dict[str, str]:
+        """JSON headers for worker calls, carrying the admin key when set.
+
+        The per-model key (from the cluster config) takes precedence over the
+        runner-level fallback.
+        """
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        key = (getattr(ctx, "_admin_key", "") or "") if ctx is not None else ""
+        key = key or self._admin_key
+        if key:
+            headers["x-admin-key"] = key
+        return headers
 
     async def start(
         self,
@@ -68,12 +72,10 @@ class RemoteRunner(BaseRunner):
         # Proxy start to worker — health check happens inside _start_model_process
         await self._start_model_process(ctx, {})
 
-        if getattr(ctx, '_remote_start_ack', False):
-            ctx.state = RunnerState.RUNNING
-        else:
-            # No-op (raw llama-server) or started but not acked — mark as loaded
-            # since the proxy will validate readiness on first inference call
-            ctx.state = RunnerState.RUNNING
+        # Mark ready either way — acked start, raw-llama-server passthrough,
+        # or a worker that didn't ack in time. The proxy validates readiness
+        # on the first inference call.
+        ctx.state = RunnerState.RUNNING
 
     async def _start_model_process(
         self, ctx: _ModelContext, model_data: Dict[str, Any]
@@ -83,9 +85,7 @@ class RemoteRunner(BaseRunner):
             url = f"{ctx._remote_base_url}/v1/admin/models/{ctx.name}/start"
             body = {k: v for k, v in self._inference_kwargs.get(ctx.name, {}).items() if v is not None}
 
-            headers = {"Content-Type": "application/json"}
-            if self._admin_key:
-                headers["x-admin-key"] = self._admin_key
+            headers = self._headers(ctx)
 
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=body, headers=headers, timeout=30) as resp:
@@ -127,9 +127,7 @@ class RemoteRunner(BaseRunner):
         """Proxy model stop to the remote worker."""
         try:
             url = f"{ctx._remote_base_url}/v1/admin/models/{ctx.name}/stop"
-            headers: Dict[str, str] = {}
-            if self._admin_key:
-                headers["x-admin-key"] = self._admin_key
+            headers = self._headers(ctx)
 
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json={}, headers=headers, timeout=30) as resp:
@@ -146,9 +144,7 @@ class RemoteRunner(BaseRunner):
     ) -> AsyncIterator[Dict[str, Any]]:
         """Stream chat completions from the remote worker."""
         url = f"{ctx._remote_base_url}/v1/chat/completions"
-        headers: Dict[str, str] = {"Content-Type": "application/json"}
-        if self._admin_key:
-            headers["x-admin-key"] = self._admin_key
+        headers = self._headers(ctx)
 
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload, headers=headers, timeout=120) as resp:
@@ -168,16 +164,16 @@ class RemoteRunner(BaseRunner):
     ) -> Dict[str, Any]:
         """Complete (non-streaming) chat completion from remote worker."""
         url = f"{ctx._remote_base_url}/v1/chat/completions"
-        headers: Dict[str, str] = {"Content-Type": "application/json"}
-        if self._admin_key:
-            headers["x-admin-key"] = self._admin_key
+        headers = self._headers(ctx)
 
         last_err: Exception | None = None
+        last_status: int | None = None
         for attempt in range(6):
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.post(url, json=payload, headers=headers, timeout=120) as resp:
                         if resp.status == 503:
+                            last_status = 503
                             await asyncio.sleep(2.5)
                             continue
                         if resp.status != 200:
@@ -189,7 +185,9 @@ class RemoteRunner(BaseRunner):
                 if attempt == 5:
                     break
                 await asyncio.sleep(2.5)
-        raise RuntimeError(f"Remote server not reachable after {attempt + 1} attempts") from last_err
+        if last_status is not None:
+            raise RuntimeError(f"Remote worker still returned {last_status} after 6 attempts") from last_err
+        raise RuntimeError("Remote server not reachable after 6 attempts") from last_err
 
     async def _stream_sse(self, model_name: str, payload: Dict[str, Any]) -> AsyncIterator[Dict[str, Any]]:
         """Override to proxy SSE from the remote worker."""
@@ -220,3 +218,16 @@ class RemoteRunner(BaseRunner):
         payload.update({k: v for k, v in kwargs.items() if k in llama_fields and v is not None})
 
         return await self._remote_complete_chat(ctx, payload)  # type: ignore[return-value]
+
+    async def embed(self, model_name: str, text: str) -> Dict[str, Any]:
+        """Proxy an embedding request to the remote worker."""
+        await self._dispatch(model_name)
+        ctx = next((v for k, v in self._models.items() if k == model_name), None)
+        url = f"{ctx._remote_base_url}/v1/embeddings"
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json={"model": model_name, "input": text},
+                                    headers=self._headers(ctx), timeout=120) as resp:
+                if resp.status != 200:
+                    detail = await resp.text()
+                    raise RuntimeError(f"Remote embedding failed ({resp.status}): {detail}")
+                return await resp.json()

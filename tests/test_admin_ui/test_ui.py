@@ -31,7 +31,7 @@ def server():
             pass
 
     env = os.environ.copy()
-    cmd = ["python", "-m", "model_arkestra.server", "--config", str(TEST_CFG), "--port", "18500"]
+    cmd = ["python", "-m", "model_arkestra.server", "--config", str(TEST_CFG), "--url", "http://127.0.0.1:18500"]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
 
     # Wait for server to be ready (max 30s)

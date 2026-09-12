@@ -7,18 +7,18 @@ Model Arkestra ships a production-ready OpenAI v1-compatible API server that sit
 The simplest way to start is as a standalone process:
 
 ```bash
-arkestra-server --config config.yaml --port 8080
+arkestra-server --config config.yaml --url http://127.0.0.1:8080
 ```
 
-This launches a FastAPI server backed by ModelArkestra on port 8080. Models load lazily — the first request to `/v1/chat/completions` for a given model triggers its startup.
+This launches a FastAPI server backed by ModelArkestra. The public address is given as a single URL (`scheme://host:port/prefix`); models load lazily — the first request to `/v1/chat/completions` for a given model triggers its startup.
 
 ### CLI Options
 
 | Option | Short | Default | Description |
 |---|---|---|---|
 | `--config` / `-c` | *(optional)* | `~/.config/arkestra/config.yaml` | Path to YAML config file (env: `ARKESTRA_CONFIG` / `ARKESTRA_DIR`) |
-| `--port` / `-p` | — | `8080` | HTTP port to listen on (env: `ARKESTRA_PORT`) |
-| `--host` / `-H` | — | `0.0.0.0` | Bind address — use `127.0.0.1` for localhost-only (env: `ARKESTRA_HOST`) |
+| `--url` | — | `http://127.0.0.1:8080` | Public address `scheme://host:port/prefix`. The path component is the URL prefix (env: `ARKESTRA_URL`, config: `default.url`) |
+| `--bind` | — | `127.0.0.1` | Address the server binds to — `127.0.0.1` for local only, `0.0.0.0` to expose on the LAN (config: `default.bind`) |
 | `--api-key` | — | — | Require this Bearer token on every request (env: `ARKESTRA_API_KEY`) |
 | `--ready-timeout` / `-t` | — | `120` | Seconds to wait for models during startup |
 | `--alias` / `-a` | — | — | OpenAI model alias mapping (`KEY=VALUE`). Repeat for multiple, e.g. `-a gpt-4=qwen3 -a claude=gemma` |
@@ -37,10 +37,8 @@ All connection flags can be set via environment variables instead of CLI flags. 
 |---|---|
 | `ARKESTRA_CONFIG` | Path to config.yaml |
 | `ARKESTRA_DIR` | Directory containing config.yaml (resolved to `$DIR/config.yaml`) |
-| `ARKESTRA_HOST` | Bind address (server) or target host (client) |
-| `ARKESTRA_PORT` | HTTP port |
+| `ARKESTRA_URL` | Public address `scheme://host:port/prefix` (server + clients) |
 | `ARKESTRA_API_KEY` | Bearer token for auth |
-| `ARKESTRA_BASE_PATH` | URL path prefix (e.g. `/arkestra` for reverse-proxy setups) |
 
 ## Usage — Embed Into an Existing App
 

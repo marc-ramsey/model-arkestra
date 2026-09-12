@@ -15,6 +15,8 @@ import os
 import sys
 from typing import Any, Dict, List
 
+from model_arkestra.conn import Conn, add_common_args, resolve_conn
+
 try:
     from aiohttp import ClientSession, ClientTimeout
 except ImportError:
@@ -50,7 +52,7 @@ def _read_admin_key(config_path: str | None = None) -> str | None:
 
 async def _request(
     method: str,
-    server_url: str,
+    conn: "Conn",
     path: str,
     *,
     api_key: str | None = None,
@@ -61,7 +63,7 @@ async def _request(
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    url = server_url.rstrip("/") + path
+    url = conn.url_for(path)
     timeout = ClientTimeout(total=30)
 
     async with ClientSession(timeout=timeout) as session:
@@ -89,7 +91,7 @@ def _print_json(data: Any) -> None:
 # ── Subcommand handlers ───────────────────────────────────────────────
 
 async def cmd_models(args: argparse.Namespace) -> None:
-    data = await _request("GET", args.server, "/admin/models", api_key=args.api_key)
+    data = await _request("GET", args.conn, "/admin/models", api_key=args.api_key)
     if getattr(args, "json", False):
         _print_json(data)
         return
@@ -132,7 +134,7 @@ async def cmd_start(args: argparse.Namespace) -> None:
                 pass
         body[key] = value
 
-    result = await _request("POST", args.server, f"/admin/start/{args.name}", api_key=args.api_key, json_body=body)
+    result = await _request("POST", args.conn, f"/admin/start/{args.name}", api_key=args.api_key, json_body=body)
     if getattr(args, "json", False):
         _print_json(result)
     else:
@@ -142,7 +144,7 @@ async def cmd_start(args: argparse.Namespace) -> None:
 
 
 async def cmd_stop(args: argparse.Namespace) -> None:
-    result = await _request("POST", args.server, f"/admin/stop/{args.name}", api_key=args.api_key)
+    result = await _request("POST", args.conn, f"/admin/stop/{args.name}", api_key=args.api_key)
     if getattr(args, "json", False):
         _print_json(result)
     elif result.get("ok"):
@@ -152,7 +154,7 @@ async def cmd_stop(args: argparse.Namespace) -> None:
 
 
 async def cmd_stop_all(args: argparse.Namespace) -> None:
-    result = await _request("POST", args.server, "/admin/stop-all", api_key=args.api_key)
+    result = await _request("POST", args.conn, "/admin/stop-all", api_key=args.api_key)
     if getattr(args, "json", False):
         _print_json(result)
     else:
@@ -162,7 +164,7 @@ async def cmd_stop_all(args: argparse.Namespace) -> None:
 
 
 async def cmd_config_list(args: argparse.Namespace) -> None:
-    data = await _request("GET", args.server, "/admin/config", api_key=args.api_key)
+    data = await _request("GET", args.conn, "/admin/config", api_key=args.api_key)
     if getattr(args, "json", False):
         _print_json(data)
         return
@@ -175,7 +177,7 @@ async def cmd_config_list(args: argparse.Namespace) -> None:
 
 
 async def cmd_config_get(args: argparse.Namespace) -> None:
-    result = await _request("GET", args.server, f"/admin/config/{args.name}", api_key=args.api_key)
+    result = await _request("GET", args.conn, f"/admin/config/{args.name}", api_key=args.api_key)
     if getattr(args, "json", False):
         _print_json(result)
         return
@@ -198,7 +200,7 @@ async def cmd_config_set(args: argparse.Namespace) -> None:
             except ValueError:
                 pass
         body[key] = value
-    result = await _request("PUT", args.server, f"/admin/config/{args.name}", api_key=args.api_key, json_body=body)
+    result = await _request("PUT", args.conn, f"/admin/config/{args.name}", api_key=args.api_key, json_body=body)
     if getattr(args, "json", False):
         _print_json(result)
     else:
@@ -222,7 +224,7 @@ async def cmd_config_create(args: argparse.Namespace) -> None:
             except ValueError:
                 pass
         body[key] = value
-    result = await _request("POST", args.server, "/admin/config", api_key=args.api_key, json_body=body)
+    result = await _request("POST", args.conn, "/admin/config", api_key=args.api_key, json_body=body)
     if getattr(args, "json", False):
         _print_json(result)
     elif result.get("ok"):
@@ -232,7 +234,7 @@ async def cmd_config_create(args: argparse.Namespace) -> None:
 async def cmd_config_rm(args: argparse.Namespace) -> None:
     # Delete the model entry from config via admin API
     # The server doesn't have a dedicated delete endpoint, so we use PUT with empty/None values
-    result = await _request("DELETE", args.server, f"/admin/config/{args.name}", api_key=args.api_key)
+    result = await _request("DELETE", args.conn, f"/admin/config/{args.name}", api_key=args.api_key)
     if getattr(args, "json", False):
         _print_json(result)
     elif result.get("ok"):
@@ -251,7 +253,7 @@ async def cmd_logs(args: argparse.Namespace) -> None:
     if getattr(args, "lines", None):
         params["lines"] = args.lines
 
-    data = await _request("GET", args.server, path, api_key=args.api_key)
+    data = await _request("GET", args.conn, path, api_key=args.api_key)
     if getattr(args, "json", False):
         _print_json(data)
         return
@@ -274,7 +276,7 @@ async def cmd_logs(args: argparse.Namespace) -> None:
 
 
 async def cmd_pull(args: argparse.Namespace) -> None:
-    result = await _request("POST", args.server, f"/admin/pull/{args.name}", api_key=args.api_key)
+    result = await _request("POST", args.conn, f"/admin/pull/{args.name}", api_key=args.api_key)
     if getattr(args, "json", False):
         _print_json(result)
     elif result.get("ok") or result.get("already_downloading"):
@@ -299,7 +301,7 @@ async def cmd_restart(args: argparse.Namespace) -> None:
             except ValueError:
                 pass
         body[key] = value
-    result = await _request("POST", args.server, f"/admin/restart/{args.name}", api_key=args.api_key, json_body=body)
+    result = await _request("POST", args.conn, f"/admin/restart/{args.name}", api_key=args.api_key, json_body=body)
     if getattr(args, "json", False):
         _print_json(result)
     elif result.get("ok"):
@@ -310,7 +312,7 @@ async def cmd_restart(args: argparse.Namespace) -> None:
 
 
 async def cmd_cancel_pull(args: argparse.Namespace) -> None:
-    result = await _request("POST", args.server, f"/admin/cancel-pull/{args.name}", api_key=args.api_key)
+    result = await _request("POST", args.conn, f"/admin/cancel-pull/{args.name}", api_key=args.api_key)
     if getattr(args, "json", False):
         _print_json(result)
     elif result.get("ok"):
@@ -320,7 +322,7 @@ async def cmd_cancel_pull(args: argparse.Namespace) -> None:
 
 
 async def cmd_clusters(args: argparse.Namespace) -> None:
-    result = await _request("GET", args.server, "/admin/clusters", api_key=args.api_key)
+    result = await _request("GET", args.conn, "/admin/clusters", api_key=args.api_key)
     if getattr(args, "json", False):
         _print_json(result)
         return
@@ -328,19 +330,19 @@ async def cmd_clusters(args: argparse.Namespace) -> None:
     if not clusters:
         print("No clusters configured.")
         return
-    header = f"{'NAME':<20} {'BASE-URL':<45} {'HEALTHY'}"
+    header = f"{'NAME':<20} {'URL':<45} {'HEALTHY'}"
     print(header)
     print("-" * len(header))
     for c in clusters:
         healthy = "yes" if c.get("healthy") else "no"
-        print(f"{c['name']:<20} {c.get('base-url', '-'):<45} {healthy}")
+        print(f"{c['name']:<20} {c.get('url', '-'):<45} {healthy}")
 
 
 async def cmd_cluster_add(args: argparse.Namespace) -> None:
-    body = {"base-url": args.base_url}
+    body = {"url": args.url}
     if getattr(args, "admin_key", None):
         body["admin-key"] = args.admin_key
-    result = await _request("POST", args.server, f"/admin/clusters/{args.name}", api_key=args.api_key, json_body=body)
+    result = await _request("POST", args.conn, f"/admin/clusters/{args.name}", api_key=args.api_key, json_body=body)
     if getattr(args, "json", False):
         _print_json(result)
     elif result.get("ok"):
@@ -350,7 +352,7 @@ async def cmd_cluster_add(args: argparse.Namespace) -> None:
 
 
 async def cmd_cluster_delete(args: argparse.Namespace) -> None:
-    result = await _request("DELETE", args.server, f"/admin/clusters/{args.name}", api_key=args.api_key)
+    result = await _request("DELETE", args.conn, f"/admin/clusters/{args.name}", api_key=args.api_key)
     if getattr(args, "json", False):
         _print_json(result)
     elif result.get("ok"):
@@ -360,7 +362,7 @@ async def cmd_cluster_delete(args: argparse.Namespace) -> None:
 
 
 async def cmd_eject(args: argparse.Namespace) -> None:
-    result = await _request("POST", args.server, f"/admin/eject/{args.name}", api_key=args.api_key)
+    result = await _request("POST", args.conn, f"/admin/eject/{args.name}", api_key=args.api_key)
     if getattr(args, "json", False):
         _print_json(result)
     elif result.get("ok"):
@@ -370,7 +372,7 @@ async def cmd_eject(args: argparse.Namespace) -> None:
 
 
 async def cmd_images_list(args: argparse.Namespace) -> None:
-    data = await _request("GET", args.server, "/admin/images", api_key=args.api_key)
+    data = await _request("GET", args.conn, "/admin/images", api_key=args.api_key)
     if getattr(args, "json", False):
         _print_json(data)
         return
@@ -392,7 +394,7 @@ async def cmd_images_build(args: argparse.Namespace) -> None:
     body = {"backend": args.backend}
     if getattr(args, "tag", None):
         body["tag"] = args.tag
-    result = await _request("POST", args.server, "/admin/images/build", api_key=args.api_key, json_body=body)
+    result = await _request("POST", args.conn, "/admin/images/build", api_key=args.api_key, json_body=body)
     if getattr(args, "json", False):
         _print_json(result)
     elif result.get("skipped"):
@@ -407,7 +409,7 @@ async def cmd_images_rm(args: argparse.Namespace) -> None:
     # URL-encode the image tag since it may contain slashes/colons
     from urllib.parse import quote
     encoded = quote(args.tag, safe="")
-    result = await _request("DELETE", args.server, f"/admin/images/{encoded}", api_key=args.api_key)
+    result = await _request("DELETE", args.conn, f"/admin/images/{encoded}", api_key=args.api_key)
     if getattr(args, "json", False):
         _print_json(result)
     elif result.get("removed"):
@@ -428,7 +430,7 @@ async def cmd_shutdown(args: argparse.Namespace) -> None:
 
     try:
         async with ClientSession(timeout=ClientTimeout(total=10)) as session:
-            async with session.post(args.server.rstrip("/") + "/admin/shutdown", headers=headers) as resp:
+            async with session.post(args.conn.url_for("/admin/shutdown"), headers=headers) as resp:
                 data = await resp.json()
                 print(data.get("message", "Server shutting down"))
     except Exception:
@@ -442,9 +444,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="arkestra-admin",
         description="ModelArkestra admin CLI — manage models via the HTTP server API.",
     )
-    parser.add_argument("--server", "-x", default=None, help="Server URL (default: read from env or config)")
-    parser.add_argument("--api-key", default=None, help="Admin API key (overrides config env)")
-    parser.add_argument("--config", "-c", default=None, help="Config path for auto-reading ADMIN_KEY and server URL")
+    add_common_args(parser)
 
     sub = parser.add_subparsers(dest="command", help="Available commands")
 
@@ -524,7 +524,7 @@ def build_parser() -> argparse.ArgumentParser:
     clsubs.add_parser("list", help="List all clusters")
     cla = clsubs.add_parser("add", help="Add a remote cluster")
     cla.add_argument("name")
-    cla.add_argument("--base-url", required=True)
+    cla.add_argument("--url", required=True, help="Cluster public URL (scheme://host:port/prefix)")
     cla.add_argument("--admin-key", default=None, help="Cluster's admin key")
     cld = clsubs.add_parser("delete", help="Remove a remote cluster")
     cld.add_argument("name")
@@ -556,27 +556,25 @@ def main(argv: list[str] | None = None) -> None:
         parser.print_help()
         sys.exit(1)
 
-    # ── Resolve server URL: CLI > env > config > hardwired default ───
-    if not args.server:
-        url_env = os.environ.get("ARKESTRA_ADMIN_URL")
-        if url_env:
-            args.server = url_env
-        else:
-            data = _load_config(args.config)
-            # Check config.default.admin-port (matching server resolution chain)
-            default_section = data.get("default") or {}
-            port = (default_section.get("admin-port")
-                    or data.get("admin-port"))
-            if port is not None:
-                args.server = f"http://127.0.0.1:{port}"
-    if not args.server:
-        args.server = "http://127.0.0.1:8080"  # hardwired default
+    # ── Resolve connection: CLI > env > config > default (shared resolver) ─
+    def _cfg_get(path, default=None):
+        data = _load_config(args.config)
+        node = data
+        for part in path.split("/"):
+            if not isinstance(node, dict) or part not in node:
+                return default
+            node = node[part]
+        return node
 
-    # ── Resolve auth ──
-    api_key = args.api_key or os.environ.get("ADMIN_KEY") or _read_admin_key(args.config)
-    args.api_key = api_key
+    conn = resolve_conn(args, server=False, cfg_get=_cfg_get)
+    # Auth: shared resolver covers --api-key / ARKESTRA_API_KEY; fall back to config.
+    api_key = conn.api_key or _read_admin_key(args.config)
+    if api_key != conn.api_key:
+        conn = Conn(scheme=conn.scheme, host=conn.host, port=conn.port,
+                    base_path=conn.base_path, config_path=conn.config_path, api_key=api_key)
+    args.conn = conn
     if not api_key:
-        print("Error: no API key. Provide --api-key, set ADMIN_KEY env, or define admin_key in config.yaml", file=sys.stderr)
+        print("Error: no API key. Provide --api-key, set ARKESTRA_API_KEY env, or define admin_key in config.yaml", file=sys.stderr)
         sys.exit(1)
 
     # Dispatch to the right handler

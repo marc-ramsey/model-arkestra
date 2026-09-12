@@ -43,10 +43,8 @@ During chat, type `/`-commands to adjust parameters or manage the conversation:
 |---|---|
 | `ARKESTRA_CONFIG` | Path to config.yaml |
 | `ARKESTRA_DIR` | Directory containing config.yaml |
-| `ARKESTRA_HOST` | Target host (client) or bind address (server) |
-| `ARKESTRA_PORT` | HTTP port |
+| `ARKESTRA_URL` | Public address `scheme://host:port/prefix` (server + clients) |
 | `ARKESTRA_API_KEY` | Bearer token for auth |
-| `ARKESTRA_BASE_PATH` | URL path prefix |
 
 ## Basic Initialization
 

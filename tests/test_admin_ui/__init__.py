@@ -34,7 +34,7 @@ def _start_server(port: int) -> subprocess.Popen:
     cmd = [
         "python", "-m", "model_arkestra.server",
         "--config", str(TEST_CFG),
-        "--port", str(port),
+        "--url", f"http://127.0.0.1:{port}",
     ]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
     # Wait for server to be ready (max 30s)

@@ -33,7 +33,7 @@ This creates the venv, installs the package (editable mode with `[proxy]` extras
 After setup, CLI commands work from any directory — no activation needed:
 
 ```bash
-arkestra-server --config config.yaml --port 8080
+arkestra-server --config config.yaml --url http://127.0.0.1:8080
 arkestra models
 ```
 
@@ -55,9 +55,9 @@ async with ModelArkestra("config.yaml") as runner:
 ### Quick Start — Server
 
 ```bash
-python -m model_arkestra.server --config config.yaml --port 8080
+python -m model_arkestra.server --config config.yaml --url http://127.0.0.1:8080
 # or equivalently:
-arkestra-server --config config.yaml --port 8080
+arkestra-server --config config.yaml --url http://127.0.0.1:8080
 ```
 
 Then hit `POST /v1/chat/completions` with any OpenAI-compatible client, or visit the admin dashboard at `http://localhost:8080/`.
@@ -71,14 +71,16 @@ arkestra chat -m qwen3-4b            # interactive chat (auto-starts if stopped)
 arkestra chat -m qwen3-4b -T 0.5 --max-tokens 256   # with inference flags
 ```
 
-Connection resolution (same for `arkestra` and `arkestra-server`):
+Connection resolution (same for `arkestra`, `arkestra-admin`, and `arkestra-server`):
 
 | Priority | Source | Example |
 |---|---|---|
-| 1 | CLI flag | `--host 10.0.0.1 --port 9000` |
-| 2 | Environment | `ARKESTRA_HOST=10.0.0.1 ARKESTRA_PORT=9000` |
-| 3 | Config | `default: admin-port: 9000` in `config.yaml` |
-| 4 | Default | `127.0.0.1:8080` |
+| 1 | CLI flag | `--url http://10.0.0.1:9000/base` |
+| 2 | Environment | `ARKESTRA_URL=http://10.0.0.1:9000/base` |
+| 3 | Config | `default: url: http://10.0.0.1:9000/base` in `config.yaml` |
+| 4 | Default | `http://127.0.0.1:8080` |
+
+The public URL carries the host, port, and any path prefix (`/base`). The server's bind address is set separately with `--bind` / `default.bind` (default `127.0.0.1`; use `0.0.0.0` to expose on the LAN).
 
 Config location: `--config` / `ARKESTRA_CONFIG` / `ARKESTRA_DIR` / `~/.config/arkestra/config.yaml`.
 
@@ -87,13 +89,13 @@ In-loop commands during chat: `/help`, `/quit`, `/clear`, `/history`, `/system <
 ### Quick Start — Admin CLI
 
 ```bash
-arkestra-admin models -x http://localhost:8080 --api-key SECRET
+arkestra-admin models --url http://localhost:8080 --api-key SECRET
 arkestra-admin start qwen3-4b temp=0.7 backend=vulkan-radv
 arkestra-admin config get qwen3-4b
 arkestra-admin logs qwen3-4b --lines 100
 arkestra-admin images list
 arkestra-admin eject qwen3-4b         # stop and delete checkpoint cache
-arkestra-admin shutdown -x http://localhost:8080
+arkestra-admin shutdown --url http://localhost:8080
 ```
 
 See [Admin API & Dashboard](./docs/admin.md) for the full CLI reference.
@@ -187,7 +189,7 @@ Once configured, every request to `/v1/chat/completions` with `model: "gpu-lab-1
 
 ```bash
 # The master needs no GPU, no llama.cpp binary, nothing local
-arkestra-server --config config.yaml --port 8080
+arkestra-server --config config.yaml --url http://127.0.0.1:8080
 ```
 
 See [Configuration Format](./docs/config.md#remote-federation-runner-remote) for the full federation guide.

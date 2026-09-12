@@ -82,7 +82,7 @@ def master_server(worker_server):
         warmup-time: 5
         clusters:
           gpu-server:
-            base-url: "http://127.0.0.1:{WORKER_PORT}"
+            url: "http://127.0.0.1:{WORKER_PORT}"
         models:
           gpu-server/gemma:
             repo: hugging-face
@@ -131,7 +131,9 @@ class TestRemoteIntegration:
             json={"model": "gpu-server/gemma", "messages": [
                 {"role": "user", "content": "hello"}], "stream": False},
         )
-        # 503 because worker has no model loaded, but the proxy path is exercised
+        # 503 because worker can't load the model, but the proxy path is
+        # exercised: master → RemoteRunner → worker (retries worker 503s)
         assert r.status_code == 503
         detail = r.json()["detail"]
-        assert "Remote inference failed" in detail or "gpu-server/gemma" in detail
+        assert "Model error:" in detail
+        assert "503" in detail or "not reachable" in detail

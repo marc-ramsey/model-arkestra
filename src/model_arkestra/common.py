@@ -936,8 +936,27 @@ def _resolve_device_profile(
     return {"env": prof.get("env") or {}, "args": prof.get("args") or {}}
 
 
+_HF_INFO_CACHE: Dict[str, Tuple[float, dict | None]] = {}
+_HF_INFO_TTL = 300.0  # seconds — admin endpoints shouldn't hit HF per-model per-request
+
+
 def hf_model_info(repo_id: str) -> dict | None:
-    """Query HuggingFace for model size and checkpoint version (no download)."""
+    """Query HuggingFace for model size and checkpoint version (no download).
+
+    Results (including failures) are cached for ``_HF_INFO_TTL`` seconds so
+    repeated admin/API requests don't hammer the HF API.
+    """
+    now = time.monotonic()
+    hit = _HF_INFO_CACHE.get(repo_id)
+    if hit is not None and now - hit[0] < _HF_INFO_TTL:
+        return hit[1]
+    result = _hf_model_info_uncached(repo_id)
+    _HF_INFO_CACHE[repo_id] = (now, result)
+    return result
+
+
+def _hf_model_info_uncached(repo_id: str) -> dict | None:
+    """Un-cached HuggingFace lookup (see :func:`hf_model_info`)."""
     try:
         from huggingface_hub import model_info
     except ImportError:

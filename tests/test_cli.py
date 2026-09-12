@@ -22,7 +22,7 @@ async def _mock_request(conn, path, method="GET", json_body=None):
 
 
 def _args(**kw):
-    base = {"model": None, "config": None, "host": None, "port": None,
+    base = {"model": None, "config": None, "url": None,
             "api_key": None, "temperature": None, "top_p": None,
             "max_tokens": None, "frequency_penalty": None,
             "presence_penalty": None, "stop": None, "force": False}
@@ -70,11 +70,10 @@ class TestArgParsing:
         for sub in ("models", "chat", "init"):
             p = build_parser()
             argv = [sub] + (["-m", "x"] if sub == "chat" else [])
-            args = p.parse_args(argv + ["-c", "/x.yaml", "-H", "1.2.3.4",
-                                        "-p", "1234", "--api-key", "k"])
+            args = p.parse_args(argv + ["-c", "/x.yaml", "--url", "http://1.2.3.4:1234",
+                                        "--api-key", "k"])
             assert args.config == "/x.yaml"
-            assert args.host == "1.2.3.4"
-            assert args.port == 1234
+            assert args.url == "http://1.2.3.4:1234"
             assert args.api_key == "k"
 
     def test_init_force_flag(self):
@@ -106,7 +105,7 @@ class TestMakeConn:
     def test_port_from_config(self, tmp_path, monkeypatch):
         from model_arkestra.cli import _make_conn
         cfg = tmp_path / "config.yaml"
-        cfg.write_text("default:\n  admin-port: 9999\n")
+        cfg.write_text("default:\n  url: http://h:9999\n")
         monkeypatch.setenv("ARKESTRA_CONFIG", str(cfg))
         conn = _make_conn(_args())
         assert conn.port == 9999
@@ -118,7 +117,7 @@ class TestCmdModels:
     async def test_list_all_models(self, capsys, tmp_path, monkeypatch):
         from model_arkestra.cli import cmd_models
         cfg = tmp_path / "config.yaml"
-        cfg.write_text("default:\n  admin-port: 8080\n")
+        cfg.write_text("default:\n  url: http://127.0.0.1:8080\n")
         monkeypatch.setenv("ARKESTRA_CONFIG", str(cfg))
         with patch("model_arkestra.cli._request", _mock_request):
             await cmd_models(_args())
@@ -129,7 +128,7 @@ class TestCmdModels:
     async def test_single_model_filter(self, capsys, tmp_path, monkeypatch):
         from model_arkestra.cli import cmd_models
         cfg = tmp_path / "config.yaml"
-        cfg.write_text("default:\n  admin-port: 8080\n")
+        cfg.write_text("default:\n  url: http://127.0.0.1:8080\n")
         monkeypatch.setenv("ARKESTRA_CONFIG", str(cfg))
         with patch("model_arkestra.cli._request", _mock_request):
             await cmd_models(_args(model="qwen3-4b"))
