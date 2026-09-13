@@ -1,6 +1,6 @@
 # API Reference — Runners
 
-For direct use when you only need subprocess-based or container-based execution without the orchestration layer. Each runner binds to a `ConfigManager` instance and manages exactly one model. Its `stop()` takes no arguments and shuts down that model; `stop_all()` delegates to `stop()`. The remaining methods (`start`, `ainvoke`, `astream`, `request`, `running_models`) follow the same contract as described in [ModelArkestra](./model-arkestra.md).
+For direct use when you only need subprocess-based or container-based execution without the orchestration layer. Each runner binds to a `ConfigManager` instance and manages exactly one model. Its `stop()` takes no arguments and shuts down that model; `stop_all()` delegates to `stop()`. Runners are **lifecycle-only** — they launch, stop, and watch the process or container. Inference (chat, embed, ASR, TTS) is handled by a separate **Provider**, not the runner; see [Architecture](../architecture.md#inference-providers--capabilities). The remaining lifecycle methods (`start`, `get_logs`, `running_models`) follow the same contract as described in [ModelArkestra](./model-arkestra.md).
 
 ## ProcessRunner
 

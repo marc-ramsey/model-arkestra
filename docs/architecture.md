@@ -3,8 +3,8 @@
 Model Arkestra handles port allocation and backend→runner routing.
 
 > **Lifecycle vs inference.** Since the core restructure, a `Model` object owns
-> its state and its *client* (inference). Runners/backends own only launch,
-> stop, and crash-watching. See [Inference Clients & Capabilities](#inference-clients--capabilities) below.
+> its state and its *provider* (inference). Runners/backends own only launch,
+> stop, and crash-watching. See [Inference Providers & Capabilities](#inference-providers--capabilities) below.
 
 ## Component Diagram
 
@@ -20,11 +20,10 @@ Model Arkestra handles port allocation and backend→runner routing.
        │                  │
        ▼                  ▼
 ┌──────────────┐  ┌────────────────────────┐
-│ProcessModel  │  │ ContainerRunner   │
-│    Runner    │  │     (abstract base)     │
-│              │  ├────────────┬───────────┤
-│subprocesses  │  │PodmanModel │ DockerModel│
-│              │  │   Runner   │  Runner   │
+│ProcessRunner │  │ ContainerRunner   │
+│              │  │     (abstract base)     │
+│subprocesses  │  ├────────────┬───────────┤
+│              │  │PodmanRunner│ DockerRunner│
 └──────┬───────┘  │            │           │
        │          │OCI containers│OCI cont.│
        │          └────────────┴───────────┘
@@ -190,29 +189,49 @@ Keys use kebab-case in YAML, matching CLI flag names directly.
 
 Infrastructure flags (`--port`, `--model`) are handled by ``LlamaCppEngine.build_cli_args()``. Internally everything stays structured as dicts until CLI conversion time.
 
-## Inference Clients & Capabilities
+## Inference Providers & Capabilities
 
 A `Model` is the single owner of per-model state (state, port, log ring) **and**
-of inference. It holds a small set of **clients**, one per *modality*. Runners
-never touch inference; they only launch/stop/watch the process or container.
+of inference. It holds exactly **one provider**, chosen by the model's runner
+kind. Runners never touch inference; they only launch/stop/watch the process or
+container.
+
+``Model.provider`` builds the provider on first use and caches it:
 
 ```
-Model
- ├─ .capabilities          # derived set, cached — which clients are live
- ├─ .invoke / .stream      # unified chat front (LangChain) → ChatClient
- ├─ .embeddings            # EmbedClient   (llama HTTP or ONNX session)
- ├─ .asr                   # AsrClient     (ONNX whisper)
- ├─ .tts                   # TtsClient     (ONNX kokoro)
- └─ (future) .images / .video
+runner_type == "remote"    → RemoteProvider   (proxied to a cluster worker)
+runner_type == "onnx"      → OnnxProvider     (in-process ONNX session, no transport)
+anything else              → LlamaProvider    (local llama-server via its HTTP API)
 ```
 
-### Why per-modality clients, not one fat client
+The provider class is **engine/location-based**, not mechanism-based. ONNX runs
+in-process with no transport; Llama and Remote use network transports. The name
+reflects *what provides the inference*, not *how it is reached*.
 
-Image and video are new *modalities*, not new methods bolted onto chat. A single
-client with `chat/embed/transcribe/synthesize/generate_image/understand_video`
-is a kitchen sink. One client per modality keeps each object single-purpose,
-makes capability derivation trivial (`capabilities == {clients that exist}`),
-and lets a new modality be added without touching existing ones.
+### Why one provider per model, not one per modality
+
+A single provider owns all of a model's modalities and gates each by capability.
+This keeps the ownership surface tiny (one object on `Model`) while still letting
+each modality be added independently: a new modality is a new method on the
+provider plus a new capability in its set. Capability derivation stays trivial —
+a provider advertises what it can do, and `Model.capabilities` mirrors it.
+
+### The Provider interface
+
+All providers implement a common contract (`model_arkestra.providers.base`):
+
+| Method | Purpose |
+|---|---|
+| `probe()` | Health/availability check |
+| `invoke_full(prompt, **kw)` | Blocking completion (full response dict) |
+| `stream(payload)` | Async iterator of stream chunks |
+| `embed(text)` | Embedding for one text |
+| `transcribe(audio_bytes, language)` | Speech → text |
+| `synthesize(text, voice, speed)` | Text → speech bytes |
+| `request(path, **kw)` | Raw passthrough to the underlying endpoint |
+
+Methods a provider does not support raise `NotSupported`. The facade checks
+capability before dispatching, so unsupported calls fail fast with a clear error.
 
 ### Capability derivation
 
@@ -232,31 +251,41 @@ not advertise `chat`. Everything else is computed.
 
 ### How image/video slot in later
 
-- **Vision chat** (image in → text out): *no new client.* It is `ChatClient`
+- **Vision chat** (image in → text out): *no new provider.* It is a chat call
   with an image content part; the backend just needs `mmproj`. Capability stays `chat`.
-- **Image generation** (text → image): new `ImageClient`, capability `image-gen`,
-  likely a new backend (e.g. stable-diffusion server or ONNX). Derivation via
+- **Image generation** (text → image): a new `generate_image()` method on the
+  relevant provider, capability `image-gen`, likely a new backend. Derivation via
   `type: image-gen` or a backend that advertises it.
-- **Video**: same pattern — `VideoClient`, capability `video`.
+- **Video**: same pattern — a new method + capability `video`.
 
-Each modality = one client + one capability + (optionally) one backend. Adding
-video never forces a rewrite of chat/embed/asr.
+Each modality = one provider method + one capability (+ optionally a backend).
+Adding video never forces a rewrite of chat/embed/asr.
+
+### Facade routing
+
+The public facade methods are thin routers to the active provider, gated by
+capability:
+
+```
+arkestra.ainvoke / .astream      → LlamaProvider.invoke_full / .stream  (chat)
+arkestra.embed                   → provider.embed                       (embed)
+arkestra.transcribe              → provider.transcribe                  (asr)
+arkestra.synthesize              → provider.synthesize                  (tts)
+```
+
+`ainvoke`/`astream` remain stable shims for the LangChain adapter. New modalities
+get a facade method + a CLI subcommand for free.
 
 ### CLI mapping
 
-Each CLI subcommand binds exactly one client, gated by capability:
+Each CLI subcommand binds one capability, gated before dispatch:
 
 ```
-arkestra chat <model>            → model.invoke / .stream
-arkestra embed <model> "text"    → model.embeddings.encode
-arkestra transcribe <model> f.wav→ model.asr.transcribe
-arkestra tts <model> "text"      → model.tts.synthesize
-arkestra image <model> "prompt"  → (future) model.images.generate
+arkestra chat <model>            → provider.invoke_full / .stream
+arkestra embed <model> "text"    → provider.embed
+arkestra transcribe <model> f.wav→ provider.transcribe
+arkestra tts <model> "text"      → provider.synthesize
 ```
-
-The public facade shims (`ainvoke`, `astream`, `embed`, `transcribe`,
-`synthesize`) stay stable — they become one-line routers to the right client.
-New modalities get a subcommand for free.
 
 ## Related
 

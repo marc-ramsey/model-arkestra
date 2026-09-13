@@ -165,6 +165,14 @@ for line in lines:
 
 ## Properties
 
+### `models: dict[str, _ModelContext]`
+
+Read-only mapping of model name → its `_ModelContext` (the unified Model object).
+Each context owns its state, port, log ring, backend/runner kind, and provider.
+The **Registry** is the authoritative owner; each runner also keeps a handle in
+its own `_models` dict for convenience. See [Architecture](../architecture.md) for
+the lifecycle-vs-inference split.
+
 ### `running_models: set[str]`
 
 Read-only property returning the names of all models currently in `"running"` state, aggregated across all runner instances.
