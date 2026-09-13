@@ -104,13 +104,15 @@ class ModelArkestra:
         """
         return self._registry.allocate_port(model_name)
     
-    # ── backend runtime validation (hard error) ─────────────────────
+    # ── backend runtime validation (warn + fallback) ────────────────
     def _validate_backend_runtime(self) -> None:
         """Ensure the configured default backend's runtime is available.
 
-        Raises RuntimeError if a non-CPU backend is configured but its
-        runtime is not detected on the system. CPU backends always pass
-        since the binary will be downloaded at model-start time.
+        If it is missing, warn and record a detected fallback (CPU-capable)
+        in the config manager's runtime-only override. Downstream resolution
+        reads ``effective_default_backend()`` so every reader picks a usable
+        backend instead of hard-erroring at startup. The user's config file
+        is left untouched.
         """
         backends = self._cm.get("backends", {})
         if not isinstance(backends, dict):
@@ -125,13 +127,13 @@ class ModelArkestra:
             "cuda": has_nvidia,
         }
         checker = runtime_checks.get(backend_id)
-        if checker:
-            if not checker():
-                suggestion = "Run 'model-arkestra init' to auto-detect your GPU."
-                raise RuntimeError(
-                    f"Backend '{backend_id}' configured but runtime not detected. {suggestion}"
-                )
-        # CPU backends and unknown IDs pass by default
+        if checker and not checker():
+            fallback, reason = (self.device_detection.get("recommendation") or ("cpu", ""))
+            self._cm._effective_default_backend = fallback
+            logger.warning(
+                f"Backend '{backend_id}' runtime not detected — "
+                f"falling back to '{fallback}' ({reason})."
+            )
 
 
 

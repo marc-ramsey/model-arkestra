@@ -842,12 +842,16 @@ def _resolve_backend(
     if new_default:
         return str(new_default)
 
-    # Nested backends.default key
-    backends_section = cm.data.get("backends", {})
-    if isinstance(backends_section, dict):
-        default_id = backends_section.get("default")
-        if default_id:
-            return str(default_id)
+    # Nested backends.default key (or runtime-detected fallback override)
+    effective_default = None
+    if hasattr(cm, "effective_default_backend"):
+        effective_default = cm.effective_default_backend()
+    else:
+        backends_section = cm.data.get("backends", {})
+        if isinstance(backends_section, dict):
+            effective_default = backends_section.get("default")
+    if effective_default:
+        return str(effective_default)
 
     # Ultimate fallback — matches BaseRunner._DEFAULT_BACKEND
     return "cpu"

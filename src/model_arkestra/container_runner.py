@@ -43,11 +43,14 @@ def _resolve_backend(
     if not backend_id:
         backend_id = model_data.get("backend")
 
-    # 3. Global default
+    # 3. Global default (or runtime-detected fallback override)
     if not backend_id:
-        backends = runner.cm.data.get("backends")
-        if isinstance(backends, dict):
-            backend_id = backends.get("default")
+        if hasattr(runner.cm, "effective_default_backend"):
+            backend_id = runner.cm.effective_default_backend()
+        else:
+            backends = runner.cm.data.get("backends")
+            if isinstance(backends, dict):
+                backend_id = backends.get("default")
 
     return runner.cm[f"backends/{backend_id}"] if backend_id else None
 

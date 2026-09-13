@@ -9,6 +9,26 @@ from llm_config_manager import ConfigManager
 class ModelConfigManager(ConfigManager):
     """ConfigManager extended with model and backend lookups."""
 
+    def __init__(self, *args: Any, **kwargs: Any):
+        super().__init__(*args, **kwargs)
+        # Runtime-only effective default backend. Set at init after GPU detection
+        # when the configured default's runtime is missing. Kept OUT of self.data so
+        # a config save never persists the auto-detected fallback over the user's choice.
+        self._effective_default_backend: Optional[str] = None
+
+    def effective_default_backend(self) -> Optional[str]:
+        """Return the backend to use when a model has no explicit ``backend:``.
+
+        Prefers the runtime-detected override (set at init), else the configured
+        ``backends.default``. Never writes to disk.
+        """
+        if self._effective_default_backend:
+            return self._effective_default_backend
+        be = self.data.get("backends") or {}
+        if isinstance(be, dict):
+            return be.get("default")
+        return None
+
     def get_models(self) -> list[str]:
         """Return a list of all available model names."""
         models = self.data.get("models")
