@@ -22,8 +22,8 @@ class DockerRunner(ContainerRunner):
     def _container_cmd(self) -> str:
         return "docker"
 
-    def _pre_start_cleanup(self) -> List[str]:
-        return ["docker", "rm", "-f"]
+    def _pre_start_cleanup(self, ctx) -> List[str]:
+        return ["docker", "rm", "-f", safe_container_name(ctx.name, ctx.port)]
 
     async def _remove_containers(self, cids: list) -> None:
         for cid in cids:

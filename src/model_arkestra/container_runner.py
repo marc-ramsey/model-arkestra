@@ -225,8 +225,11 @@ class ContainerRunner(BaseRunner, ABC):
     def _resolve_image(self, image: str) -> str:
         return image
 
-    def _pre_start_cleanup(self) -> List[str]:
-        """Pre-start cleanup command (e.g. docker rm -f). Return [] for none."""
+    def _pre_start_cleanup(self, ctx: _ModelContext) -> List[str]:
+        """Command to remove a stale container by deterministic name before run.
+
+        Empty list means the runtime handles replacement itself (podman --replace).
+        """
         return []
 
     def _extra_run_args(self) -> List[str]:
@@ -266,13 +269,39 @@ class ContainerRunner(BaseRunner, ABC):
     async def _remove_containers(self, cids: list) -> None:
         """Force-remove a list of stale container IDs."""
 
+    async def _ensure_image(self, image: str, ctx: _ModelContext) -> None:
+        """Pull *image* if absent, streaming progress to the model log ring.
+
+        Runs before `run` so a slow pull never overlaps the readiness timer.
+        """
+        cmd = self._container_cmd()
+        inspect = await asyncio.create_subprocess_exec(
+            cmd, "image", "inspect", image,
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+            env=SUBPROCESS_ENV)
+        if (await inspect.wait()) == 0:
+            return  # already present
+
+        ctx._append_log_line(f"[pull] {image}")
+        pull = await asyncio.create_subprocess_exec(
+            cmd, "pull", image,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            env=SUBPROCESS_ENV)
+        async for raw in pull.stdout:
+            line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+            if line:
+                ctx._append_log_line(line)
+        rc = await pull.wait()
+        if rc != 0:
+            raise RuntimeError(f"{cmd} pull failed for {image} (exit {rc})")
+
     async def _start_model_process(
         self, ctx: _ModelContext, model_data: Dict[str, Any]
     ) -> None:
         """Shared container launch logic. Subclasses may override hooks."""
         await self._ensure_port_available(ctx.port)
         # Pre-start cleanup hook (docker removes existing by name; podman uses --replace)
-        pre_cmd = self._pre_start_cleanup()
+        pre_cmd = self._pre_start_cleanup(ctx)
         if pre_cmd:
             proc = await asyncio.create_subprocess_exec(
                 *pre_cmd,
@@ -307,6 +336,9 @@ class ContainerRunner(BaseRunner, ABC):
             )
         if "/" not in image:
             image = f"localhost/{image}"
+
+        # Provision the image before run so a slow pull never overlaps readiness.
+        await self._ensure_image(image, ctx)
 
         # Inject resolved image for _build_container_cmd
         backend["image"] = image
