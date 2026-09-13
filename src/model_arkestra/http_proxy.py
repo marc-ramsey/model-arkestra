@@ -93,7 +93,7 @@ def model_status(state: RunnerState, error_message: str | None = None) -> Dict[s
 
 
 def model_status_for_ctx(ctx) -> Dict[str, str]:
-    """Helper for call sites that hold a _ModelContext or None."""
+    """Helper for call sites that hold a _Model or None."""
     if ctx is None:
         return {"value": "unloaded"}
     return model_status(ctx.state, ctx.last_error)

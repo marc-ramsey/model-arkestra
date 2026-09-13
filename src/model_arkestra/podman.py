@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 from model_arkestra.binary_downloader import BinaryDownloader, BinaryDownloaderError
 from model_arkestra.container_runner import ContainerRunner
 from model_arkestra.common import SUBPROCESS_ENV, safe_container_name
-from model_arkestra.types import _ModelContext
+from model_arkestra.types import _Model
 
 
 class PodmanRunner(ContainerRunner):

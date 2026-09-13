@@ -164,9 +164,8 @@ class TestUnknownRunnerRejected:
 
 
 # ── Backend resolution ───────────────────────────────────────
-# Note: model.backend priority and global default are tested in
-# tests/unit/test_resolve_defaults.py (TestBackendPriority).
-# This module keeps only the edge case requiring a full app instance.
+# Note: backend/runner resolution is exercised via common._resolve_backend;
+# this module keeps only the edge case requiring a full app instance.
 
 class TestBackendResolution:
     """Edge cases in backend resolution that need a full ModelArkestra instance."""

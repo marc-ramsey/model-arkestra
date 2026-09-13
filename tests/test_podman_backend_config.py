@@ -14,7 +14,7 @@ import pytest
 
 from model_arkestra.container_runner import _build_container_cmd
 from model_arkestra.process import ProcessRunner
-from model_arkestra.types import RunnerState, _ModelContext, ModelNotStarted, ModelShutdown, MaxRestartsExceeded
+from model_arkestra.types import RunnerState, _Model, ModelNotStarted, ModelShutdown, MaxRestartsExceeded
 
 
 def _make_runner():
@@ -186,7 +186,7 @@ class TestDispatch:
 
     def test_dispatch_stopped_raises_shutdown(self):
         runner = ProcessRunner(MagicMock())
-        ctx = _ModelContext("stopped", 18000)
+        ctx = _Model("stopped", 18000)
         ctx._state = RunnerState.STOPPED
         runner._models["stopped"] = ctx
         with pytest.raises(ModelShutdown, match="was stopped"):
@@ -194,7 +194,7 @@ class TestDispatch:
 
     def test_dispatch_stopping_raises_shutdown(self):
         runner = ProcessRunner(MagicMock())
-        ctx = _ModelContext("stopping", 18001)
+        ctx = _Model("stopping", 18001)
         ctx._state = RunnerState.STOPPING
         runner._models["stopping"] = ctx
         with pytest.raises(ModelShutdown, match="was stopped"):
@@ -202,7 +202,7 @@ class TestDispatch:
 
     def test_dispatch_error_raises_max_restarts(self):
         runner = ProcessRunner(MagicMock())
-        ctx = _ModelContext("errored", 18002)
+        ctx = _Model("errored", 18002)
         ctx._state = RunnerState.ERROR
         ctx.restart_count = 4
         runner._models["errored"] = ctx
@@ -211,7 +211,7 @@ class TestDispatch:
 
     def test_dispatch_running_succeeds(self):
         runner = ProcessRunner(MagicMock())
-        ctx = _ModelContext("running", 18002)
+        ctx = _Model("running", 18002)
         ctx._state = RunnerState.RUNNING
         runner._models["running"] = ctx
         result = asyncio.run(runner._dispatch("running"))

@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from model_arkestra.arkestra import ModelArkestra
 from model_arkestra.server import ArkestraServer
-from model_arkestra.types import RunnerState, _ModelContext
+from model_arkestra.types import RunnerState, _Model
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -32,8 +32,8 @@ class MockRunner:
         }
 
 
-def make_ctx(name: str, port: int, state: RunnerState) -> _ModelContext:
-    ctx = _ModelContext(name, port)
+def make_ctx(name: str, port: int, state: RunnerState) -> _Model:
+    ctx = _Model(name, port)
     ctx._state = state
     return ctx
 

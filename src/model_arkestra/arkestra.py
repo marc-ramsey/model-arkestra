@@ -21,7 +21,7 @@ from model_arkestra.onnx_runner import OnnxRunner
 from model_arkestra.podman import PodmanRunner
 from model_arkestra.process import ProcessRunner
 from model_arkestra.remote import RemoteRunner
-from model_arkestra.types import RunnerState, _ModelContext
+from model_arkestra.types import RunnerState, _Model
 from model_arkestra.unicode_ringbuffer import UnicodeRingBuffer
 from model_arkestra.http_proxy import model_status_for_ctx
 
@@ -59,7 +59,7 @@ class ModelArkestra:
         self._runner_kwargs = runner_kwargs
         # ── Global log buffer (single ring for all server-level events) ─
         app_log_lines = int(self._cm.get("default/app-log-lines", 2000))
-        self._global_log_buf = UnicodeRingBuffer(app_log_lines * _ModelContext.AVG_LINE_BYTES)
+        self._global_log_buf = UnicodeRingBuffer(app_log_lines * _Model.AVG_LINE_BYTES)
         self._global_log_seq: int = 0
         # Extract sources section for binary_downloader compatibility
         self._sources: Dict[str, Any] = self._cm.get("sources", {})
@@ -152,7 +152,7 @@ class ModelArkestra:
     @property
     def models(self) -> Dict[str, Any]:
         """Name → Model map. The single source of truth for model state."""
-        return {m.name: m for m in self._registry.all()}
+        return {m.name: m for m in self._registry.all}
 
     @property
     def device_detection(self) -> Dict[str, Any]:
@@ -173,10 +173,10 @@ class ModelArkestra:
         return self.device_detection
 
     def _pre_create_model_contexts(self) -> None:
-        """Create a _ModelContext for every configured model.
+        """Create a _Model for every configured model.
 
         Ports are allocated, backends resolved, and state set based on
-        cache existence.  This ensures find_context() always returns a
+        cache existence.  This ensures model_obj() always returns a
         valid context for any configured model — no more None gaps.
         """
         hf_cache = self.resolve_config("hf_hub_cache") or str(default_cache_root())
@@ -218,8 +218,8 @@ class ModelArkestra:
             state = RunnerState.STOPPED if is_cached else RunnerState.UNCACHED
 
             # Create the context — port assigned at first start only.
-            from model_arkestra.types import _ModelContext
-            ctx = _ModelContext(model_name, None, max_log_lines=500)
+            from model_arkestra.types import _Model
+            ctx = _Model(model_name, None, max_log_lines=500)
             ctx.backend_id = backend_id
             ctx.runner_type = runner_type
             if not is_cached:
@@ -280,18 +280,17 @@ class ModelArkestra:
 
     # ── model introspection (runtime state) ────────────────────────────
 
-    def get_model_contexts(self) -> list[_ModelContext]:
-        """Return all tracked model contexts (owned by the registry)."""
-        return self._registry.all
+    def model_obj(self, model_name: str) -> Optional[_Model]:
+        """Return the live _Model for *model_name* (cluster-prefix aware), or None.
 
-    def find_context(self, model_name: str) -> Optional[_ModelContext]:
-        """Return the context for *model_name*, or None."""
+        Distinct from ``get_model()`` which returns the static config dict.
+        """
         local_name = self.local_model_name(model_name)
         return self._registry.find_by_local_name(local_name)
 
     def _provider_for(self, model_name: str):
         """Return the inference Provider for *model_name* (raises if unknown)."""
-        ctx = self.find_context(model_name)
+        ctx = self.model_obj(model_name)
         if ctx is None:
             from model_arkestra.types import ModelNotStarted
             raise ModelNotStarted(self.local_model_name(model_name))
@@ -301,7 +300,7 @@ class ModelArkestra:
         """OpenAI-compatible ``/v1/models`` response with WebUI status fields."""
         from time import time
 
-        contexts_by_name = {ctx.name: ctx for ctx in self.get_model_contexts()}
+        contexts_by_name = {ctx.name: ctx for ctx in self.models.values()}
         data = []
         for model_name in self.get_models():
             # Skip remote-cluster models (not tracked locally)
@@ -371,7 +370,7 @@ class ModelArkestra:
     def resolve_backend_id(self, model_name: str, env_vars: Dict[str, Any], override: Optional[str] = None) -> str:
         if override:
             return override
-        ctx = self.find_context(model_name)
+        ctx = self.model_obj(model_name)
         ctx_backend = getattr(ctx, "backend_id", None) if ctx else None
         if ctx_backend:
             return ctx_backend
@@ -624,7 +623,7 @@ class ModelArkestra:
         runner = self.get_runner_instance("onnx", model_name)
 
         # Create context manually — no port allocation needed
-        ctx = self.find_context(model_name)
+        ctx = self.model_obj(model_name)
         if ctx is None:
             eff_port = inference_kwargs.get("port") or 0  # dummy port for context compatibility
             log_size = inference_kwargs.get("max_log_lines", self._cm.get("default/log-buffer-size", 2000))
@@ -642,8 +641,8 @@ class ModelArkestra:
                 elif resolved.repo == "lcl":
                     model_path_str = resolved.ref.removeprefix("lcl:")
 
-            from model_arkestra.types import _ModelContext
-            ctx = _ModelContext(model_name, eff_port, max_log_lines=log_size)
+            from model_arkestra.types import _Model
+            ctx = _Model(model_name, eff_port, max_log_lines=log_size)
             ctx.backend_id = "onnx"
             ctx._model_path = model_path_str  # store for runner to use
             ctx._runner = runner
@@ -671,10 +670,10 @@ class ModelArkestra:
 
         # Find or create the remote runner (shared per model instance)
         cluster_cfg = self.clusters.get(cluster_name) or {}
-        ctx = self.find_context(local_name)
+        ctx = self.model_obj(local_name)
         if ctx is None:
             log_size = inference_kwargs.get("max_log_lines", self._cm.get("default/log-buffer-size", 2000))
-            from model_arkestra.types import _ModelContext as MC
+            from model_arkestra.types import _Model as MC
             ctx = MC(local_name, 0, max_log_lines=log_size)  # port=0 for remote models
             ctx.backend_id = "remote"
             ctx.cluster = cluster_name
@@ -727,7 +726,7 @@ class ModelArkestra:
                     pass
                 return
 
-    async def pull_model(self, ctx: _ModelContext) -> None:
+    async def pull_model(self, ctx: _Model) -> None:
         """Background task: pull model checkpoint from HuggingFace.
 
         Resolves the model reference, calls ``snapshot_download`` with
@@ -780,7 +779,7 @@ class ModelArkestra:
 
     def can_start(self, model_name: str) -> bool:
         """Check if model is eligible for a fresh start."""
-        ctx = self.find_context(model_name)
+        ctx = self.model_obj(model_name)
         if not ctx:
             # No context yet — allowed if model is defined in config (fresh start).
             return self.get_model(model_name) is not None
@@ -788,13 +787,13 @@ class ModelArkestra:
 
     def can_restart(self, model_name: str) -> bool:
         """Check if model is eligible for a restart."""
-        ctx = self.find_context(model_name)
+        ctx = self.model_obj(model_name)
         return ctx.state in (RunnerState.STOPPED, RunnerState.ERROR,
                              RunnerState.LOADING, RunnerState.RUNNING)
 
     def can_stop(self, model_name: str) -> bool:
         """Check if model is in a state that can be stopped."""
-        ctx = self.find_context(model_name)
+        ctx = self.model_obj(model_name)
         if not ctx:
             return False
         return ctx.state in (RunnerState.LOADING, RunnerState.RUNNING,
@@ -845,7 +844,7 @@ class ModelArkestra:
         # Safety check: other running contexts sharing this cache?
         if cache_dir.exists():
             targets = []
-            for ctx in self.get_model_contexts():
+            for ctx in self.models.values():
                 if ctx.name == model_name or ctx.state != RunnerState.RUNNING:
                     continue
                 other_cfg = cfg.get(ctx.name, {})

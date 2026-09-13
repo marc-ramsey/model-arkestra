@@ -21,7 +21,7 @@ from model_arkestra.common import (
     resolve_binary_from_backend, safe_container_name,
 )
 from model_arkestra.llama_cpp import LlamaCppEngine
-from model_arkestra.types import RunnerState, _ModelContext
+from model_arkestra.types import RunnerState, _Model
 
 
 def _resolve_backend(
@@ -209,7 +209,7 @@ class ContainerRunner(BaseRunner, ABC):
                 return
             await asyncio.sleep(0.2)
 
-    async def _before_restart(self, ctx: _ModelContext, new_size=None) -> bool:
+    async def _before_restart(self, ctx: _Model, new_size=None) -> bool:
         """Cancel active log capture and clear stale container reference."""
         self._cancel_log_task(ctx)
         ctx.container_id = None
@@ -228,7 +228,7 @@ class ContainerRunner(BaseRunner, ABC):
     def _resolve_image(self, image: str) -> str:
         return image
 
-    def _pre_start_cleanup(self, ctx: _ModelContext) -> List[str]:
+    def _pre_start_cleanup(self, ctx: _Model) -> List[str]:
         """Command to remove a stale container by deterministic name before run.
 
         Empty list means the runtime handles replacement itself (podman --replace).
@@ -272,7 +272,7 @@ class ContainerRunner(BaseRunner, ABC):
     async def _remove_containers(self, cids: list) -> None:
         """Force-remove a list of stale container IDs."""
 
-    async def _ensure_image(self, image: str, ctx: _ModelContext) -> None:
+    async def _ensure_image(self, image: str, ctx: _Model) -> None:
         """Pull *image* if absent, streaming progress to the model log ring.
 
         Runs before `run` so a slow pull never overlaps the readiness timer.
@@ -299,7 +299,7 @@ class ContainerRunner(BaseRunner, ABC):
             raise RuntimeError(f"{cmd} pull failed for {image} (exit {rc})")
 
     async def _start_model_process(
-        self, ctx: _ModelContext, model_data: Dict[str, Any]
+        self, ctx: _Model, model_data: Dict[str, Any]
     ) -> None:
         """Shared container launch logic. Subclasses may override hooks."""
         await self._ensure_port_available(ctx.port)
@@ -377,7 +377,7 @@ class ContainerRunner(BaseRunner, ABC):
             self._log_tasks = {}
         self._log_tasks[ctx.name] = log_task
 
-    async def _watch_container(self, model_name: str, ctx: _ModelContext) -> None:
+    async def _watch_container(self, model_name: str, ctx: _Model) -> None:
         """Poll container status and restart on unexpected exit."""
         cid = getattr(ctx, "container_id", None)
         if not cid:
@@ -447,7 +447,7 @@ class ContainerRunner(BaseRunner, ABC):
             proc.kill()
             raise
 
-    def _cancel_log_task(self, ctx: _ModelContext) -> None:
+    def _cancel_log_task(self, ctx: _Model) -> None:
         """Cancel the asyncio log-capture task(s) for a model (if any).
 
         Handles both the legacy single-task format and the new tuple-of-two-tasks
@@ -463,7 +463,7 @@ class ContainerRunner(BaseRunner, ABC):
         elif entry and not entry.done():
             entry.cancel()
 
-    async def _stop_model_process(self, ctx: _ModelContext) -> None:
+    async def _stop_model_process(self, ctx: _Model) -> None:
         """Stop a container gracefully (cancel log stream first), falling back to force-kill."""
         # Cancel log capture before stopping the container
         self._cancel_log_task(ctx)

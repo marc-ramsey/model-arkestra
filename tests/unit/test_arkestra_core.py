@@ -9,7 +9,7 @@ import os
 import pytest
 
 from model_arkestra.arkestra import ModelArkestra
-from model_arkestra.types import RunnerState, _ModelContext
+from model_arkestra.types import RunnerState, _Model
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -100,6 +100,22 @@ class TestPortAllocation:
         arkestra = _make_cm(runner_cfg={"default": "process"})
         port = arkestra.worker_port("m1")
         assert port == 18000
+
+    def test_models_property_returns_live_model_map(self):
+        """models is a name → _Model map backed by the registry (no .all() bug)."""
+        arkestra = _make_cm(runner_cfg={"default": "process"},
+                            models_section="m1:\n    model: dummy/x:Q4\n")
+        models = arkestra.models
+        assert isinstance(models, dict)
+        assert "m1" in models
+        assert models["m1"].name == "m1"
+
+    def test_model_obj_lookup(self):
+        """model_obj returns the live _Model, or None for unknown names."""
+        arkestra = _make_cm(runner_cfg={"default": "process"},
+                            models_section="m1:\n    model: dummy/x:Q4\n")
+        assert arkestra.model_obj("m1") is not None
+        assert arkestra.model_obj("nope") is None
 
     def test_incrementing_allocation(self):
         """worker_port() increments sequentially."""
@@ -247,11 +263,11 @@ class TestRunningModelsProperty:
         arkestra._runners["podman:model-b"] = r2
 
         # Fake RUNNING contexts
-        c1 = _ModelContext("model-a", 18000)
+        c1 = _Model("model-a", 18000)
         c1._state = RunnerState.RUNNING
         r1._models["model-a"] = c1
 
-        c2 = _ModelContext("model-b", 18001)
+        c2 = _Model("model-b", 18001)
         c2._state = RunnerState.RUNNING
         r2._models["model-b"] = c2
 

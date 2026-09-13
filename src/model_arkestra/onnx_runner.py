@@ -67,7 +67,7 @@ class OnnxRunner(BaseRunner):
     # ── Abstract lifecycle hooks (override base class defaults) ─────
 
     async def _start_model_process(
-        self, ctx: "model_arkestra.types._ModelContext", model_data: Dict[str, Any]
+        self, ctx: "model_arkestra.types._Model", model_data: Dict[str, Any]
     ) -> None:
         """Load ONNX InferenceSession into context — no subprocess needed."""
         import onnxruntime as ort
@@ -178,7 +178,7 @@ class OnnxRunner(BaseRunner):
                     if hasattr(self, 'cm'):
                         logger.warning("Could not load tokenizer for '%s': %s", ctx.name, e)  # noqa: F821
 
-    async def _stop_model_process(self, ctx: "model_arkestra.types._ModelContext") -> None:
+    async def _stop_model_process(self, ctx: "model_arkestra.types._Model") -> None:
         """Unload ONNX session from memory."""
         if self.arkestra:
             self.arkestra.log(f"[stop] model={ctx.name} unloaded")
@@ -226,8 +226,8 @@ class OnnxRunner(BaseRunner):
                 model_repos=self.cm.data.get("model-repos"),
             )
 
-            from model_arkestra.types import _ModelContext
-            ctx = _ModelContext(model_name, eff_port, max_log_lines=log_size)
+            from model_arkestra.types import _Model
+            ctx = _Model(model_name, eff_port, max_log_lines=log_size)
             ctx.backend_id = backend or model_data.get("backend")
 
             if resolved.cache_path:
@@ -258,7 +258,7 @@ class OnnxRunner(BaseRunner):
     # ── Internal helpers ───────────────────────────────────────────
     # NOTE: logger is set at import time by arkestra.py after importing OnnxRunner.
 
-    def _resolve_model_path(self, model_path: str, ctx: "model_arkestra.types._ModelContext",
+    def _resolve_model_path(self, model_path: str, ctx: "model_arkestra.types._Model",
                             file_pattern: str = "*.onnx") -> Path:
         """Resolve a model path — accept absolute paths or resolve from HF cache."""
         p = Path(model_path)

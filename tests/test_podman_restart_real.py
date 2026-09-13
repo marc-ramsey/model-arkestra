@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from model_arkestra.podman import PodmanRunner
-from model_arkestra.types import RunnerState, _ModelContext
+from model_arkestra.types import RunnerState, _Model
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -93,7 +93,7 @@ class TestContainerStartAndDetectExit:
         runner = _make_runner()
         port = 18000
 
-        ctx = _ModelContext("alpine-sleeper", port)
+        ctx = _Model("alpine-sleeper", port)
         runner._models["alpine-sleeper"] = ctx
         ctx._state = RunnerState.RUNNING
 
@@ -132,7 +132,7 @@ class TestWatchContainerDetectsExit:
         port = 18001
         name = f"alpine-watcher-{uuid.uuid4().hex[:8]}"
 
-        ctx = _ModelContext("alpine-exit", port)
+        ctx = _Model("alpine-exit", port)
         runner._models["alpine-exit"] = ctx
         ctx._state = RunnerState.RUNNING
 
@@ -177,7 +177,7 @@ class TestStopPreventsRestart:
         port = 18002
         name = f"alpine-stop-{uuid.uuid4().hex[:8]}"
 
-        ctx = _ModelContext("alpine-stop-test", port)
+        ctx = _Model("alpine-stop-test", port)
         runner._models["alpine-stop-test"] = ctx
         ctx._state = RunnerState.RUNNING
 

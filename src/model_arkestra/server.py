@@ -212,7 +212,7 @@ class ArkestraServer:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
-                ready_ctx = self._arkestra.find_context(model_name)
+                ready_ctx = self._arkestra.model_obj(model_name)
             except ValueError:
                 ready_ctx = None
             if ready_ctx and ready_ctx.state == RunnerState.RUNNING:
@@ -322,7 +322,7 @@ class ArkestraServer:
             # Resolve context (cluster-prefixed names map to their local id);
             # remote-cluster models are routed through RemoteRunner like locals.
             try:
-                ctx = self._arkestra.find_context(model_name)
+                ctx = self._arkestra.model_obj(model_name)
             except ValueError as e:
                 raise HTTPException(status_code=503, detail=f"Model error: {e}")
             # Resolve timeout: per-model > default > class constant

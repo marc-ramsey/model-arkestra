@@ -27,7 +27,7 @@ The buffer reserves one byte (`_usable = capacity - 1`) to keep `head == tail` a
 
 ### Minimum Validation
 
-At `_ModelContext.__init__`, computed buffer size is checked:
+At `_Model.__init__`, computed buffer size is checked:
 
 ```python
 buf_bytes = max_log_lines * AVG_LINE_BYTES  # default 200
@@ -59,7 +59,7 @@ The `next_line` parameter enables streaming consumption — callers pass the hig
 
 Returns all buffered content decoded as UTF-8 string, useful for debugging. Does not consume data.
 
-## Lifecycle in `_ModelContext`
+## Lifecycle in `_Model`
 
 ```
 append_log_line(line: str) -> int

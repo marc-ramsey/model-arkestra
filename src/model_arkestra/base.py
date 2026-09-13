@@ -13,7 +13,7 @@ from model_arkestra.common import _resolve_backend, default_cache_root, resolve_
 from model_arkestra.unicode_ringbuffer import UnicodeRingBuffer
 from model_arkestra.types import (
     RunnerState, RunnerError, ServerReadyTimeout, 
-    ModelNotStarted, MaxRestartsExceeded, ModelShutdown, _ModelContext
+    ModelNotStarted, MaxRestartsExceeded, ModelShutdown, _Model
 )
 
 logger = logging.getLogger(__name__)
@@ -24,31 +24,6 @@ class BaseRunner(ABC):
     MODEL_START_TIMEOUT = 300  # seconds to wait for RUNNING state after start
     _DEFAULT_BACKEND = "cpu"
     _DEFAULT_RUNNER = "process"
-
-    @classmethod
-    def resolve_defaults(cls, backends_cfg: Dict | None, runners_cfg: Dict | None,
-                         model: Dict | None = None) -> tuple[str, str]:
-        """Resolve effective (backend_id, runner_type) with hardwired fallbacks.
-
-        Backend priority: explicit `model["backend"]` → backends.default → _DEFAULT_BACKEND.
-        Runner priority: backend.runner → runners.default → _DEFAULT_RUNNER.
-        """
-        backends_cfg = backends_cfg or {}
-        runners_cfg = runners_cfg or {}
-        model = model or {}
-
-        # Backend resolution
-        if model.get("backend"):
-            backend_id = str(model["backend"])
-        else:
-            backend_id = str(backends_cfg.get("default") or cls._DEFAULT_BACKEND)
-
-        # Runner resolution
-        backend_data = backends_cfg.get(backend_id, {})
-        runner_type = backend_data.get("runner")
-        if not runner_type:
-            runner_type = runners_cfg.get("default", "process")
-        return str(backend_id), str(runner_type or cls._DEFAULT_RUNNER)
 
     def __init__(self, config_manager: Any, restart_delay: float = 5.0,
                  restart_limit: int = 4, shutdown_timeout: float = 20.0,
@@ -75,7 +50,7 @@ class BaseRunner(ABC):
         self._watchers: Dict[str, asyncio.Task] = {}
         self._health_task: Optional[asyncio.Task] = None
         self._inference_kwargs: Dict[str, Dict[str, Any]] = {}
-        self._models: Dict[str, _ModelContext] = {}
+        self._models: Dict[str, _Model] = {}
 
     async def _ensure_port_available(self, port: int) -> None:
         """Raise RuntimeError immediately if *port* is already in use."""
@@ -120,7 +95,7 @@ class BaseRunner(ABC):
                 f"Model '{model_name}' exceeded restart limit after {ctx.restart_count} attempts"
             )
 
-    async def _watch_process(self, model_name: str, ctx: _ModelContext) -> None:
+    async def _watch_process(self, model_name: str, ctx: _Model) -> None:
         """Background task to monitor process lifecycle and restart on unexpected exit."""
         if ctx.process is None:
             logger.error(f"Model {model_name}: no process to watch")
@@ -151,7 +126,7 @@ class BaseRunner(ABC):
         except asyncio.CancelledError:
             pass
 
-    async def _handle_restart(self, model_name: str, ctx: _ModelContext,
+    async def _handle_restart(self, model_name: str, ctx: _Model,
                               exit_code: int) -> None:
         if ctx.state in (RunnerState.STOPPED, RunnerState.STOPPING):
             return
@@ -186,7 +161,7 @@ class BaseRunner(ABC):
         except Exception as e:
             logger.error(f"Model {model_name}: restart failed — {e}")
 
-    async def _before_restart(self, ctx: _ModelContext, new_size: Optional[int] = None) -> bool:
+    async def _before_restart(self, ctx: _Model, new_size: Optional[int] = None) -> bool:
         """Prepare context for restart: transition state and manage buffer."""
         if ctx.state in (RunnerState.STOPPED, RunnerState.STOPPING):
             return False
@@ -254,7 +229,7 @@ class BaseRunner(ABC):
             self._health_task = None
 
     # ── Container lifecycle hook (abstracted from process) ───────────
-    async def _watch_container(self, model_name: str, ctx: _ModelContext) -> None:
+    async def _watch_container(self, model_name: str, ctx: _Model) -> None:
         """Monitor a detached container's lifecycle and restart on exit."""
         raise NotImplementedError  # pragma: no cover
 
@@ -439,7 +414,7 @@ class BaseRunner(ABC):
         self._models.clear()
         self._watchers.clear()
 
-    async def _watch_process_or_container(self, model_name: str, ctx: _ModelContext) -> None:
+    async def _watch_process_or_container(self, model_name: str, ctx: _Model) -> None:
         if ctx.process is not None:
             await self._watch_process(model_name, ctx)
         else:
@@ -449,10 +424,10 @@ class BaseRunner(ABC):
 
     @abstractmethod
     async def _start_model_process(
-        self, ctx: _ModelContext, model_data: Dict[str, Any]
+        self, ctx: _Model, model_data: Dict[str, Any]
     ) -> None:
         pass
 
     @abstractmethod
-    async def _stop_model_process(self, ctx: _ModelContext) -> None:
+    async def _stop_model_process(self, ctx: _Model) -> None:
         pass

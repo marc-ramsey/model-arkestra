@@ -186,9 +186,9 @@ class TestSynthesize:
         import numpy as np
 
         from model_arkestra.providers.onnx import OnnxProvider
-        from model_arkestra.types import _ModelContext
+        from model_arkestra.types import _Model
 
-        ctx = _ModelContext("test-tts", 0)
+        ctx = _Model("test-tts", 0)
         ctx.g2p_lang = "en-us"
 
         # Mock Kokoro.create() to return synthetic waveform (1 sec @ 24kHz)

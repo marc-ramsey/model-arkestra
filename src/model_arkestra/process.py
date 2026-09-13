@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 from model_arkestra.base import BaseRunner
 from model_arkestra.common import build_model_args
 from model_arkestra.llama_cpp import LlamaCppEngine
-from model_arkestra.types import _ModelContext
+from model_arkestra.types import _Model
 
 
 
@@ -21,7 +21,7 @@ class ProcessRunner(BaseRunner):
         return [t for _, t in result]
 
     async def _start_model_process(
-        self, ctx: _ModelContext, model_data: Dict[str, Any]
+        self, ctx: _Model, model_data: Dict[str, Any]
     ) -> None:
         await self._ensure_port_available(ctx.port)
 
@@ -98,7 +98,7 @@ class ProcessRunner(BaseRunner):
             self._log_tasks = {}
         self._log_tasks[ctx.name] = (log_task_stdout, log_task_stderr)
 
-    async def _stop_model_process(self, ctx: _ModelContext) -> None:
+    async def _stop_model_process(self, ctx: _Model) -> None:
         """Kill model process group using mandated strategy: SIGHUP → wait 20s → SIGKILL."""
         if ctx.process and ctx.process.returncode is None:
             pid = ctx.process.pid
@@ -118,7 +118,7 @@ class ProcessRunner(BaseRunner):
             except Exception:
                 pass
 
-    async def _before_restart(self, ctx: _ModelContext, new_size=None) -> bool:
+    async def _before_restart(self, ctx: _Model, new_size=None) -> bool:
         """Reset process reference so the next ``_start_model_process`` call creates a fresh one."""
         if ctx.process is not None and ctx.process.returncode is not None:
             ctx.process = None  # replace stale process handle

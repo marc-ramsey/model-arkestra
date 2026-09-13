@@ -245,16 +245,15 @@ See [Lifecycle](./lifecycle.md) for detailed crash detection and shutdown sequen
 
 These three methods expose live model state tracked at runtime (port, backend, runner type, health). They operate on models that have been started — before any `start()` call the lists are empty.
 
-### List all tracked model contexts
+### List all tracked models
 
 ```python
-contexts = runner.get_model_contexts()
-for ctx in contexts:
-    print(f"{ctx.name}: port={ctx.port}, state={ctx.state}")
+for name, m in arkestra.models.items():
+    print(f"{m.name}: port={m.port}, state={m.state}")
 # → qwen3-4b: port=18000, state=RunnerState.RUNNING
 ```
 
-Each `_ModelContext` carries `name`, `port`, `state` (`RunnerState` enum), `backend_id`, `runner_type`, `restart_count`, and `last_error`.
+Each `_Model` carries `name`, `port`, `state` (`RunnerState` enum), `backend_id`, `runner_type`, `restart_count`, and `last_error`. Use `arkestra.model_obj(name)` to fetch a single model by name (cluster-prefix aware).
 
 ### OpenAI-compatible /v1/models listing
 

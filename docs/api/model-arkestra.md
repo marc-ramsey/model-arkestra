@@ -145,7 +145,7 @@ Low-level HTTP forwarder for custom server endpoints not covered by `ainvoke()` 
 
 ### `async get_logs(model_name: str, lines: int = 100) -> list[str]`
 
-Returns the last *N* log lines for a model, delegated to whichever runner owns that model's context. Searches across all runners until it finds the matching `_ModelContext` (handles cases where a model was restarted on a different runner type).
+Returns the last *N* log lines for a model, delegated to whichever runner owns that model's context. Searches across all runners until it finds the matching `_Model` (handles cases where a model was restarted on a different runner type).
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
@@ -165,9 +165,9 @@ for line in lines:
 
 ## Properties
 
-### `models: dict[str, _ModelContext]`
+### `models: dict[str, _Model]`
 
-Read-only mapping of model name → its `_ModelContext` (the unified Model object).
+Read-only mapping of model name → its `_Model` (the unified Model object).
 Each context owns its state, port, log ring, backend/runner kind, and provider.
 The **Registry** is the authoritative owner; each runner also keeps a handle in
 its own `_models` dict for convenience. See [Architecture](../architecture.md) for
@@ -179,11 +179,20 @@ Read-only property returning the names of all models currently in `"running"` st
 
 ## Model Introspection
 
-### `get_model_contexts() -> list[_ModelContext]`
+### `model_obj(name) -> _Model | None`
 
-Internal aggregation: returns every tracked `_ModelContext` across all runners. Each context carries `name`, `port`, `state` (`RunnerState` enum), `backend_id`, `runner_type`, `restart_count`, and `last_error`. Callers who need detailed runtime info should use this.
+Return the live `_Model` for *name* (cluster-prefix aware), or None. This is the
+running instance — distinct from `get_model(name)` which returns the static config
+dict. To iterate every model, use the `models` property (name → `_Model` map).
 
-Each `_ModelContext` also maintains a `_log_ring: UnicodeRingBuffer` — a fixed-capacity ring buffer backed by `bytearray` that stores log entries with 2-byte length prefixes and 4-byte sequence numbers. Lines are added live by subprocess stream watchers (process runners) or container log streamers (podman/docker runners). The ring overwrites oldest entries when full — the `_get_lines_since()` API filters by sequence number so callers always see new lines. Use `get_logs()` instead for proper line-limiting.
+Each `_Model` carries `name`, `port`, `state` (`RunnerState` enum), `backend_id`,
+`runner_type`, `restart_count`, and `last_error`. It also maintains a `_log_ring:
+UnicodeRingBuffer` — a fixed-capacity ring buffer backed by `bytearray` that stores
+log entries with 2-byte length prefixes and 4-byte sequence numbers. Lines are added
+live by subprocess stream watchers (process runners) or container log streamers
+(podman/docker runners). The ring overwrites oldest entries when full — the
+`_get_lines_since()` API filters by sequence number so callers always see new lines.
+Use `get_logs()` instead for proper line-limiting.
 
 ### `get_v1_models() -> dict`
 

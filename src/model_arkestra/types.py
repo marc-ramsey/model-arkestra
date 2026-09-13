@@ -1,10 +1,9 @@
 """Backward-compat facade.
 
-The canonical state machine and per-model object now live in
-``model_arkestra.models``. Everything here is re-exported so existing
-imports (``from model_arkestra.types import RunnerState, _ModelContext``)
-keep working during the migration. ``_ModelContext`` is an alias of the new
-``_Model`` — a drop-in superset.
+The canonical state machine and per-model object live in
+``model_arkestra.models``. They are re-exported here so existing imports
+(``from model_arkestra.types import RunnerState, _Model``) keep working.
+The runner exception hierarchy is defined below.
 """
 from __future__ import annotations
 
@@ -16,9 +15,6 @@ from model_arkestra.models.state import (  # noqa: F401
 # ── per-model object (models/model.py) ─────────────────────────────────
 from model_arkestra.models.model import _Model  # noqa: F401
 
-# Legacy alias — existing code references _ModelContext.
-_ModelContext = _Model
-
 # ── runner exception hierarchy (unchanged) ─────────────────────────────
 class RunnerError(Exception): """Base exception for all runner failures."""
 class ServerReadyTimeout(RunnerError): """Server did not become ready within timeout."""
@@ -29,7 +25,7 @@ class ModelShutdown(RunnerError): """Request made after the model was stopped.""
 
 __all__ = [
     "RunnerState", "IllegalTransition", "can", "target", "transition",
-    "_Model", "_ModelContext",
+    "_Model",
     "RunnerError", "ServerReadyTimeout", "ModelNotStarted",
     "MaxRestartsExceeded", "ModelShutdown",
 ]

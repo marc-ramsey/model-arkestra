@@ -10,7 +10,7 @@ import pytest
 
 from model_arkestra.process import ProcessRunner
 from model_arkestra.providers.llama import LlamaProvider
-from model_arkestra.types import RunnerState, _ModelContext
+from model_arkestra.types import RunnerState, _Model
 
 
 # ── Fixtures ───────────────────────────────────────────────────────────────
@@ -30,7 +30,7 @@ async def server():
     await test_server.start_server()
     port = test_server.port
 
-    ctx = _ModelContext("m", port)
+    ctx = _Model("m", port)
     ctx._state = RunnerState.RUNNING
     runner._models["m"] = ctx
 
@@ -55,7 +55,7 @@ async def stream_server():
     await test_server.start_server()
     port = test_server.port
 
-    ctx = _ModelContext("m", port)
+    ctx = _Model("m", port)
     ctx._state = RunnerState.RUNNING
     runner._models["m"] = ctx
 

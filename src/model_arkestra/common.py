@@ -463,15 +463,6 @@ def get_rocm_build_dirs() -> Dict[str, str]:
     return dict(_ROCM_BUILD_MAP)
 
 
-def set_default_dirs(vulkan_dir: Optional[str] = None, rocm_dir: Optional[str] = None) -> None:
-    """Override the default build directories (e.g. from config)."""
-    global _DEFAULT_VULKAN_DIR, _DEFAULT_ROCM_DIR
-    if vulkan_dir:
-        _DEFAULT_VULKAN_DIR = vulkan_dir
-    if rocm_dir:
-        _DEFAULT_ROCM_DIR = rocm_dir
-
-
 def resolve_binary_from_backend(backend: Dict[str, Any]) -> Optional[tuple]:
     """Resolve host binary dir and devices from a backend dict.
 
@@ -551,23 +542,6 @@ def _resolve_backend_config_field(backend_id: Optional[str], field: str) -> Any:
     except Exception:
         pass
     return None
-
-
-def default_image_for_backend(backend_id: Optional[str]) -> str:
-    """Derive a default image tag from the backend identifier.
-
-    Resolution order:
-      1. backends.<id>.image              — explicit per-backend
-      2. backends.<default>.image         — global default backend
-      3. hardcoded fallback               — ark-llama:vulkan-radv
-    """
-    image = _resolve_backend_config_field(backend_id, "image")
-    if image:
-        return str(image)
-    # Hardcoded fallbacks (legacy / programmatic usage)
-    if backend_id and any(k in backend_id.lower() for k in ("rocm", "hip", "opencl")):
-        return "ark-llama:rocm"
-    return _DEFAULT_IMAGE
 
 
 def containerfile_for_backend(

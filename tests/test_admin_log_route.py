@@ -6,21 +6,21 @@ from unittest.mock import MagicMock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from model_arkestra.admin import ArkestraAdmin
-from model_arkestra.types import _ModelContext
+from model_arkestra.types import _Model
 
 
-def _make_server_ctx_with_lines(lines: list[str]) -> _ModelContext:
+def _make_server_ctx_with_lines(lines: list[str]) -> _Model:
     """Create a real ModelContext and populate it with log lines."""
-    ctx = _ModelContext("test-model", 9999, max_log_lines=50)
+    ctx = _Model("test-model", 9999, max_log_lines=50)
     for line in lines:
         ctx._append_log_line(line)
     return ctx
 
 
-def _build_admin_with_ctx(ctx: _ModelContext):
+def _build_admin_with_ctx(ctx: _Model):
     """Build a FastAPI app with the admin routes and a mock arkestra that returns ctx."""
     arkestra = MagicMock()
-    arkestra.find_context.return_value = ctx
+    arkestra.model_obj.return_value = ctx
     arkestra.cm.data = {"models": {"test-model": {}}}
 
     app = FastAPI()
@@ -37,7 +37,7 @@ def _build_admin_with_ctx(ctx: _ModelContext):
 
 def test_basic_write_and_read():
     """Write lines, read them back with correct sequence numbers."""
-    ctx = _ModelContext("test", 9999, max_log_lines=50)
+    ctx = _Model("test", 9999, max_log_lines=50)
     for i in range(3):
         seq = ctx._append_log_line(f"line{i}")
         assert seq == i + 1
@@ -50,7 +50,7 @@ def test_basic_write_and_read():
 
 def test_since_filters():
     """since=N returns only lines with seq > N."""
-    ctx = _ModelContext("test", 9999, max_log_lines=50)
+    ctx = _Model("test", 9999, max_log_lines=50)
     for i in range(10):
         ctx._append_log_line(f"line{i}")
 
@@ -58,7 +58,7 @@ def test_since_filters():
     assert len(result) == 5
     assert result[0] == (6, "line5")
 
-    ctx2 = _ModelContext("test", 9999, max_log_lines=50)
+    ctx2 = _Model("test", 9999, max_log_lines=50)
     for i in range(10):
         ctx2._append_log_line(f"line{i}")
 
@@ -69,7 +69,7 @@ def test_since_filters():
 
 def test_max_lines_limit():
     """max_lines caps returned entries."""
-    ctx = _ModelContext("test", 9999, max_log_lines=50)
+    ctx = _Model("test", 9999, max_log_lines=50)
     for i in range(10):
         ctx._append_log_line(f"line{i}")
 
@@ -79,7 +79,7 @@ def test_max_lines_limit():
 
 def test_utf8_roundtrip():
     """Non-ASCII log lines survive the ring buffer."""
-    ctx = _ModelContext("test", 9999, max_log_lines=50)
+    ctx = _Model("test", 9999, max_log_lines=50)
     line = "Hello, 世界! 🌍"
     ctx._append_log_line(line)
 
@@ -92,7 +92,7 @@ def test_wrap_truncates_oldest():
     # Create context with a very small buffer so lines actually wrap.
     # Each entry is ~6 bytes (4-byte seq prefix + 2 bytes for text like "x0")
     from model_arkestra.unicode_ringbuffer import UnicodeRingBuffer
-    ctx = _ModelContext("test", 9999, max_log_lines=2)
+    ctx = _Model("test", 9999, max_log_lines=2)
     tiny_buf = UnicodeRingBuffer(50)  # ~8 entries max
     ctx._log_ring = tiny_buf
 

@@ -35,7 +35,7 @@ from model_arkestra.common import (
     resolve_tags as _resolve_tags,
 )
 from model_arkestra.http_proxy import model_status_for_ctx
-from model_arkestra.types import RunnerState, _ModelContext
+from model_arkestra.types import RunnerState, _Model
 
 # ── Model config field definitions (single source of truth) ─────────────
 MODEL_CONFIG_FIELDS = frozenset({"backend", "runner", "tags", "max_log_lines"})
@@ -306,7 +306,7 @@ class ArkestraAdmin:
         async def admin_models():
             try:
                 cfg = self._models_cfg
-                contexts_by_name = {ctx.name: ctx for ctx in self.server._arkestra.get_model_contexts()}
+                contexts_by_name = {ctx.name: ctx for ctx in self.server._arkestra.models.values()}
 
                 data = []
                 for model_name in self.server._arkestra.get_models():
@@ -348,7 +348,7 @@ class ArkestraAdmin:
         async def admin_stop(model: str):
             if model not in self._models_cfg:
                 raise HTTPException(status_code=404, detail=f"Model '{model}' not configured")
-            ctx = self.server._arkestra.find_context(model)
+            ctx = self.server._arkestra.model_obj(model)
             prev_state = ctx.state
             if prev_state.is_terminal:
                 return JSONResponse(
@@ -369,7 +369,7 @@ class ArkestraAdmin:
     def _add_stop_all_route(self) -> None:
         @self._app.post("/admin/stop-all")
         async def admin_stop_all():
-            ctxs = list(self.server._arkestra.get_model_contexts())
+            ctxs = list(self.server._arkestra.models.values())
             from model_arkestra.types import RunnerState
             running = [c.name for c in ctxs if c.state in (RunnerState.RUNNING, RunnerState.LOADING, RunnerState.DOWNLOADING)]
             if not running:
@@ -498,7 +498,7 @@ class ArkestraAdmin:
                     status_code=404, detail=f"Model '{model}' not in config"
                 )
             # Also resolve current runtime status if the model is loaded
-            contexts = {ctx.name: ctx for ctx in self.server._arkestra.get_model_contexts()}
+            contexts = {ctx.name: ctx for ctx in self.server._arkestra.models.values()}
             ctx = contexts.get(model)
             status = model_status_for_ctx(ctx)
 
@@ -576,7 +576,7 @@ class ArkestraAdmin:
                 raise HTTPException(status_code=404, detail=f"Model '{model}' not in config")
 
             # Stop if running
-            ctx = self.server._arkestra.find_context(model)
+            ctx = self.server._arkestra.model_obj(model)
             if ctx and ctx.state in (RunnerState.RUNNING, RunnerState.LOADING):
                 try:
                     await self.server._arkestra.stop(model)
@@ -596,7 +596,7 @@ class ArkestraAdmin:
 
             try:
                 await self.server._arkestra.start(model, **_build_start_kwargs(body))
-                ctx = self.server._arkestra.find_context(model)
+                ctx = self.server._arkestra.model_obj(model)
                 port = ctx.port if ctx else None
                 return {"ok": True, "model": model, "port": port}
             except Exception as exc:
@@ -613,7 +613,7 @@ class ArkestraAdmin:
                 raise HTTPException(status_code=409, detail="model not available")
 
             # Stop current instance if running/loading, then start fresh
-            ctx = self.server._arkestra.find_context(model)
+            ctx = self.server._arkestra.model_obj(model)
             if ctx and ctx.state in (RunnerState.RUNNING, RunnerState.LOADING):
                 try:
                     await self.server._arkestra.stop(model)
@@ -622,7 +622,7 @@ class ArkestraAdmin:
 
             try:
                 await self.server._arkestra.start(model, **_build_start_kwargs(body))
-                ctx = self.server._arkestra.find_context(model)
+                ctx = self.server._arkestra.model_obj(model)
                 port = ctx.port if ctx else None
                 return {"ok": True, "model": model, "port": port}
             except Exception as exc:
@@ -640,7 +640,7 @@ class ArkestraAdmin:
             if model not in cfg:
                 raise HTTPException(status_code=404, detail=f"Model '{model}' not in config")
 
-            ctx = self.server._arkestra.find_context(model)
+            ctx = self.server._arkestra.model_obj(model)
             if not ctx or not hasattr(ctx, '_get_lines_since'):
                 # Model not yet started — return empty result
                 return JSONResponse(
@@ -833,7 +833,7 @@ class ArkestraAdmin:
             if model not in cfg:
                 raise HTTPException(status_code=404, detail=f"Model '{model}' not in config")
 
-            ctx = self.server._arkestra.find_context(model)
+            ctx = self.server._arkestra.model_obj(model)
 
             # If already pulling, cancel and restart
             if ctx and ctx.state == RunnerState.DOWNLOADING and ctx.download_task:
@@ -876,7 +876,7 @@ class ArkestraAdmin:
             if model not in cfg:
                 raise HTTPException(status_code=404, detail=f"Model '{model}' not in config")
 
-            ctx = self.server._arkestra.find_context(model)
+            ctx = self.server._arkestra.model_obj(model)
             if ctx.state != RunnerState.DOWNLOADING:
                 raise HTTPException(
                     status_code=404,

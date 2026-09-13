@@ -4,7 +4,7 @@ import logging
 import aiohttp
 from typing import Any, Dict, Optional
 from model_arkestra.base import BaseRunner
-from model_arkestra.types import RunnerState, _ModelContext, ModelNotStarted
+from model_arkestra.types import RunnerState, _Model, ModelNotStarted
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ class RemoteRunner(BaseRunner):
         self._remote_base_url: str = ""
         self._admin_key: str = ""
 
-    def _headers(self, ctx: Optional[_ModelContext] = None) -> Dict[str, str]:
+    def _headers(self, ctx: Optional[_Model] = None) -> Dict[str, str]:
         """JSON headers for worker calls, carrying the admin key when set.
 
         The per-model key (from the cluster config) takes precedence over the
@@ -79,7 +79,7 @@ class RemoteRunner(BaseRunner):
         ctx.set_state("ready")
 
     async def _start_model_process(
-        self, ctx: _ModelContext, model_data: Dict[str, Any]
+        self, ctx: _Model, model_data: Dict[str, Any]
     ) -> None:
         """Proxy model start to the remote worker."""
         try:
@@ -124,7 +124,7 @@ class RemoteRunner(BaseRunner):
             logger.warning(f"Remote start proxy failed for {ctx.name}: {e}")
             ctx._remote_start_ack = False
 
-    async def _stop_model_process(self, ctx: _ModelContext) -> None:
+    async def _stop_model_process(self, ctx: _Model) -> None:
         """Proxy model stop to the remote worker."""
         try:
             url = f"{ctx._remote_base_url}/v1/admin/models/{ctx.name}/stop"
