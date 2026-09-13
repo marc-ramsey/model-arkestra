@@ -181,24 +181,13 @@ class TestDownloadOnnxModel:
 
 class TestSynthesize:
     async def test_synthesizes_nonzero_wav(self):
-        """Verify synthesize() produces valid non-zero WAV bytes."""
+        """Verify OnnxProvider.synthesize() produces valid non-zero WAV bytes."""
         from unittest.mock import MagicMock
         import numpy as np
 
-        # Mock config manager returning a TTS model
-        cm = MagicMock()
-        cm.get_model.return_value = {
-            "tags": ["tts"],
-            "repo": "hugging-face",
-            "model": "onnx-community/Kokoro-82M-v1.0-ONNX",
-        }
-
-        from model_arkestra.onnx_runner import OnnxRunner
-        runner = OnnxRunner(cm)
-        runner.arkestra = MagicMock()
-
-        # Create a mock context with kokero model and session loaded
+        from model_arkestra.providers.onnx import OnnxProvider
         from model_arkestra.types import _ModelContext
+
         ctx = _ModelContext("test-tts", 0)
         ctx.g2p_lang = "en-us"
 
@@ -208,9 +197,9 @@ class TestSynthesize:
         mock_kokero.create.return_value = (mock_samples, 24000)
         ctx.kokero_model = mock_kokero
 
-        runner._models["test-tts"] = ctx
+        prov = OnnxProvider(ctx)
 
-        result = await runner.synthesize("test-tts", "hello world", voice="af_bella")
+        result = await prov.synthesize("hello world", voice="af_bella")
         assert len(result) > 100, f"Expected WAV data (got {len(result)} bytes)"
 
         # Verify it's a valid WAV file
@@ -222,12 +211,10 @@ class TestSynthesize:
             assert wf.getnframes() > 0
 
     async def test_synthesize_raises_for_unknown_model(self):
-        from model_arkestra.onnx_runner import OnnxRunner
+        from model_arkestra.providers.onnx import OnnxProvider
         from model_arkestra.types import ModelNotStarted
-        from unittest.mock import MagicMock
 
-        cm = MagicMock()
-        runner = OnnxRunner(cm)
+        prov = OnnxProvider(None)
 
         with pytest.raises(ModelNotStarted):
-            await runner.synthesize("nonexistent", "text")
+            await prov.synthesize("text")

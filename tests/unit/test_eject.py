@@ -34,7 +34,7 @@ class MockRunner:
 
 def make_ctx(name: str, port: int, state: RunnerState) -> _ModelContext:
     ctx = _ModelContext(name, port)
-    ctx.state = state
+    ctx._state = state
     return ctx
 
 
@@ -216,11 +216,13 @@ class TestEjectMethod:
             ctx_a = make_ctx("model-a", 18000, RunnerState.RUNNING)
             runner_a._models["model-a"] = ctx_a
             ma._runners["runner-a"] = runner_a
+            ma._registry.register(ctx_a)
 
             runner_b = MockRunner()
             ctx_b = make_ctx("model-b", 18001, RunnerState.RUNNING)
             runner_b._models["model-b"] = ctx_b
             ma._runners["runner-b"] = runner_b
+            ma._registry.register(ctx_b)
 
             with pytest.raises(ValueError, match="is in use by other running runners"):
                 asyncio.run(ma.eject("model-a"))
@@ -249,11 +251,13 @@ class TestEjectMethod:
             ctx_a = make_ctx("model-a", 18000, RunnerState.RUNNING)
             runner_a._models["model-a"] = ctx_a
             ma._runners["runner-a"] = runner_a
+            ma._registry.register(ctx_a)
 
             runner_b = MockRunner()
             ctx_b = make_ctx("model-b", 18001, RunnerState.STOPPED)
             runner_b._models["model-b"] = ctx_b
             ma._runners["runner-b"] = runner_b
+            ma._registry.register(ctx_b)
 
             result = asyncio.run(ma.eject("model-a"))
 

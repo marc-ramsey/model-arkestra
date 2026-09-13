@@ -6,10 +6,9 @@ import time
 import os
 import socket
 from abc import ABC, abstractmethod
-from typing import Any, AsyncIterator, Dict, Optional, Set
+from typing import Any, Dict, Optional, Set
 import aiohttp
 
-from model_arkestra.http_proxy import sse_events, parse_completion
 from model_arkestra.common import _resolve_backend, default_cache_root, resolve_model_ref
 from model_arkestra.unicode_ringbuffer import UnicodeRingBuffer
 from model_arkestra.types import (
@@ -25,12 +24,6 @@ class BaseRunner(ABC):
     MODEL_START_TIMEOUT = 300  # seconds to wait for RUNNING state after start
     _DEFAULT_BACKEND = "cpu"
     _DEFAULT_RUNNER = "process"
-    _LLAMA_FIELDS = frozenset({
-        "temperature", "top_p", "top_k", "repetition_penalty",
-        "frequency_penalty", "presence_penalty", "stop", "seed",
-        "mirostat", "mirostat_tau", "mirostat_eta", "grammar",
-        "max_tokens", "min_tokens", "logit_bias",
-    })
 
     @classmethod
     def resolve_defaults(cls, backends_cfg: Dict | None, runners_cfg: Dict | None,
@@ -83,25 +76,6 @@ class BaseRunner(ABC):
         self._health_task: Optional[asyncio.Task] = None
         self._inference_kwargs: Dict[str, Dict[str, Any]] = {}
         self._models: Dict[str, _ModelContext] = {}
-
-    # ── Capability interface (implemented by subclasses) ─────────────
-    async def chat(self, model_name: str, messages: List, **kwargs) -> Dict:
-        """Handle chat completion. ProcessRunner implements via llama-server HTTP."""
-        raise NotImplementedError(f"{type(self).__name__} does not implement 'chat'")
-
-    async def embed(self, model_name: str, text: str) -> List[float]:
-        """Encode text → embedding vector. OnnxRunner implements via ONNX session."""
-        raise NotImplementedError(f"{type(self).__name__} does not implement 'embed'")
-
-    async def transcribe(self, model_name: str, audio_bytes: bytes, language: str = "") -> Dict:
-        """Transcribe audio → text. OnnxRunner implements via Whisper ONNX."""
-        raise NotImplementedError(f"{type(self).__name__} does not implement 'transcribe'")
-
-    async def synthesize(self, model_name: str, text: str, voice: str = "", speed: float = 1.0) -> bytes:
-        """Generate speech from text. OnnxRunner implements via Kokoro ONNX."""
-        raise NotImplementedError(f"{type(self).__name__} does not implement 'synthesize'")
-
-
 
     async def _ensure_port_available(self, port: int) -> None:
         """Raise RuntimeError immediately if *port* is already in use."""
@@ -188,7 +162,7 @@ class BaseRunner(ABC):
                 f"Model {model_name}: restart limit ({self.restart_limit}) "
                 f"exceeded after {ctx.restart_count} attempts"
             )
-            ctx.state = RunnerState.ERROR
+            ctx.set_state("crash_limit")
             return
 
         logger.info(
@@ -216,7 +190,7 @@ class BaseRunner(ABC):
         """Prepare context for restart: transition state and manage buffer."""
         if ctx.state in (RunnerState.STOPPED, RunnerState.STOPPING):
             return False
-        ctx.state = RunnerState.LOADING
+        ctx.set_state("load")
 
         # Determine desired size; crash-restart path gets current size (no change).
         if new_size is None:
@@ -261,9 +235,9 @@ class BaseRunner(ABC):
                                 continue
                             value = status.get("value", status) if isinstance(status, dict) else status
                             if value == "loading":
-                                ctx.state = RunnerState.LOADING
+                                ctx.set_state("health_loading")
                             elif value == "error":
-                                ctx.state = RunnerState.ERROR
+                                ctx.set_state("health_error")
                         # 5xx → server died, _watch_process will detect it later
                 except Exception:
                     pass  # unreachable — will be caught by process watcher
@@ -284,127 +258,7 @@ class BaseRunner(ABC):
         """Monitor a detached container's lifecycle and restart on exit."""
         raise NotImplementedError  # pragma: no cover
 
-    # ── HTTP helpers ───────────────────────────────────────
-
-    async def _stream_sse(self, model_name: str, payload: Dict[str, Any]) -> AsyncIterator[Dict[str, Any]]:
-        await self._dispatch(model_name)
-        ctx = next((v for k, v in self._models.items() if k == model_name), None)
-        url = f"http://127.0.0.1:{ctx.port}/v1/chat/completions"
-        start_time = time.monotonic()
-        tokens_so_far: list[str] = []
-        usage_info: Dict[str, Any] = {}
-
-        async with aiohttp.ClientSession() as session:
-            try:
-                async with session.post(url, json=payload, timeout=60) as resp:
-                    if resp.status != 200:
-                        raise RunnerError(f"Server error: {resp.status}")
-
-                    async for event in sse_events(resp.content):
-                        if "token" in event:
-                            tokens_so_far.append(event["token"])
-                            yield {"token": event["token"]}
-                        elif "usage" in event:
-                            usage_info.update(event["usage"])
-                        else:
-                            # done marker — compute final usage
-                            elapsed = round(time.monotonic() - start_time, 2)
-                            prompt_tok = usage_info.get("prompt_tokens", len(tokens_so_far))
-                            completion_tok = usage_info.get("completion_tokens") or len(tokens_so_far)
-                            usage_info.update({
-                                "model": model_name,
-                                "prompt_tokens": prompt_tok,
-                                "completion_tokens": completion_tok,
-                                "total_tokens": prompt_tok + completion_tok,
-                                "time_seconds": elapsed,
-                                "tokens_per_second": round(completion_tok / elapsed, 2) if elapsed > 0 else 0,
-                            })
-                            yield {"usage": usage_info}
-
-            except Exception as e:
-                raise RunnerError(f"Stream error: {e}")
-
-    async def astream(self, model_name: str, payload: Dict[str, Any]) -> AsyncIterator[Dict[str, Any]]:
-        payload = dict(payload)
-
-        # Build messages array — accept full "messages" list or fall back to single prompt
-        messages = None
-        if "messages" in payload and isinstance(payload["messages"], (list, tuple)):
-            messages = list(payload["messages"])
-        else:
-            prompt = payload.pop("prompt", None)
-            if not prompt:
-                raise ValueError("Payload must contain 'prompt' or 'messages'")
-            messages = [{"role": "user", "content": prompt}]
-
-        stream_payload: Dict[str, Any] = {
-            "model": model_name,
-            "messages": messages,
-            "stream": True,
-        }
-        stream_payload.update({k: v for k, v in payload.items() if k in self._LLAMA_FIELDS and v is not None})
-        async for event in self._stream_sse(model_name, stream_payload):
-            yield event
-
-    async def _complete_async(self, model_name: str, prompt: str, **kwargs) -> Dict[str, Any]:
-        await self._dispatch(model_name)
-        ctx = next((v for k, v in self._models.items() if k == model_name), None)
-        url = f"http://127.0.0.1:{ctx.port}/v1/chat/completions"
-        payload: Dict[str, Any] = {"model": model_name}
-
-        # Support full messages list (for LangChain) or single prompt (legacy)
-        if "messages" in kwargs and isinstance(kwargs["messages"], (list, tuple)):
-            payload["messages"] = list(kwargs.pop("messages"))
-        else:
-            payload["messages"] = [{"role": "user", "content": prompt}]
-
-        payload.update({k: v for k, v in kwargs.items() if k in self._LLAMA_FIELDS and v is not None})
-
-        last_err: Exception | None = None
-        for attempt in range(12):
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(url, json=payload, timeout=60) as resp:
-                        if resp.status == 503:
-                            await asyncio.sleep(2.5)
-                            continue
-                        if resp.status in (502, 504):
-                            raise RunnerError(f"Server returned {resp.status}: upstream or gateway failure")
-                        if resp.status != 200:
-                            raise RunnerError(f"Server error: {resp.status}")
-                        data = await resp.json()
-                return parse_completion(data)
-            except (aiohttp.ClientConnectionError, asyncio.TimeoutError) as exc:
-                last_err = exc
-                if attempt == 11:
-                    break
-                await asyncio.sleep(2.5)
-            except Exception as e:
-                raise RunnerError(f"Request failed: {e}") from None
-        raise RunnerError(f"Server not reachable after {attempt + 1} attempts") from last_err
-
-    async def ainvoke(self, model_name: str, prompt: str = "", **kwargs) -> str:
-        res = await self.ainvoke_full(model_name, prompt, **kwargs)
-        return res.get("content", "")
-
-    async def ainvoke_full(self, model_name: str, prompt: str = "", **kwargs) -> Dict[str, Any]:
-        """Run inference, returning the full ``{"content", "usage"}`` dict."""
-        return await self._complete_async(model_name, prompt, **kwargs)
-
-    async def request(self, model_name: str, path: str, **kwargs) -> Any:
-        await self._dispatch(model_name)
-        ctx = next((v for k, v in self._models.items() if k == model_name), None)
-        port = ctx.port
-        url = f"http://127.0.0.1:{port}{path}"
-        async with aiohttp.ClientSession() as session:
-            async with session.request("POST", url, json=kwargs, timeout=15) as resp:
-                if resp.status < 400:
-                    try:
-                        return await resp.json()
-                    except Exception:
-                        return await resp.read()
-                else:
-                    raise RunnerError(f"Request failed with status {resp.status}")
+    # ── HTTP inference moved to providers/ (LlamaProvider / RemoteProvider) ──
 
     async def start(
         self,
@@ -470,7 +324,7 @@ class BaseRunner(ABC):
         # Update existing context — pre-creation set backend_id, runner_type, cache.
         ctx.port = eff_port
         ctx.backend_id = effective_backend
-        ctx.state = RunnerState.LOADING
+        ctx.set_state("load")
         if self.arkestra:
             self.arkestra.log(f"[start] model={model_name} port={eff_port} backend={effective_backend}")
 
@@ -532,7 +386,7 @@ class BaseRunner(ABC):
             self.arkestra.log(f"[ready] model={model_name} port={eff_port}")
         await asyncio.sleep(self.warmup_delay)
 
-        ctx.state = RunnerState.RUNNING
+        ctx.set_state("ready")
 
         # Start health watcher on first RUNNING model in this runner
         await self.start_health_watcher()
@@ -553,11 +407,11 @@ class BaseRunner(ABC):
         if hasattr(ctx, 'container_id') and ctx.container_id is not None:
             if hasattr(self, '_cancel_log_task'):
                 self._cancel_log_task(ctx)
-        ctx.state = RunnerState.STOPPING
+        ctx.set_state("stop")
         if self.arkestra:
             self.arkestra.log(f"[stop] model={ctx.name} port={ctx.port}")
         await self._stop_model_process(ctx)
-        ctx.state = RunnerState.STOPPED
+        ctx.set_state("stopped")
         if self.arkestra:
             self.arkestra.log(f"[stop] model={ctx.name} DONE")
 

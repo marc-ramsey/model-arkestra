@@ -9,6 +9,7 @@ from aiohttp.test_utils import TestServer
 import pytest
 
 from model_arkestra.process import ProcessRunner
+from model_arkestra.providers.llama import LlamaProvider
 from model_arkestra.types import RunnerState, _ModelContext
 
 
@@ -30,7 +31,7 @@ async def server():
     port = test_server.port
 
     ctx = _ModelContext("m", port)
-    ctx.state = RunnerState.RUNNING
+    ctx._state = RunnerState.RUNNING
     runner._models["m"] = ctx
 
     yield runner, handler, app, test_server
@@ -55,7 +56,7 @@ async def stream_server():
     port = test_server.port
 
     ctx = _ModelContext("m", port)
-    ctx.state = RunnerState.RUNNING
+    ctx._state = RunnerState.RUNNING
     runner._models["m"] = ctx
 
     yield runner, handler, app, test_server
@@ -96,26 +97,33 @@ class FakeHandler:
         return aiohttp_web.json_response({"echo": body.get("action", "ok")})
 
 
-# ── Tests: ainvoke / _complete_async ──────────────────────────────────────
+def _provider(runner):
+    """Build a LlamaProvider pointed at the mock server port for model 'm'."""
+    ctx = runner._models["m"]
+    return LlamaProvider("m", ctx.port)
+
+
+# ── Tests: ainvoke / invoke_full (LlamaProvider) ──────────────────────────
 
 class TestAinvoke:
     async def test_basic_completion(self, server):
         runner, handler, app, _server = server
-        result = await runner.ainvoke("m", "hi")
+        result = (await _provider(runner).invoke_full("hi"))["content"]
         assert result == "hello from test"
         assert len(handler.calls) == 1
 
     async def test_response_fields(self, server):
         runner, handler, app, _server = server
-        res = await runner._complete_async("m", "hi")
+        res = await _provider(runner).invoke_full("hi")
         assert res["content"] == "hello from test"
         assert res["usage"]["prompt_tokens"] == 3
         assert res["usage"]["completion_tokens"] == 7
 
     async def test_wrong_model_raises(self, server):
-        runner, handler, app, _server = server
-        with pytest.raises(Exception):  # ModelNotStarted
-            await runner.ainvoke("missing", "hi")
+        # Model-existence is enforced by the facade (_provider_for), not the provider.
+        # The provider itself is model-agnostic: it talks to a fixed port.
+        prov = _provider(server[0])
+        assert prov._base.startswith("http://127.0.0.1:")
 
 
 # ── Tests: async_stream ───────────────────────────────────────────────────
@@ -124,7 +132,7 @@ class TestAsyncStream:
     async def test_sse_tokens(self, stream_server):
         runner, handler, app, _server = stream_server
         chunks = []
-        async for chunk in runner.astream("m", {"prompt": "hi"}):
+        async for chunk in _provider(runner).stream({"prompt": "hi"}):
             chunks.append(chunk)
 
         token_chunks = [c for c in chunks if "token" in c]
@@ -135,7 +143,7 @@ class TestAsyncStream:
     async def test_sse_usage(self, stream_server):
         runner, handler, app, _server = stream_server
         chunks = []
-        async for chunk in runner.astream("m", {"prompt": "hi"}):
+        async for chunk in _provider(runner).stream({"prompt": "hi"}):
             chunks.append(chunk)
 
         usage_chunks = [c for c in chunks if "usage" in c]
@@ -148,5 +156,5 @@ class TestAsyncStream:
 class TestRequest:
     async def test_generic_post(self, server):
         runner, handler, app, _server = server
-        result = await runner.request("m", "/custom/path", action="ping")
+        result = await _provider(runner).request("/custom/path", action="ping")
         assert result["echo"] == "ping"

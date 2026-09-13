@@ -857,7 +857,7 @@ class ArkestraAdmin:
                 )
 
             # Transition to downloading and spawn the pull task
-            ctx.state = RunnerState.DOWNLOADING
+            ctx.set_state("pull")
 
             # Spawn pull task
             task = asyncio.create_task(
@@ -896,7 +896,7 @@ class ArkestraAdmin:
             resolved = self._resolve_ref(raw)
             if resolved.cache_path:
                 self.server._arkestra._cleanup_partial_cache(resolved.cache_path)
-            ctx.state = RunnerState.UNCACHED
+            ctx.set_state("download_cancel")
             return {"ok": True, "model": model}
 
     def _add_api_models_route(self) -> None:

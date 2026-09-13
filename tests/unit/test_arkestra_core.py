@@ -98,7 +98,6 @@ class TestPortAllocation:
     def test_first_port_is_start_port(self):
         """worker_port() starts at models-start-port."""
         arkestra = _make_cm(runner_cfg={"default": "process"})
-        assert arkestra._next_port == 18000
         port = arkestra.worker_port("m1")
         assert port == 18000
 
@@ -118,7 +117,7 @@ class TestPortAllocation:
             arkestra.worker_port("exhausted")
 
     def test_shutdown_resets_port_counter(self):
-        """shutdown() resets _next_port to models-start-port."""
+        """shutdown() resets the registry port counter to models-start-port."""
         arkestra = _make_cm(runner_cfg={"default": "process"})
         arkestra.worker_port("m1")  # consume one port → next is 18001
 
@@ -127,7 +126,7 @@ class TestPortAllocation:
                 pass
 
         arkestra._runners["fake"] = FakeRunner()
-        arkestra._next_port = 18002  # simulate some consumption
+        arkestra._registry._next_port = 18002  # simulate some consumption
 
         async def run():
             await arkestra.shutdown()
@@ -135,7 +134,7 @@ class TestPortAllocation:
         import asyncio
         asyncio.run(run())
 
-        assert arkestra._next_port == 18000
+        assert arkestra._registry._next_port == 18000
 
 
 # ── Tests: Runner class registry ──────────────────────────────────────────
@@ -249,11 +248,11 @@ class TestRunningModelsProperty:
 
         # Fake RUNNING contexts
         c1 = _ModelContext("model-a", 18000)
-        c1.state = RunnerState.RUNNING
+        c1._state = RunnerState.RUNNING
         r1._models["model-a"] = c1
 
         c2 = _ModelContext("model-b", 18001)
-        c2.state = RunnerState.RUNNING
+        c2._state = RunnerState.RUNNING
         r2._models["model-b"] = c2
 
         models = arkestra.running_models

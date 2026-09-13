@@ -2,6 +2,10 @@
 
 Model Arkestra handles port allocation and backend→runner routing.
 
+> **Lifecycle vs inference.** Since the core restructure, a `Model` object owns
+> its state and its *client* (inference). Runners/backends own only launch,
+> stop, and crash-watching. See [Inference Clients & Capabilities](#inference-clients--capabilities) below.
+
 ## Component Diagram
 
 ```
@@ -185,6 +189,74 @@ For llama.cpp backends, inference kwargs are filtered through `LlamaCppEngine.LL
 Keys use kebab-case in YAML, matching CLI flag names directly.
 
 Infrastructure flags (`--port`, `--model`) are handled by ``LlamaCppEngine.build_cli_args()``. Internally everything stays structured as dicts until CLI conversion time.
+
+## Inference Clients & Capabilities
+
+A `Model` is the single owner of per-model state (state, port, log ring) **and**
+of inference. It holds a small set of **clients**, one per *modality*. Runners
+never touch inference; they only launch/stop/watch the process or container.
+
+```
+Model
+ ├─ .capabilities          # derived set, cached — which clients are live
+ ├─ .invoke / .stream      # unified chat front (LangChain) → ChatClient
+ ├─ .embeddings            # EmbedClient   (llama HTTP or ONNX session)
+ ├─ .asr                   # AsrClient     (ONNX whisper)
+ ├─ .tts                   # TtsClient     (ONNX kokoro)
+ └─ (future) .images / .video
+```
+
+### Why per-modality clients, not one fat client
+
+Image and video are new *modalities*, not new methods bolted onto chat. A single
+client with `chat/embed/transcribe/synthesize/generate_image/understand_video`
+is a kitchen sink. One client per modality keeps each object single-purpose,
+makes capability derivation trivial (`capabilities == {clients that exist}`),
+and lets a new modality be added without touching existing ones.
+
+### Capability derivation
+
+Capabilities are **derived**, not stored, from the model's config:
+
+| Source | Capabilities |
+|---|---|
+| ONNX `type: embedding` | `{embed}` |
+| ONNX `type: whisper` / `asr` | `{asr}` |
+| ONNX `type: tts` | `{tts}` |
+| llama-cpp (default) | `{chat, embed}` |
+| llama-cpp + explicit `capabilities: [embed]` | `{embed}` (the one override) |
+| remote cluster model | mirrors the worker (empty locally until probed) |
+
+The single override exists because some llama models are embedding-only and must
+not advertise `chat`. Everything else is computed.
+
+### How image/video slot in later
+
+- **Vision chat** (image in → text out): *no new client.* It is `ChatClient`
+  with an image content part; the backend just needs `mmproj`. Capability stays `chat`.
+- **Image generation** (text → image): new `ImageClient`, capability `image-gen`,
+  likely a new backend (e.g. stable-diffusion server or ONNX). Derivation via
+  `type: image-gen` or a backend that advertises it.
+- **Video**: same pattern — `VideoClient`, capability `video`.
+
+Each modality = one client + one capability + (optionally) one backend. Adding
+video never forces a rewrite of chat/embed/asr.
+
+### CLI mapping
+
+Each CLI subcommand binds exactly one client, gated by capability:
+
+```
+arkestra chat <model>            → model.invoke / .stream
+arkestra embed <model> "text"    → model.embeddings.encode
+arkestra transcribe <model> f.wav→ model.asr.transcribe
+arkestra tts <model> "text"      → model.tts.synthesize
+arkestra image <model> "prompt"  → (future) model.images.generate
+```
+
+The public facade shims (`ainvoke`, `astream`, `embed`, `transcribe`,
+`synthesize`) stay stable — they become one-line routers to the right client.
+New modalities get a subcommand for free.
 
 ## Related
 

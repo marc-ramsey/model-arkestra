@@ -95,7 +95,7 @@ class TestContainerStartAndDetectExit:
 
         ctx = _ModelContext("alpine-sleeper", port)
         runner._models["alpine-sleeper"] = ctx
-        ctx.state = RunnerState.RUNNING
+        ctx._state = RunnerState.RUNNING
 
         proc = await asyncio.create_subprocess_shell(
             f"podman run --rm -d -p {port}:80 alpine:latest sh -c 'while true; do sleep 1; done'",
@@ -134,7 +134,7 @@ class TestWatchContainerDetectsExit:
 
         ctx = _ModelContext("alpine-exit", port)
         runner._models["alpine-exit"] = ctx
-        ctx.state = RunnerState.RUNNING
+        ctx._state = RunnerState.RUNNING
 
         proc = await asyncio.create_subprocess_shell(
             f"podman run -d --name {name} -p {port}:80 alpine:latest sh -c 'while true; do sleep 1; done'",
@@ -179,7 +179,7 @@ class TestStopPreventsRestart:
 
         ctx = _ModelContext("alpine-stop-test", port)
         runner._models["alpine-stop-test"] = ctx
-        ctx.state = RunnerState.RUNNING
+        ctx._state = RunnerState.RUNNING
 
         proc = await asyncio.create_subprocess_shell(
             f"podman run -d --name {name} -p {port}:80 alpine:latest sh -c 'while true; do sleep 1; done'",

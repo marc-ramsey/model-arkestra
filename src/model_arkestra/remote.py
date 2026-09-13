@@ -2,8 +2,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import aiohttp
-from model_arkestra.http_proxy import sse_events, parse_completion
-from typing import Any, AsyncIterator, Dict, Optional
+from typing import Any, Dict, Optional
 from model_arkestra.base import BaseRunner
 from model_arkestra.types import RunnerState, _ModelContext, ModelNotStarted
 
@@ -60,8 +59,10 @@ class RemoteRunner(BaseRunner):
         if ctx.state in (RunnerState.STOPPED, RunnerState.STOPPING):
             new_size = inference_kwargs.get("max_log_lines", self.log_buffer_size)
             await self._before_restart(ctx, new_size)
-            # Mark as LOADING to bypass _dispatch() shutdown check
-            ctx.state = RunnerState.LOADING
+            # _before_restart aborts early when already stopped; move to LOADING
+            # so the ready transition below is legal.
+            if ctx.state in (RunnerState.STOPPED, RunnerState.STOPPING):
+                ctx.set_state("load")
         elif ctx.state == RunnerState.RUNNING:
             # Already running — store kwargs and return
             self._inference_kwargs[model_name] = inference_kwargs
@@ -75,7 +76,7 @@ class RemoteRunner(BaseRunner):
         # Mark ready either way — acked start, raw-llama-server passthrough,
         # or a worker that didn't ack in time. The proxy validates readiness
         # on the first inference call.
-        ctx.state = RunnerState.RUNNING
+        ctx.set_state("ready")
 
     async def _start_model_process(
         self, ctx: _ModelContext, model_data: Dict[str, Any]
@@ -139,95 +140,4 @@ class RemoteRunner(BaseRunner):
         except Exception as e:
             logger.warning(f"Remote stop proxy exception for {ctx.name}: {e}")
 
-    async def _remote_stream_chat(
-        self, ctx: _ModelContext, payload: Dict[str, Any]
-    ) -> AsyncIterator[Dict[str, Any]]:
-        """Stream chat completions from the remote worker."""
-        url = f"{ctx._remote_base_url}/v1/chat/completions"
-        headers = self._headers(ctx)
-
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers=headers, timeout=120) as resp:
-                if resp.status != 200:
-                    detail = await resp.text()
-                    raise RuntimeError(f"Remote inference failed ({resp.status}): {detail}")
-
-                async for event in sse_events(resp.content):
-                    if "token" in event:
-                        yield {"token": event["token"]}
-                    elif "usage" in event:
-                        yield {"usage": event["usage"]}
-                    # done marker is implicit — no final chunk needed
-
-    async def _remote_complete_chat(
-        self, ctx: _ModelContext, payload: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Complete (non-streaming) chat completion from remote worker."""
-        url = f"{ctx._remote_base_url}/v1/chat/completions"
-        headers = self._headers(ctx)
-
-        last_err: Exception | None = None
-        last_status: int | None = None
-        for attempt in range(6):
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(url, json=payload, headers=headers, timeout=120) as resp:
-                        if resp.status == 503:
-                            last_status = 503
-                            await asyncio.sleep(2.5)
-                            continue
-                        if resp.status != 200:
-                            raise RuntimeError(f"Remote inference failed ({resp.status})")
-                        data = await resp.json()
-                return parse_completion(data)
-            except (aiohttp.ClientConnectionError, asyncio.TimeoutError) as exc:
-                last_err = exc
-                if attempt == 5:
-                    break
-                await asyncio.sleep(2.5)
-        if last_status is not None:
-            raise RuntimeError(f"Remote worker still returned {last_status} after 6 attempts") from last_err
-        raise RuntimeError("Remote server not reachable after 6 attempts") from last_err
-
-    async def _stream_sse(self, model_name: str, payload: Dict[str, Any]) -> AsyncIterator[Dict[str, Any]]:
-        """Override to proxy SSE from the remote worker."""
-        await self._dispatch(model_name)
-        ctx = next((v for k, v in self._models.items() if k == model_name), None)
-        return self._remote_stream_chat(ctx, payload)  # type: ignore[return-value]
-
-    async def _complete_async(self, model_name: str, prompt: str, **kwargs) -> Dict[str, Any]:
-        """Override to proxy completion to the remote worker."""
-        await self._dispatch(model_name)
-        ctx = next((v for k, v in self._models.items() if k == model_name), None)
-
-        messages = None
-        if "messages" in kwargs and isinstance(kwargs["messages"], (list, tuple)):
-            messages = list(kwargs.pop("messages"))
-        else:
-            prompt = prompt or kwargs.pop("prompt", "")
-            if not prompt:
-                raise ValueError("Payload must contain 'prompt' or 'messages'")
-            messages = [{"role": "user", "content": prompt}]
-
-        llama_fields = self._LLAMA_FIELDS
-        payload = {
-            "model": model_name,
-            "messages": messages,
-            "stream": False,
-        }
-        payload.update({k: v for k, v in kwargs.items() if k in llama_fields and v is not None})
-
-        return await self._remote_complete_chat(ctx, payload)  # type: ignore[return-value]
-
-    async def embed(self, model_name: str, text: str) -> Dict[str, Any]:
-        """Proxy an embedding request to the remote worker."""
-        await self._dispatch(model_name)
-        ctx = next((v for k, v in self._models.items() if k == model_name), None)
-        url = f"{ctx._remote_base_url}/v1/embeddings"
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json={"model": model_name, "input": text},
-                                    headers=self._headers(ctx), timeout=120) as resp:
-                if resp.status != 200:
-                    detail = await resp.text()
-                    raise RuntimeError(f"Remote embedding failed ({resp.status}): {detail}")
-                return await resp.json()
+    # ── HTTP inference moved to providers/remote.py (RemoteProvider) ──

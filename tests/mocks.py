@@ -20,7 +20,7 @@ def mock_cm(model_data: dict | None = None):
 def _make_model(name: str, port: int, state: RunnerState, has_process: bool = False):
     """Build a ready-to-use _ModelContext with the given state."""
     ctx = _ModelContext(name, port)
-    ctx.state = state
+    ctx._state = state
     if has_process:
         fake_proc = MagicMock()
         fake_proc.pid = 12345

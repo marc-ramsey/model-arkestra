@@ -187,7 +187,7 @@ class TestDispatch:
     def test_dispatch_stopped_raises_shutdown(self):
         runner = ProcessRunner(MagicMock())
         ctx = _ModelContext("stopped", 18000)
-        ctx.state = RunnerState.STOPPED
+        ctx._state = RunnerState.STOPPED
         runner._models["stopped"] = ctx
         with pytest.raises(ModelShutdown, match="was stopped"):
             asyncio.run(runner._dispatch("stopped"))
@@ -195,7 +195,7 @@ class TestDispatch:
     def test_dispatch_stopping_raises_shutdown(self):
         runner = ProcessRunner(MagicMock())
         ctx = _ModelContext("stopping", 18001)
-        ctx.state = RunnerState.STOPPING
+        ctx._state = RunnerState.STOPPING
         runner._models["stopping"] = ctx
         with pytest.raises(ModelShutdown, match="was stopped"):
             asyncio.run(runner._dispatch("stopping"))
@@ -203,7 +203,7 @@ class TestDispatch:
     def test_dispatch_error_raises_max_restarts(self):
         runner = ProcessRunner(MagicMock())
         ctx = _ModelContext("errored", 18002)
-        ctx.state = RunnerState.ERROR
+        ctx._state = RunnerState.ERROR
         ctx.restart_count = 4
         runner._models["errored"] = ctx
         with pytest.raises(MaxRestartsExceeded, match="exceeded restart limit"):
@@ -212,7 +212,7 @@ class TestDispatch:
     def test_dispatch_running_succeeds(self):
         runner = ProcessRunner(MagicMock())
         ctx = _ModelContext("running", 18002)
-        ctx.state = RunnerState.RUNNING
+        ctx._state = RunnerState.RUNNING
         runner._models["running"] = ctx
         result = asyncio.run(runner._dispatch("running"))
         assert result is None

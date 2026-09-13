@@ -50,18 +50,17 @@ class ModelArkestra:
                 else (yaml.safe_load(open(backends_path)) or {} if backends_path.exists() else {}))
         self._cm.merge(base)
         default_section = self._cm.get("default", {})
-        self._next_port = self._cm.get("default/model-start-port", start_port)
+
+        # ── Registry: name→Model ownership, cluster routing, port pool ──
+        from model_arkestra.models import Registry
+        self._registry = Registry(self._cm, local_url=local_url)
 
         self._runners: Dict[str, BaseRunner] = {}
         self._runner_kwargs = runner_kwargs
         # ── Global log buffer (single ring for all server-level events) ─
-        default_section = self._cm.get("default", {})
         app_log_lines = int(self._cm.get("default/app-log-lines", 2000))
         self._global_log_buf = UnicodeRingBuffer(app_log_lines * _ModelContext.AVG_LINE_BYTES)
         self._global_log_seq: int = 0
-        # ── Cluster topology ───────────────────────────────────────
-        self._local_cluster_key: str = self._cm.get("default/local-cluster-key", "local")
-        self._load_clusters(local_url=local_url)
         # Extract sources section for binary_downloader compatibility
         self._sources: Dict[str, Any] = self._cm.get("sources", {})
         # ── Hardware detection (GPU/CPU, single init-time query) ───
@@ -98,31 +97,12 @@ class ModelArkestra:
 
     # ── port allocation (global) ───────────────────────────────────────
     def worker_port(self, model_name: str) -> int:
-        """Allocate a port for *model_name*.
+        """Allocate a port for *model_name* (delegates to the registry pool).
 
-        Reuses the port from an existing STOPPED context (stop→restart),
-        otherwise allocates a fresh port from the pool.
+        Reuses the port from an existing context (stop→restart), otherwise
+        allocates a fresh port from the pool.
         """
-        # Check for existing stopped context — reuse its port to avoid
-        # exhausting the port pool on repeated stop/start cycles (the same model).
-        for runner in self._runners.values():
-            ctx = runner._models.get(model_name)
-            if ctx is not None and ctx.port is not None:
-                return ctx.port
-
-        default_section = self._cm.get("default", {})
-        start_port = self._cm.get("default/model-start-port", 18000)
-        max_ports = self._cm.get("default/model-ports", 32)
-        end_port = start_port + max_ports - 1
-
-        if self._next_port > end_port:
-            raise RuntimeError(
-                f"Port range exceeded: {start_port}–{end_port}"
-            )
-
-        port = self._next_port
-        self._next_port += 1
-        return port
+        return self._registry.allocate_port(model_name)
     
     # ── backend runtime validation (hard error) ─────────────────────
     def _validate_backend_runtime(self) -> None:
@@ -166,6 +146,11 @@ class ModelArkestra:
     def device_profile(self) -> Dict[str, str]:
         """GPU device-profile env vars (empty dict if no GPU matched)."""
         return self._get_device_profile().get("env", {})
+
+    @property
+    def models(self) -> Dict[str, Any]:
+        """Name → Model map. The single source of truth for model state."""
+        return {m.name: m for m in self._registry.all()}
 
     @property
     def device_detection(self) -> Dict[str, Any]:
@@ -230,112 +215,47 @@ class ModelArkestra:
 
             state = RunnerState.STOPPED if is_cached else RunnerState.UNCACHED
 
-            # Create and register the context — port assigned at first start only.
+            # Create the context — port assigned at first start only.
             from model_arkestra.types import _ModelContext
             ctx = _ModelContext(model_name, None, max_log_lines=500)
             ctx.backend_id = backend_id
             ctx.runner_type = runner_type
-            ctx.state = state
+            if not is_cached:
+                ctx._state = RunnerState.UNCACHED   # construction-time init
             if resolved.cache_path:
                 cache_root = default_cache_root()
                 ctx._cache_dir = cache_root / f"models--{resolved.cache_path}"
                 os.makedirs(ctx._cache_dir, exist_ok=True)
 
-            # Register with the correct runner instance
+            # Register in the registry (single owner) and attach to its runner.
+            self._registry.register(ctx)
             runner = self.get_runner_instance(runner_type, model_name)
             runner._models[model_name] = ctx
 
 
-    # ── cluster topology ───────────────────────────────────────────
-    def _load_clusters(self, local_url: str = "") -> None:
-        """Load managed arkestra clusters from config.
+    # ── cluster topology (delegates to the registry) ───────────────
+    @property
+    def clusters(self) -> Dict[str, Dict[str, Any]]:
+        return self._registry.clusters
 
-        A cluster entry is just ``{name, url}`` in the same URL form as the
-        server's public address (``ARKESTRA_URL`` / ``default.url``).  The local
-        cluster is synthesized from that same canonical URL so it always agrees
-        with the server's bind/prefix.
-
-        Config structure::
-
-            clusters:
-              worker0:                    # remote managed
-                url: http://worker0:8080/base
-                admin-key: secret         # optional
-        """
-        self._clusters: Dict[str, Dict[str, Any]] = {}
-
-        # Auto-create the local cluster from the canonical public URL.
-        # Fallback (no default.url) reconstructs it from bind host + port.
-        if not local_url:
-            host = self._cm.get("default/host", "127.0.0.1")
-            port = self._cm.get("default/admin-port", 8080)
-            local_url = f"http://{host}:{port}"
-        self._local_cluster_key: str = self._cm.get("default/local-cluster-key", "local")
-        self._clusters[self._local_cluster_key] = {
-            "url": local_url.rstrip("/"),
-            "admin-key": self._cm.get("env/ADMIN_KEY"),
-        }
-
-        # Parse remote clusters from YAML
-        raw_clusters = self._cm.get("clusters", {})
-        if not isinstance(raw_clusters, dict):
-            return
-        for name, cfg in raw_clusters.items():
-            if not isinstance(cfg, dict):
-                continue
-            url = cfg.get("url", "")
-            if not url:
-                self.log(f"[config] skipping cluster '{name}': missing url", level="WARNING")
-                continue
-            # Strip trailing slash for consistency
-            cfg = dict(cfg)
-            cfg["url"] = str(url).rstrip("/")
-            self._clusters[name] = cfg
+    @property
+    def local_cluster_key(self) -> str:
+        return self._registry.local_cluster_key
 
     def _parse_cluster_prefix(self, model_name: str) -> Tuple[str, str]:
-        """Split ``<cluster>/<model-id>`` into its components.
-
-        Returns ``(cluster_name, model_id)``.  If no prefix is present,
-        the model belongs to the local cluster.
-        """
-        if "/" in model_name:
-            return model_name.split("/", 1)
-        return self._local_cluster_key, model_name
+        """Split ``<cluster>/<model-id>``; no prefix → local cluster."""
+        return self._registry.parse_prefix(model_name)
 
     def resolve_model_cluster_addr(self, model_name: str) -> Tuple[str, Optional[str], str]:
-        """Resolve cluster routing for a model name.
+        """Return ``(cluster_name, base_url|None, local_model_id)``.
 
-        Returns ``(cluster_name, base_url|None, local_model_id)``.  For the
-        local cluster ``base_url`` is None (use port pool / direct runner).
-        For remote clusters it returns the target URL to proxy through.
-
-        Falls back to the legacy ``runner: remote`` backend config when a
-        ``/<model-id>`` prefix does not match any declared cluster.
+        Local cluster → base_url None. Remote cluster → worker URL to proxy.
         """
-        cluster_name, local_id = self._parse_cluster_prefix(model_name)
-        cfg = self._clusters.get(cluster_name)
-        if cfg is None:
-            # Legacy fallback: check backends for runner=remote + base_url
-            backends_cfg = self._cm.get("backends", {})
-            be = backends_cfg.get(cluster_name, {})
-            if isinstance(be, dict) and be.get("runner") == "remote" and be.get("base_url"):
-                return cluster_name, str(be["base_url"]).rstrip("/"), local_id
-            raise ValueError(f"Unknown cluster '{cluster_name}' for model '{model_name}'. "
-                             f"Declare it in the 'clusters:' top-level key or add a backend "
-                             f"entry with runner='remote' and base_url.")
-        base_url = cfg.get("url") if cluster_name != self._local_cluster_key else None
-        return cluster_name, base_url, local_id
+        return self._registry.resolve(model_name)
 
     def local_model_name(self, model_name: str) -> str:
-        """Strip a ``<cluster>/`` prefix; unknown prefixes pass through.
-
-        Runner contexts are always tracked under the local model id, so every
-        dispatch path resolves through this helper first.
-        """
-        try:
-            return self.resolve_model_cluster_addr(model_name)[2]
-        except ValueError:
-            return model_name
+        """Strip a ``<cluster>/`` prefix; unknown prefixes pass through."""
+        return self._registry.local_model_name(model_name)
 
     # ── ConfigManager delegation ───────────────────────────────────────
     @property
@@ -359,19 +279,21 @@ class ModelArkestra:
     # ── model introspection (runtime state) ────────────────────────────
 
     def get_model_contexts(self) -> list[_ModelContext]:
-        """Return all tracked _ModelContext objects across every runner."""
-        contexts: list[_ModelContext] = []
-        for r in self._runners.values():
-            contexts.extend(r._models.values())  # noqa: SLF001
-        return contexts
+        """Return all tracked model contexts (owned by the registry)."""
+        return self._registry.all
 
     def find_context(self, model_name: str) -> Optional[_ModelContext]:
-        """Return the _ModelContext for *model_name*, or None."""
-        _, _, local_name = self.resolve_model_cluster_addr(model_name)
-        for ctx in self.get_model_contexts():
-            if ctx.name == local_name:
-                return ctx
-        return None
+        """Return the context for *model_name*, or None."""
+        local_name = self.local_model_name(model_name)
+        return self._registry.find_by_local_name(local_name)
+
+    def _provider_for(self, model_name: str):
+        """Return the inference Provider for *model_name* (raises if unknown)."""
+        ctx = self.find_context(model_name)
+        if ctx is None:
+            from model_arkestra.types import ModelNotStarted
+            raise ModelNotStarted(self.local_model_name(model_name))
+        return ctx.provider
 
     def get_v1_models(self) -> Dict[str, Any]:
         """OpenAI-compatible ``/v1/models`` response with WebUI status fields."""
@@ -382,7 +304,7 @@ class ModelArkestra:
         for model_name in self.get_models():
             # Skip remote-cluster models (not tracked locally)
             cluster_name, local_name = self._parse_cluster_prefix(model_name)
-            if cluster_name != self._local_cluster_key:
+            if cluster_name != self.local_cluster_key:
                 continue
             ctx = contexts_by_name.get(model_name)
             model_cfg = self.get_model(model_name) or {}
@@ -723,7 +645,8 @@ class ModelArkestra:
             ctx.backend_id = "onnx"
             ctx._model_path = model_path_str  # store for runner to use
             ctx._runner = runner
-            ctx.state = RunnerState.LOADING
+            ctx.set_state("load")
+            self._registry.register(ctx)
             runner._models[model_name] = ctx  # noqa: SLF001
 
         # Start the ONNX model (loads InferenceSession into memory)
@@ -745,7 +668,7 @@ class ModelArkestra:
         inference_kwargs = {k: v for k, v in overrides.items() if k not in {"port", "backend", "runner"}}
 
         # Find or create the remote runner (shared per model instance)
-        cluster_cfg = self._clusters.get(cluster_name) or {}
+        cluster_cfg = self.clusters.get(cluster_name) or {}
         ctx = self.find_context(local_name)
         if ctx is None:
             log_size = inference_kwargs.get("max_log_lines", self._cm.get("default/log-buffer-size", 2000))
@@ -755,6 +678,7 @@ class ModelArkestra:
             ctx.cluster = cluster_name
             ctx._remote_base_url = base_url
             ctx._admin_key = cluster_cfg.get("admin-key") or cluster_cfg.get("admin_key") or ""
+            self._registry.register(ctx)
             runner = self.get_runner_instance("remote")
             runner._models[local_name] = ctx  # noqa: SLF001
             ctx._runner = runner
@@ -767,23 +691,27 @@ class ModelArkestra:
         self.log(f"[action=start model={cluster_name}/{local_name} remote={base_url}]")
 
     async def embed(self, model_name: str, text: str) -> Dict[str, Any]:
-        """Encode text → embedding vector via ONNX model.
-
-        Returns OpenAI-compatible response with ``data[].embedding`` list.
-        """
-        runner = self._get_runner(model_name, {}, None)
-        return await runner.embed(self.local_model_name(model_name), text)  # type: ignore[attr-defined]
+        """Encode text → embedding vector. Returns OpenAI-compatible response."""
+        return await self._provider_for(model_name).embed(text)
 
     async def transcribe(self, model_name: str, audio_bytes: bytes,
                          language: Optional[str] = None) -> Dict[str, Any]:
         """Transcribe audio → text via ONNX model."""
-        return await self.execute(model_name, "transcribe", audio_bytes=audio_bytes, language=language)
+        return await self._provider_for(model_name).transcribe(audio_bytes, language or "")
 
     async def synthesize(self, model_name: str, text: str,
                          voice: Optional[str] = None,
                          speed: float = 1.0) -> bytes:
         """Generate speech from text via TTS ONNX model."""
-        return await self.execute(model_name, "synthesize", text=text, voice=voice, speed=speed)
+        return await self._provider_for(model_name).synthesize(text, voice or "", speed)
+
+    async def stream_asr(self, model_name: str, audio_bytes: bytes) -> Dict[str, Any]:
+        """Streaming ASR with partial/final results (sherpa-ai)."""
+        return await self._provider_for(model_name).stream_asr(audio_bytes)
+
+    async def stream_tts(self, model_name: str, text: str) -> bytes:
+        """Piper TTS — single WAV frame for WebSocket streaming."""
+        return await self._provider_for(model_name).stream_tts(text)
 
     async def stop(self, model_name: str) -> None:
         """Stop the named model."""
@@ -835,16 +763,16 @@ class ModelArkestra:
             )
             await pull_task
 
-            ctx.state = RunnerState.STOPPED
+            ctx.set_state("download_ok")
             self.log(f"[pull] model={model_name} complete")
         except asyncio.CancelledError:
             self._cleanup_partial_cache(resolved.cache_path)
-            ctx.state = RunnerState.UNCACHED
+            ctx.set_state("download_cancel")
             self.log(f"[pull] model={model_name} cancelled")
             raise
         except Exception as e:
             self._cleanup_partial_cache(resolved.cache_path)
-            ctx.state = RunnerState.ERROR
+            ctx.set_state("download_fail")
             ctx.last_error = str(e)
             self.log(f"[pull] model={model_name} FAILED: {e}", level="ERROR")
 
@@ -941,7 +869,7 @@ class ModelArkestra:
             result["cache_deleted"] = True
             result["cache_path"] = str(cache_dir)
         if ctx:
-            ctx.state = RunnerState.UNCACHED
+            ctx.set_state("eject")
 
         return result
 
@@ -976,7 +904,7 @@ class ModelArkestra:
         for r in self._runners.values():
             await r.shutdown()
         self._runners.clear()
-        self._next_port = self._cm.get("default/model-start-port", 18000)
+        self._registry.reset_ports()
 
     @property
     def running_models(self) -> Set[str]:
@@ -994,25 +922,18 @@ class ModelArkestra:
     async def ainvoke_full(self, model_name: str, prompt: str = "", backend: Optional[str] = None,
                            messages: Optional[list] = None, **kwargs: Any) -> Dict[str, Any]:
         """Run inference, returning the full ``{"content", "usage"}`` dict."""
-        runner = self._get_runner(model_name, {}, backend)
-        local_name = self.local_model_name(model_name)
+        prov = self._provider_for(model_name)
         if messages is not None:
-            return await runner.ainvoke_full(local_name, "", messages=messages, **kwargs)
-        return await runner.ainvoke_full(local_name, prompt, **kwargs)
+            return await prov.invoke_full("", messages=messages, **kwargs)
+        return await prov.invoke_full(prompt, **kwargs)
 
     async def astream(self, model_name: str, payload: Dict[str, Any], backend: Optional[str] = None) -> AsyncIterator[Dict[str, Any]]:
-        runner = self._get_runner(model_name, {}, backend)
-        local_name = self.local_model_name(model_name)
-        if "messages" not in payload and "prompt" in payload:
-            # Keep prompt-based flow (backward compat)
-            pass
-        # If messages are already in payload (list of dicts), they go through as-is
-        async for chunk in runner.astream(local_name, payload):
+        prov = self._provider_for(model_name)
+        async for chunk in prov.stream(payload):
             yield chunk
 
     async def request(self, model_name: str, path: str, **kwargs: Any) -> Any:
-        runner = self._get_runner(model_name, {}, None)
-        return await runner.request(self.local_model_name(model_name), path, **kwargs)
+        return await self._provider_for(model_name).request(path, **kwargs)
 
     async def get_logs(self, model_name: str, lines: int = 100) -> List[str]:
         """Return the last N log lines for a model."""

@@ -200,6 +200,9 @@ class OnnxRunner(BaseRunner):
         if ctx and ctx.state in (RunnerState.STOPPED, RunnerState.STOPPING):
             new_size = inference_kwargs.get("max_log_lines", self.log_buffer_size)
             await self._before_restart(ctx, new_size)  # type: ignore[misc]
+            # _before_restart aborts early when already stopped; move to LOADING
+            if ctx.state in (RunnerState.STOPPED, RunnerState.STOPPING):
+                ctx.set_state("load")
             eff_port = port if port is not None else ctx.port
 
         elif ctx is not None and ctx.state == RunnerState.RUNNING:
@@ -233,7 +236,9 @@ class OnnxRunner(BaseRunner):
                 os.makedirs(ctx._cache_dir, exist_ok=True)
 
             self._models[model_name] = ctx
-            ctx.state = RunnerState.LOADING
+            if self.arkestra is not None and hasattr(self.arkestra, "_registry"):
+                self.arkestra._registry.register(ctx)
+            ctx.set_state("load")
 
         # Apply transient overrides
         for key in ('args',):
@@ -248,180 +253,7 @@ class OnnxRunner(BaseRunner):
         if self.warmup_delay > 0:
             await asyncio.sleep(self.warmup_delay)
 
-        ctx.state = RunnerState.RUNNING
-
-    # ── Inference methods (called via asyncio.to_thread in server.py) ─
-
-    async def embed(self, model_name: str, text: str) -> Dict[str, Any]:
-        """Encode text → embedding vector."""
-        import numpy as np
-        ctx = self._models.get(model_name)
-        if not ctx:
-            from model_arkestra.types import ModelNotStarted
-            raise ModelNotStarted(model_name)
-
-        def _do_embed():
-            from model_arkestra.onnx_server import _tokenize
-            session = ctx.onnx_session
-            tokenizer = getattr(ctx, 'onnx_tokenizer', None)
-            tokens = _tokenize(text, tokenizer)
-            output = session.run(None, tokens)
-
-            last_hidden = output[0]
-            if len(output) > 1 and output[1] is not None:
-                mask = output[1].astype(np.float32)[:, :, np.newaxis]
-                pooled = (last_hidden * mask).sum(axis=1) / mask.sum(axis=1).clip(min=1e-9)
-            else:
-                pooled = last_hidden.mean(axis=1)
-
-            norm = np.linalg.norm(pooled, axis=-1, keepdims=True)
-            return (pooled / norm.clip(min=1e-9)).squeeze(0).tolist()
-
-        embedding = await asyncio.to_thread(_do_embed)
-
-        return {
-            "object": "list",
-            "data": [{"object": "embedding", "index": 0, "embedding": embedding}],
-            "model": model_name,
-            "usage": {"prompt_tokens": len(text.split()), "total_tokens": len(text.split())},
-        }
-
-    async def transcribe(self, model_name: str, audio_bytes: bytes,
-                         language: Optional[str] = None) -> Dict[str, Any]:
-        """Transcribe audio → text using Whisper ONNX model."""
-        ctx = self._models.get(model_name)
-        if not ctx:
-            from model_arkestra.types import ModelNotStarted
-            raise ModelNotStarted(model_name)
-
-        def _do_transcribe():
-            import numpy as np
-            from model_arkestra.onnx_server import (
-                _extract_mel_spectrogram, _greedy_decode, _load_whisper_tokenizer,
-            )
-
-            waveform = np.frombuffer(audio_bytes[44:], dtype=np.int16).astype(np.float32) / 32768.0
-            mel = _extract_mel_spectrogram(waveform, 16000)
-
-            if not hasattr(ctx, 'onnx_tokenizer'):
-                ctx.onnx_tokenizer = _load_whisper_tokenizer(ctx.model_path)
-
-            session = ctx.onnx_session
-            output_names = [o.name for o in session.get_outputs()]
-            encoder_outputs = session.run(
-                [output_names[0]],  # last_hidden_state
-                {"input_features": mel.astype(np.float32)},
-            )
-            # encoder_outputs[0] has shape [1, seq_len, d_model]
-            return _greedy_decode(
-                session,
-                ctx.model_path,
-                ctx.onnx_tokenizer,
-                mel.astype(np.float32),
-                encoder_outputs[0],
-            ).strip()
-
-        text = await asyncio.to_thread(_do_transcribe)
-        return {"text": text, "language": language or "en"}
-
-    async def synthesize(self, model_name: str, text: str,
-                         voice: Optional[str] = None, speed: float = 1.0) -> bytes:
-        """Generate speech from text using Kokoro ONNX TTS model."""
-        ctx = self._models.get(model_name)
-        if not ctx:
-            from model_arkestra.types import ModelNotStarted
-            raise ModelNotStarted(model_name)
-
-        def _do_synthesize():
-            # Text → phonemes → waveform (Kokoro handles G2P + ONNX internally)
-            samples, sr = ctx.kokero_model.create(
-                text,
-                voice=voice or ctx.g2p_lang,
-                speed=speed,
-            )
-            # Convert numpy float32 [-1,1] → int16 WAV
-            audio_int16 = (samples * 32767).astype("int16")
-            buf = io.BytesIO()
-            with wave.open(buf, "wb") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(sr)
-                wf.writeframes(audio_int16.tobytes())
-            return buf.getvalue()
-
-        return await asyncio.to_thread(_do_synthesize)
-
-    async def stream_asr(self, model_name: str, audio_bytes: bytes) -> Dict[str, Any]:
-        """Streaming ASR with partial results via sherpa-ai paraformer.
-
-        Receives WebM/PCM audio, decodes to float32 at 16kHz mono,
-        feeds into OnlineStream for live partial token output.
-
-        Returns: {"partial": "text while processing", "final": "complete text"}
-        """
-        import librosa
-
-        ctx = self._models.get(model_name)
-        if not ctx:
-            from model_arkestra.types import ModelNotStarted
-            raise ModelNotStarted(model_name)
-
-        def _do_stream():
-            from sherpa_onnx import OnlineRecognizer, OnlineStream, OfflineModelConfig, OnlineRecognizerConfig
-
-            # Decode WebM → PCM float32 at 16kHz mono
-            samples = librosa.load(io.BytesIO(audio_bytes), sr=16000, mono=True)[0]
-
-            # Create streaming instance (cheap C++ pointer wrapper)
-            stream = OnlineStream()
-            stream.accept_waveform(16000, samples.tolist())
-
-            # Build OfflineRecognizer on first use, cache for reuse
-            if not hasattr(ctx, '_sherpa_rec'):
-                ctx._sherpa_rec = OnlineRecognizer(
-                    config=OnlineRecognizerConfig(model_config=OfflineModelConfig())
-                )
-
-            rec = ctx._sherpa_rec
-
-            partial_text = ""
-            while rec.decode_stream(stream):
-                result = stream.get_result()
-                if result.text:
-                    partial_text = result.text
-
-            return {
-                "partial": partial_text,
-                "final": stream.final_result.text if hasattr(stream, 'final_result') else partial_text
-            }
-
-        return await asyncio.to_thread(_do_stream)
-
-    async def stream_tts(self, model_name: str, text: str) -> bytes:
-        """Piper TTS — generates complete WAV in one call.
-
-        V1: single WAV frame (no intermediate chunking). First byte latency ~300ms on CPU.
-
-        Returns: WAV bytes ready for WebSocket binary frame transmission.
-        """
-        ctx = self._models.get(model_name)
-        if not ctx:
-            from model_arkestra.types import ModelNotStarted
-            raise ModelNotStarted(model_name)
-
-        def _do_synthesize():
-            samples, sr = ctx.piper_voice.synthesize(text)
-            # Convert numpy float32 [-1,1] → int16 WAV
-            audio_int16 = (samples * 32767).astype("int16")
-            buf = io.BytesIO()
-            with wave.open(buf, "wb") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(sr)
-                wf.writeframes(audio_int16.tobytes())
-            return buf.getvalue()
-
-        return await asyncio.to_thread(_do_synthesize)
+        ctx.set_state("ready")
 
     # ── Internal helpers ───────────────────────────────────────────
     # NOTE: logger is set at import time by arkestra.py after importing OnnxRunner.
