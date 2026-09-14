@@ -23,8 +23,6 @@ from model_arkestra.common import (
     _load_schema_registry,
     _resolve_backend,
     _runtime_binary,
-    build_image,
-    containerfile_for_backend,
     default_cache_root,
     hf_model_info,
     image_and_runner_for_backend,
@@ -714,7 +712,6 @@ class ArkestraAdmin:
                     repo = src_cfg.get("repo", "")
                     release = src_cfg.get("release_type", "")
                     image_tag = f"{repo}:{release}" if repo else source_ref
-                container_path = be_cfg.get("container", "")
                 _, runner_type = image_and_runner_for_backend(cm_data, backend_id)
                 runtime_detected = _runtime_binary(runner_type) is not None
                 entries.append({
@@ -723,7 +720,6 @@ class ArkestraAdmin:
                     "runtime_detected": runtime_detected,
                     "image": image_tag if image_tag else None,
                     "source_ref": source_ref if source_ref else None,
-                    "containerfile": container_path,
                     "available": False,  # default; may be overwritten below
                 })
 
@@ -740,53 +736,6 @@ class ArkestraAdmin:
                     entries[idx]["available"] = available
 
             return entries
-
-        @self._app.post("/admin/images/build")
-        async def admin_build_image(body: dict):
-            backend_id = body.get("backend")
-            if not backend_id:
-                raise HTTPException(status_code=400, detail="Missing 'backend' in request body")
-
-            cm_data = self._config_data
-
-            # Validate backend exists before resolving paths
-            backends_cfg = cm_data.get("backends") or {}
-            _cm = self.server._arkestra.cm
-            _eff = _cm.effective_default_backend() if hasattr(_cm, "effective_default_backend") else None
-            be_id = backend_id if backend_id in (backends_cfg or {}) else (_eff or backends_cfg.get("default"))
-            if not be_id or backend_id not in backends_cfg:
-                return {"error": f"Unknown backend '{backend_id}'",
-                        "image": None, "runtime": None}
-
-            image_tag, runner_type = image_and_runner_for_backend(cm_data, backend_id)
-
-            # Resolve containerfile path relative to project root
-            project_root = os.path.dirname(os.path.dirname(os.path.dirname(
-                os.path.abspath(__file__),
-            )))
-            containerfile_path = containerfile_for_backend(backend_id, str(project_root))
-
-            if _runtime_binary(runner_type) is None:
-                return {"skipped": True,
-                        "reason": f"runner={runner_type} but no '{runner_type}' binary found on PATH",
-                        "image": image_tag,
-                        "runtime": runner_type}
-
-            if not containerfile_path:
-                raise HTTPException(status_code=404,
-                                    detail=f"No containerfile found for backend '{backend_id}'")
-
-            if not os.path.isfile(containerfile_path):
-                raise HTTPException(status_code=404,
-                                    detail=f"Containerfile not found: {containerfile_path}")
-
-            result = await asyncio.to_thread(build_image, runner_type, image_tag, containerfile_path, project_root)
-            return {
-                "backend": backend_id,
-                "image": image_tag,
-                "runtime": runner_type,
-                **result,
-            }
 
         @self._app.delete("/admin/images/{image_tag}")
         async def admin_remove_image(image_tag: str):

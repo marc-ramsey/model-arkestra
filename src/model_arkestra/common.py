@@ -216,8 +216,8 @@ def resolve_config_path(config_path: Optional[str] = None) -> Path:
       3. ``$ARKESTRA_DIR/config.yaml`` (or ``~/.config/arkestra/config.yaml``)
 
     Does NOT create the directory — that's left to ConfigManager which will
-    raise FileNotFoundError with a clear message pointing users to
-    sample-config.yaml for scaffolding.
+    raise FileNotFoundError with a clear message pointing users to run
+    ``arkestra init`` to scaffold a config.
     """
     if config_path:
         return Path(os.path.expandvars(config_path)).expanduser()
@@ -515,57 +515,6 @@ def resolve_binary_from_backend(backend: Dict[str, Any]) -> Optional[tuple]:
     return None
 
 
-def _resolve_backend_config_field(backend_id: Optional[str], field: str) -> Any:
-    """Read a single field from backends.<id> or backends.<default>.
-
-    Walks known config files, tries explicit backend_id first,
-    then falls back to the default backend's value.
-    Returns None if nothing found.
-    """
-    try:
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        for candidate in ["sample-config.yaml", "config.yaml"]:
-            path = os.path.join(project_root, candidate)
-            if not os.path.isfile(path):
-                continue
-            with open(path) as f:
-                cfg = yaml.safe_load(f) or {}
-            backends = cfg.get("backends") or {}
-            if not isinstance(backends, dict):
-                continue
-
-            # 1. Explicit backend_id
-            if backend_id:
-                be = backends.get(backend_id)
-                if isinstance(be, dict) and field in be:
-                    return be[field]
-
-            # 2. Default backend
-            default_be_id = backends.get("default")
-            if default_be_id:
-                default_be = backends.get(default_be_id)
-                if isinstance(default_be, dict) and field in default_be:
-                    return default_be[field]
-    except Exception:
-        pass
-    return None
-
-
-def containerfile_for_backend(
-    backend_id: Optional[str], root_dir: str = ""
-) -> Optional[str]:
-    """Return the container build file path for a backend's image.
-
-    Reads backends.<id>.container. Returns None if not found.
-    Resolved relative to *root_dir* (defaults to current working directory).
-    """
-    cf = _resolve_backend_config_field(backend_id, "container")
-    if not cf:
-        return None
-    root = Path(root_dir) if root_dir else Path().resolve()
-    return str(root / cf)
-
-
 def image_and_runner_for_backend(cm_data, backend_id: str) -> tuple[str, str]:
     """Resolve image tag and runner type for a backend from config.
 
@@ -648,34 +597,6 @@ def image_exists(runner: str, tag: str) -> bool:
            "docker": ["docker", "inspect", tag]}.get(runner, [])
     proc = _run_subprocess(cmd, timeout=10)
     return proc.returncode == 0
-
-
-def build_image(
-    runner: str,
-    image_tag: str,
-    containerfile: str,
-    context_dir: str,
-    timeout: int = 600,
-) -> Dict[str, Any]:
-    """Build a container image for the given runner.
-
-    Args:
-        runner: "podman" or "docker"
-        image_tag: target image tag (e.g. "ark-llama:rocm")
-        containerfile: path to Containerfile/Dockerfile
-        context_dir: build context directory
-        timeout: max seconds to wait
-
-    Returns:
-        Dict with success status and combined stdout/stderr output.
-    """
-    cmd = f"{runner} build -t {image_tag} -f {containerfile} {context_dir}".split()
-    proc = _run_subprocess(cmd, timeout=timeout)
-    return {
-        "success": proc.returncode == 0,
-        "output": proc.stdout + proc.stderr,
-        "error": None if proc.returncode == 0 else proc.stderr or proc.stdout or "non-zero exit",
-    }
 
 
 def remove_image(

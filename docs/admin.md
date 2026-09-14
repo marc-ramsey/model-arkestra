@@ -69,7 +69,6 @@ Missing or incorrect keys return `401 Unauthorized`. Public paths (`/`, `/index.
 | `GET` | `/admin/log/{model}?since=N&lines=M` | Yes | Delta or snapshot log query |
 | `GET` | `/admin/logs?since=N&lines=M` | Yes | Server-level log entries (proxy traffic, lifecycle events) |
 | `GET` | `/admin/images` | Yes | List configured container images with runner type and availability |
-| `POST` | `/admin/images/build` | Yes | Build a single backend's image (body: `{"backend": "rocm"}`) |
 | `DELETE` | `/admin/images/{image_tag}` | Yes | Remove an image from the local store |
 | `POST` | `/admin/stop-all` | Yes | Stop all running models — models restart implicitly on next inference request |
 | `POST` | `/admin/shutdown` | Yes | Full server teardown — stops uvicorn and all models |
@@ -557,7 +556,6 @@ Returns a JSON array:
     "runner": "podman",
     "runtime_detected": true,
     "image": "ark-llama:rocm",
-    "containerfile": "Containerfile.rocm",
     "available": false
   }
 ]
@@ -569,36 +567,7 @@ Returns a JSON array:
 | `runner` | Resolved runner type (`podman`, `docker`, or `process`) |
 | `runtime_detected` | Whether the container runtime for this runner is available on PATH |
 | `image` | Full image tag configured for this backend |
-| `containerfile` | Name of the Containerfile (resolved to `tests/files/<name>`) |
 | `available` | Whether the image exists in the local container store (only checked when `runtime_detected` is true) |
-
-### POST /admin/images/build
-
-Build a single backend's container image. The `backend` key must be provided — no "build all" mode.
-
-Request body:
-```json
-{"backend": "rocm"}
-```
-
-The endpoint resolves the configured runner type for the backend, detects which runtime (podman or docker) is available on PATH, then runs the appropriate build command. If the configured runtime isn't present, returns gracefully:
-```json
-{"skipped": true, "reason": "runner=podman but no 'podman' binary found on PATH", "image": "ark-llama:rocm"}
-```
-
-On attempt (whether successful or not):
-```json
-{
-  "backend": "rocm",
-  "image": "ark-llama:rocm",
-  "success": false,
-  "runtime": "podman",
-  "output": "STEP 1/10: FROM ...\nError: ...",
-  "error": "Failed to resolve the transaction:\nNo match for argument: hip-runtime-rocm"
-}
-```
-
-Build runs synchronously with a 600s timeout. The full stdout/stderr from the container runtime is returned in `output`. Returns `400` if `backend` is missing from the body, or `404` if no Containerfile is found for the backend.
 
 ### DELETE /admin/images/{image_tag}
 

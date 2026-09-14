@@ -29,7 +29,7 @@ def skip_if_no_runtime():
 def app_client():
     """Return a TestClient for the ArkestraAdmin app.
 
-    Uses tests/test-admin-config.yaml — isolated from sample-config.yaml.
+    Uses tests/test-admin-config.yaml — isolated from any repo config.
     Reads ADMIN_KEY from config so it stays in sync.
     """
     from model_arkestra.server import ArkestraServer
@@ -63,7 +63,7 @@ class TestListImages:
         resp = app_client.get("/admin/images")
         data = resp.json()
         required_keys = {"backend_id", "runner", "runtime_detected", "image",
-                         "containerfile", "available"}
+                         "available"}
         for entry in data:
             assert required_keys.issubset(entry.keys()), f"Missing keys: {required_keys - entry.keys()}"
 
@@ -90,39 +90,6 @@ class TestListImages:
             assert rocm_entry["available"] is False, (
                 "Image should not be available by default — user must build it first"
             )
-
-
-# ── POST /admin/images/build ─────────────────────────────────────────
-
-
-class TestBuildImage:
-    def test_missing_backend_returns_400(self, app_client):
-        resp = app_client.post("/admin/images/build", json={})
-        assert resp.status_code == 400
-        assert "backend" in resp.json()["detail"].lower()
-
-    def test_unknown_backend_returns_error(self, app_client):
-        """Requesting a backend not in the images config should return an error."""
-        resp = app_client.post("/admin/images/build", json={"backend": "nonexistent"})
-        data = resp.json()
-        # Unknown backend falls through to defaults — returns skipped (no runner binary)
-        assert data.get("skipped") is True or data.get("error") is not None
-
-    @pytest.mark.slow
-    @pytest.mark.skipif(not shutil.which("podman"), reason="podman not available")
-    def test_build_rocm_resolves_correct_files(self, app_client):
-        """When podman IS available, build should resolve containerfile and image from config.
-
-        The actual Containerfile may fail to build on some systems (missing packages in image),
-        but the endpoint should still return structured output with the correct backend/image/runtime.
-        """
-        resp = app_client.post("/admin/images/build", json={"backend": "rocm"})
-        data = resp.json()
-        assert data["backend"] == "rocm"
-        assert data["image"] == "ark-llama:rocm"
-        assert data["runtime"] in ("podman", "docker")
-        # success reflects whether podman build exited cleanly — may be False on some systems
-        assert "output" in data  # always includes build stdout/stderr
 
 
 # ── DELETE /admin/images/{image} ─────────────────────────────────────
