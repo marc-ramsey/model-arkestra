@@ -234,7 +234,7 @@ backends:
     source_ref: official-vulkan-radv
     args:
       ngl: 999
-      ctx-size: ${ctx-size}
+      ctx-size: ${default/ctx-size}
 
   rocm:
     description: "ROCm — best for AMD iGPU and discrete GPUs"
@@ -242,7 +242,7 @@ backends:
     source_ref: lemonade-rocm-nightly
     args:
       ngl: 999
-      ctx-size: ${ctx-size}
+      ctx-size: ${default/ctx-size}
 
   cuda:
     description: "NVIDIA CUDA — for NVIDIA discrete GPUs"
@@ -250,14 +250,14 @@ backends:
     source_ref: official-cuda
     args:
       ngl: 999
-      ctx-size: ${ctx-size}
+      ctx-size: ${default/ctx-size}
 
   cpu:
     description: "CPU-only mode — uses all available cores"
     runner: process
     source_ref: ggml-org-cpu
     args:
-      threads: ${nproc}
+      threads: ${NPROC}
       no-mmap: true
 
 
@@ -346,7 +346,7 @@ my-avx512:
   runner: process
   args:
     ngl: 999
-    ctx-size: ${ctx-size}
+    ctx-size: ${default/ctx-size}
 ```
 
 Then select it in config.yaml:
@@ -391,26 +391,41 @@ models:
 
 ### Argument Merge Pipeline
 
-Arguments are merged in two phases — first a dict merge, then CLI conversion:
+Arguments are resolved per-key through a unified chain, then converted to CLI:
 
-**Phase 1 — Dict Merge:**
-1. Model-level ``args:`` dict from config.yaml — explicit per-model overrides
-2. Runtime ``inference_kwargs`` passed to ``start()`` — transient, single invocation only (last-wins for overlapping keys)
+**Phase 1 — Per-key resolution (first match wins):**
+1. Model-level field in config.yaml (e.g. ``models.<m>.ngl``)
+2. Backend ``args:`` dict in backends.yaml (e.g. ``backends.<b>.args.ngl``) — GPU/offload defaults a backend sets for all its models
+3. ``default:`` section in config.yaml
+4. Runtime ``inference_kwargs`` passed to ``start()`` — transient, last-wins override
+
+Only keys present in the engine's schema whitelist (``schemas.yaml`` →
+``model-args.<engine>``) are emitted; infra/junk keys are dropped.
+
+**Placeholders:** string values containing ``${...}`` are expanded against the
+config ``macros:`` section plus the runtime-injected ``NPROC`` (CPU count).
+A placeholder that cannot be resolved is treated as absent, so resolution falls
+through to the next level in the chain. Example: ``ctx-size: ${default/ctx-size}``
+reads the ``ctx-size`` key from the ``default:`` section.
 
 **Phase 2 — CLI Conversion:**
-``LlamaCppEngine.build_cli_args(merged, port)`` converts the merged dict to CLI tokens. Infrastructure flags (`--port`, `--model`) are injected by the engine.
+``LlamaCppEngine.build_cli_args(merged, port)`` converts the merged dict to CLI
+tokens. Infrastructure flags (``--port``, ``--model``) are injected by the engine.
 
 ### Backend Selection Resolution:
 
 1. Model's ``backend:`` field (if specified)
-2. ``backends.default:`` key in config.yaml
-3. ``"vulkan-radv"`` hardwired fallback
+2. ``backends.default:`` key in backends.yaml (or a runtime-detected fallback override when the default backend's runtime is missing)
+3. GPU-detection recommendation, else ``"cpu"``
 
 ### Runner Resolution:
 
-1. Backend entry's ``runner:`` field (lowercase: ``process``, ``podman``, ``docker``, ``remote``)
-2. ``runners:`` section mapping type → class name
-3. Hardwired ``"process"`` fallback
+1. Model's ``runner:`` field (per-model launch-mode override, e.g. force a container)
+2. Backend entry's ``runner:`` field (``process``, ``podman``, ``docker``, ``onnx``, ``remote``)
+3. ``default.container-type`` / ``runners.default``, else hardwired ``"process"``
+
+The runner→class mapping is fixed in code; the config carries only the short
+runner id, not a class name.
 
 ---
 

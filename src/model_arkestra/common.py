@@ -44,12 +44,19 @@ def _load_schema_registry(config_path: Optional[str]) -> Dict[str, Any]:
 
 def _get_inference_keys(model_data: Dict, backend_cfg: Dict, default_section: Dict,
                         schema: Dict[str, Any]) -> set[str]:
-    """Collect unique inference keys from model + defaults, filtered to schema whitelist."""
+    """Collect unique inference keys from model + backend args + defaults.
+
+    Filtered to the engine schema whitelist so infra/junk keys never leak in.
+    Backend args are included — a backend may define GPU/offload defaults (ngl,
+    flash-attn, ...) that no individual model sets.
+    """
     default_keys = {k for k in (default_section or {}) if k not in INFRA_KEYS}
     model_keys = {k for k in model_data if k not in INFRA_KEYS}
+    backend_args = backend_cfg.get("args") if isinstance(backend_cfg, dict) else {}
+    backend_keys = {k for k in (backend_args or {}) if k not in INFRA_KEYS}
     # Filter to only keys that exist in the engine schema
     schema_keys = set(schema.keys())
-    return (model_keys | default_keys) & schema_keys
+    return (model_keys | backend_keys | default_keys) & schema_keys
 
 
 # ── Model resolution ────────────────────────────────────────────────────────
@@ -699,8 +706,21 @@ def safe_container_name(name: str, port: int) -> str:
     safe = name.replace("_", "-").replace(".", "-")
     return f"llm-{safe}-{port}"
 
+def _runtime_macros(cm: Any) -> Dict[str, Any]:
+    """Build the macro map used to expand ``${...}`` placeholders in args.
+
+    Combines the config ``macros:`` section with runtime-injected values.
+    Only ``NPROC`` is injected — PORT and CHECKPOINT are obsolete (the URL/env-var
+    system and model-ref resolution replaced them). Do not add ARKESTRA_* keys here;
+    those are handled by conn.py, not arg building.
+    """
+    macros: Dict[str, Any] = dict(cm.data.get("macros") or {})
+    macros["NPROC"] = str(os.cpu_count() or 0)
+    return macros
+
+
 def _resolve_arg(model_data: Dict, backend_cfg: Dict, default_section: Dict,
-                 key: str):
+                 key: str, cm: Any, macros: Dict[str, Any]):
     """Resolve one key through the unified chain.
 
     Resolution order:
@@ -708,13 +728,20 @@ def _resolve_arg(model_data: Dict, backend_cfg: Dict, default_section: Dict,
       2. Backend args (``backend_args["key"]``)
       3. Default section (``default.key``)
       4. None — caller skips missing values
+
+    String values containing ``${...}`` are expanded against *macros* before use.
+    A value that still contains an unresolvable placeholder is treated as absent
+    so the chain falls through to the next level.
     """
-    def _is_resolved(v):
-        """Return True if value is resolved (not a macro placeholder)."""
+    def _expand(v):
+        if isinstance(v, str) and "${" in v:
+            resolved = cm._resolve_string(v, macros, strict=False)  # noqa: SLF001
+            return None if "${" in resolved else resolved
+        return v
+
+    def _usable(v):
         if v is None or v == "":
             return False
-        if isinstance(v, str) and "${" in v:
-            return False  # unresolved macro — skip to next level
         return True
 
     # Check model root field (flat keys take priority over nested args)
@@ -724,8 +751,9 @@ def _resolve_arg(model_data: Dict, backend_cfg: Dict, default_section: Dict,
 
     for v in (model_val, backend_val,
               default_section.get(key)):
-        if _is_resolved(v):
-            return v
+        expanded = _expand(v)
+        if _usable(expanded):
+            return expanded
     return None
 
 
@@ -777,8 +805,9 @@ def build_model_args(
     keys = _get_inference_keys(model, backend_cfg, default_section, engine_schema)
 
     # ── Resolve each key through unified chain ───────────────────────
+    macros = _runtime_macros(cm)
     for key in keys:
-        val = _resolve_arg(model, backend_cfg, default_section, key)
+        val = _resolve_arg(model, backend_cfg, default_section, key, cm, macros)
         if val is not None:
             result[key] = val
 
@@ -805,18 +834,7 @@ def _resolve_backend(
     if model_backend:
         return str(model_backend)
 
-    # Check top-level flat config key: backend-default (legacy)
-    flat_default = cm.data.get("backend-default")
-    if flat_default:
-        return str(flat_default)
-
-    # Check new schema: default.backend
-    default_section = cm.data.get("default", {}) or {}
-    new_default = default_section.get("backend")
-    if new_default:
-        return str(new_default)
-
-    # Nested backends.default key (or runtime-detected fallback override)
+    # Single source of truth: backends.default (or runtime-detected fallback override)
     effective_default = None
     if hasattr(cm, "effective_default_backend"):
         effective_default = cm.effective_default_backend()
