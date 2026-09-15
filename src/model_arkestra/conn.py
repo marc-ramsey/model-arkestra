@@ -28,12 +28,13 @@ from model_arkestra.common import resolve_config_path, ENV_CONFIG, ENV_DIR
 
 # ── Shared env-var names (connection side) ─────────────────────────────
 ENV_URL = "ARKESTRA_URL"
+ENV_BIND = "ARKESTRA_BIND"
 ENV_API_KEY = "ARKESTRA_API_KEY"
 
 DEFAULT_PORT = 8080
 DEFAULT_SCHEME = "http"
 DEFAULT_TARGET_HOST = "127.0.0.1"   # dialable default for clients
-BIND_DEFAULT = "127.0.0.1"          # server bind default (loopback-only)
+BIND_DEFAULT = "0.0.0.0"             # server bind default (LAN-exposed)
 
 
 def parse_url(url: str, *, default_port: int = DEFAULT_PORT):
@@ -104,8 +105,8 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
 def add_server_args(parser: argparse.ArgumentParser) -> None:
     """Register server-only flags (bind address)."""
     parser.add_argument("--bind", default=None,
-                        help="Address the server binds to — 127.0.0.1 for local "
-                             "only, 0.0.0.0 to expose on the LAN (default: 127.0.0.1)")
+                        help=f"Address the server binds to (env: {ENV_BIND}; "
+                             f"default {BIND_DEFAULT})")
 
 
 def resolve_conn(
@@ -122,7 +123,8 @@ def resolve_conn(
 
     The public URL is resolved from ``--url`` > ``ARKESTRA_URL`` >
     ``config default/url`` > default.  When *server* is True, the bind address is
-    also resolved from ``--bind`` > ``config default/bind`` > ``127.0.0.1``.
+    resolved from ``--bind`` > ``ARKESTRA_BIND`` > ``config default/bind`` >
+    ``0.0.0.0``.
     """
     raw_url = (getattr(args, "url", None)
                or os.environ.get(ENV_URL)
@@ -136,6 +138,7 @@ def resolve_conn(
     bind_host = BIND_DEFAULT
     if server:
         bind_host = (getattr(args, "bind", None)
+                     or os.environ.get(ENV_BIND)
                      or (cfg_get("default/bind") if cfg_get else None)
                      or BIND_DEFAULT)
 

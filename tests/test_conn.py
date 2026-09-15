@@ -52,7 +52,7 @@ class TestResolveConn:
         assert str(c.config_path).endswith(".config/arkestra/config.yaml")
 
     def test_server_default_bind(self):
-        assert resolve_conn(_args(), server=True).bind_host == "127.0.0.1"
+        assert resolve_conn(_args(), server=True).bind_host == "0.0.0.0"
 
     def test_url_flag(self):
         c = resolve_conn(_args(url="http://lanbox:9090/base"), server=False)

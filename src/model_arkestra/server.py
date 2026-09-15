@@ -153,8 +153,8 @@ class ArkestraServer:
         base_url: URL path prefix for all endpoints (e.g. "/ark"). Defaults
             to no prefix. Resolved from the public URL's path component
             (``--url`` / ``ARKESTRA_URL`` / config ``default.url``).
-        bind_host: Address the server binds to — 127.0.0.1 for local only,
-            0.0.0.0 to expose on the LAN (default 127.0.0.1). May differ from
+        bind_host: Address the server binds to — 0.0.0.0 to expose on the LAN,
+            127.0.0.1 for local only (default 0.0.0.0). May differ from
             the public URL's host in the LAN-exposure posture.
         scheme: URL scheme of the public address (http/https).
         allow_origins: List of origins allowed for CORS (e.g. ["*"] or

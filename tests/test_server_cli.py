@@ -97,11 +97,11 @@ class TestBindResolution:
         kwargs = _run_main(["--config", str(cfg)], cfg, env=env)
         assert kwargs["bind_host"] == "10.0.0.9"
 
-    def test_default_bind_loopback(self, tmp_path):
+    def test_default_bind(self, tmp_path):
         cfg = _make_config({}, tmp_path)
         env = {k: v for k, v in os.environ.items() if k != "ARKESTRA_URL"}
         kwargs = _run_main(["--config", str(cfg)], cfg, env=env)
-        assert kwargs["bind_host"] == "127.0.0.1"
+        assert kwargs["bind_host"] == "0.0.0.0"
 
 
 class TestTimeoutResolution:
