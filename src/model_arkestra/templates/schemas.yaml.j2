@@ -33,8 +33,6 @@ model-args:
     batch-size:
       type: integer
       minimum: 1
-    ngl:
-      type: integer
     presence-penalty:
       type: float
       step: 0.1
@@ -44,7 +42,56 @@ model-args:
     max-tokens:
       type: integer
       minimum: 1
-    flash-attn:
-      type: boolean
     chat-template-kwargs:
+      type: string
+    ngl:
+      type: integer
+      minimum: 0
+    flash-attn:
+      type: string
+      options: [on, off, auto]
+    no-mmap:
+      type: boolean
+    cache-type-k:
+      type: string
+      options: [f16, q8_0, q4_0]
+    cache-type-v:
+      type: string
+      options: [f16, q8_0, q4_0]
+    parallel:
+      type: integer
+      minimum: 1
+    kv-unified:
+      type: boolean
+    reasoning-effort:
+      type: string
+      options: [none, minimal, low, medium, high, xhigh, max]
+    threads:
+      type: integer
+      minimum: 1
+    device:
+      type: string
+
+  onnx:
+    name:
+      type: string
+    repo:
+      type: string
+      default: hf
+      options: [hf, lcl]
+    model:
+      type: string
+    path:
+      type: string
+    device:
+      type: string
+      default: CPUExecutionProvider
+    providers:
+      type: list
+    voices_path:
+      type: string
+    g2p_lang:
+      type: string
+      default: en-us
+    tokenizer:
       type: string
