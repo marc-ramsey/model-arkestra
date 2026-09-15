@@ -25,15 +25,29 @@ class Registry:
         self._load_clusters(local_url)
 
     # ── model storage ───────────────────────────────────────────
-    def register(self, model: Any) -> None:
-        # Capture the config inputs needed for capability derivation.
-        self._attach_config(model)
-        self._models[model.name] = model
+    def register(self, model: Any, aliases: Optional[List[str]] = None) -> None:
+        """Register a context under its own name plus any alias names.
 
-    def _attach_config(self, model: Any) -> None:
-        """Best-effort fill of ``_model_cfg`` / ``_backend_cfg`` from the registry's cm."""
+        A context may be shared by several model names (models that reference
+        the same checkpoint). Each alias resolves to the same context object.
+        ``aliases`` should include at least one *model* name (not the checkpoint
+        id) so config/capability lookup works against the ``models:`` section.
+        """
+        self._attach_config(model, aliases)
+        self._models[model.name] = model
+        for alias in (aliases or []):
+            if alias != model.name:
+                self._models[alias] = model
+
+    def _attach_config(self, model: Any, aliases: Optional[List[str]] = None) -> None:
+        """Best-effort fill of ``_model_cfg`` / ``_backend_cfg`` from the registry's cm.
+
+        Uses the first alias (a real model name) for config lookup, since the
+        context itself may be named by checkpoint id rather than a model key.
+        """
         try:
-            cfg = self._cm.get_model(model.name) or {}
+            lookup_name = aliases[0] if aliases else model.name
+            cfg = self._cm.get_model(lookup_name) or {}
             model._model_cfg = dict(cfg)
             be_id = cfg.get("backend")
             if be_id:

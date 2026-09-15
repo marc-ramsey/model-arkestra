@@ -24,6 +24,19 @@ class MockRunner:
     def __init__(self) -> None:
         self._models = {}
 
+    async def stop(self) -> None:
+        # Transition each context through stop→stopped (dedupe by identity for
+        # aliases), mirroring the real runner's full stop cycle.
+        seen = set()
+        for name, ctx in list(self._models.items()):
+            if id(ctx) in seen:
+                continue
+            seen.add(id(ctx))
+            if ctx.state in (RunnerState.RUNNING, RunnerState.LOADING):
+                ctx.set_state("stop")
+            if ctx.state == RunnerState.STOPPING:
+                ctx.set_state("stopped")
+
     @property
     def running_models(self):
         return {
@@ -195,8 +208,9 @@ class TestEjectMethod:
 
     # ── Shared-cache conflict: two RUNNING models same checkpoint ─────
 
-    def test_shared_cache_conflict(self, monkeypatch):
-        """Two different models share the same cache → eject blocked."""
+    def test_shared_checkpoint_ejects_all(self, monkeypatch):
+        """Two models share a checkpoint → eject via one name succeeds and
+        deletes the shared cache (no conflict; sharing is intended)."""
         monkeypatch.delenv("HF_HUB_CACHE", raising=False)
         ma = self._make_arkestra()
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -204,7 +218,6 @@ class TestEjectMethod:
             ma._cm.data["default_env"] = {"hf_hub_cache": tmpdir}
 
             shared_checkpoint = "shared/same-model:Q4_K_M"
-            # Cache path strips quantizer tag
             shared_cache_path = "shared/same-model"
             shared_cache = ma._cache_dir_for_checkpoint(shared_cache_path)
             shared_cache.mkdir(parents=True, exist_ok=True)
@@ -224,16 +237,17 @@ class TestEjectMethod:
             ma._runners["runner-b"] = runner_b
             ma._registry.register(ctx_b)
 
-            with pytest.raises(ValueError, match="is in use by other running runners"):
-                asyncio.run(ma.eject("model-a"))
-
-            # Cache NOT deleted
-            assert shared_cache.exists()
+            # Eject via one name — succeeds, no conflict, cache deleted.
+            result = asyncio.run(ma.eject("model-a"))
+            assert result["ok"] is True
+            assert result["cache_deleted"] is True
+            assert not shared_cache.exists()
 
     # ── Shared checkpoint but STOPPED model → no conflict ─────────────
 
-    def test_shared_checkpoint_no_conflict_stopped(self, monkeypatch):
-        """Shared checkpoint, but other model is STOPPED → eject succeeds."""
+    def test_eject_takes_down_shared_model(self, monkeypatch):
+        """Ejecting one name of a shared checkpoint also stops the other model
+        that shares it (they run as one process)."""
         monkeypatch.delenv("HF_HUB_CACHE", raising=False)
         ma = self._make_arkestra()
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -247,23 +261,22 @@ class TestEjectMethod:
             ma._cm.data["models"]["model-a"] = {"repo": "hugging-face", "model": shared_checkpoint}
             ma._cm.data["models"]["model-b"] = {"repo": "hugging-face", "model": shared_checkpoint}
 
-            runner_a = MockRunner()
-            ctx_a = make_ctx("model-a", 18000, RunnerState.RUNNING)
-            runner_a._models["model-a"] = ctx_a
-            ma._runners["runner-a"] = runner_a
-            ma._registry.register(ctx_a)
-
-            runner_b = MockRunner()
-            ctx_b = make_ctx("model-b", 18001, RunnerState.STOPPED)
-            runner_b._models["model-b"] = ctx_b
-            ma._runners["runner-b"] = runner_b
-            ma._registry.register(ctx_b)
+            # Both models share a checkpoint → they live in the SAME runner
+            # (same backend/runner-type), aliased to one shared context.
+            runner = MockRunner()
+            ctx = make_ctx("model-a", 18000, RunnerState.RUNNING)
+            runner._models["model-a"] = ctx
+            runner._models["model-b"] = ctx   # alias → same shared context
+            ma._runners["runner"] = runner
+            ma._registry.register(ctx, ["model-a", "model-b"])
 
             result = asyncio.run(ma.eject("model-a"))
 
             assert result["ok"] is True
             assert result["cache_deleted"] is True
             assert not shared_cache.exists()
+            # The shared context (serving both names) was ejected to UNCACHED.
+            assert ctx.state == RunnerState.UNCACHED
 
 
 # ── Step 3: Admin endpoint wrapper tests ──────────────────────────────

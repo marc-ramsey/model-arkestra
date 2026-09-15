@@ -151,8 +151,12 @@ class ModelArkestra:
 
     @property
     def models(self) -> Dict[str, Any]:
-        """Name → Model map. The single source of truth for model state."""
-        return {m.name: m for m in self._registry.all}
+        """Name → Model map. The single source of truth for model state.
+
+        Includes alias names: several model names may map to the same shared
+        context (models referencing one checkpoint).
+        """
+        return dict(self._registry._models)
 
     @property
     def device_detection(self) -> Dict[str, Any]:
@@ -186,11 +190,30 @@ class ModelArkestra:
 
         default_section = (self._cm.data.get("default") or {})
 
+        # Group model names by the checkpoint they reference. Models sharing a
+        # checkpoint become ONE process (one _Model, one set of weights/KV);
+        # each model name is an alias for that shared context.
+        ckpt_to_models: Dict[str, list] = {}
+        standalone: list = []
         for model_name in models_cfg:
-            model_cfg = models_cfg[model_name] or {}
+            ckpt_id = self._cm.checkpoint_for(model_name)
+            if ckpt_id:
+                ckpt_to_models.setdefault(ckpt_id, []).append(model_name)
+            else:
+                standalone.append(model_name)
+
+        # Build the list of (context_name, [model aliases]) to create.
+        groups: list = [(m, [m]) for m in standalone]
+        groups += [(ckpt_id, names) for ckpt_id, names in ckpt_to_models.items()]
+
+        for ctx_name, aliases in groups:
+            # Use the first alias's config; all share the same checkpoint so the
+            # merged load-profile (ref, backend, parallel, ...) is identical.
+            primary = aliases[0]
+            model_cfg = self.get_model(primary) or {}
 
             # Resolve backend and runner type
-            backend_id = _resolve_backend(self._cm, model_cfg, model_name)
+            backend_id = _resolve_backend(self._cm, model_cfg, primary)
             cm_data = self._cm.data
             _, runner_type = image_and_runner_for_backend(cm_data, backend_id)
 
@@ -215,11 +238,10 @@ class ModelArkestra:
                 has_blobs = any(blobs_dir.glob("*.gguf")) if blobs_dir.exists() else False
                 is_cached = has_snapshots or has_blobs
 
-            state = RunnerState.STOPPED if is_cached else RunnerState.UNCACHED
-
-            # Create the context — port assigned at first start only.
+            # Create the shared context — named by checkpoint id (or model name
+            # for standalone). Port assigned at first start only.
             from model_arkestra.types import _Model
-            ctx = _Model(model_name, None, max_log_lines=500)
+            ctx = _Model(ctx_name, None, max_log_lines=500)
             ctx.backend_id = backend_id
             ctx.runner_type = runner_type
             if not is_cached:
@@ -229,10 +251,12 @@ class ModelArkestra:
                 ctx._cache_dir = cache_root / f"models--{resolved.cache_path}"
                 os.makedirs(ctx._cache_dir, exist_ok=True)
 
-            # Register in the registry (single owner) and attach to its runner.
-            self._registry.register(ctx)
-            runner = self.get_runner_instance(runner_type, model_name)
-            runner._models[model_name] = ctx
+            # Register once (single owner) and alias under every model name that
+            # shares this checkpoint, so existing per-name lookups keep working.
+            self._registry.register(ctx, aliases)
+            runner = self.get_runner_instance(runner_type, primary)
+            for alias in aliases:
+                runner._models[alias] = ctx
 
 
     # ── cluster topology (delegates to the registry) ───────────────
@@ -529,6 +553,13 @@ class ModelArkestra:
         if not model:
             raise ValueError(f"Unknown model '{local_name}' in cluster '{cluster_name}'.")
 
+        # Shared-checkpoint guard: if this model's context (shared by all models
+        # of the same checkpoint) is already running, it's a no-op — the process
+        # and its KV cache are already up for every alias.
+        ctx = self.model_obj(local_name)
+        if ctx is not None and ctx.state == RunnerState.RUNNING:
+            return
+
         backends_cfg = self._cm.get("backends", {})
         runners_cfg = self._cm.get("runners", {})
 
@@ -800,16 +831,19 @@ class ModelArkestra:
                              RunnerState.STOPPING, RunnerState.DOWNLOADING)
 
     async def eject(self, model_name: str) -> Dict[str, Any]:
-        """Stop a model and delete its cached checkpoint files.
+        """Stop a model's checkpoint and delete its cached weight files.
 
-        Returns a dict with details about what was removed.  Raises ValueError
-        if other running models share the same underlying cache directory.
+        Ejecting any model name acts on the *checkpoint* it references — the
+        shared process and cache that all models of that checkpoint use. Every
+        model sharing the checkpoint is taken down together (that is intended;
+        the UI is responsible for surfacing the blast radius).
         """
         cfg = self._cm.get("models", {})
         if model_name not in cfg:
             raise ValueError(f"Model '{model_name}' not in config")
 
-        model_cfg = cfg[model_name]
+        # Resolve the weight ref via the merged (checkpoint + model) config.
+        model_cfg = self.get_model(model_name) or {}
         default_section = self._cm.get("default", {})
         raw = model_cfg.get("model")
         resolved = resolve_model_ref(
@@ -824,7 +858,7 @@ class ModelArkestra:
             "cache_deleted": False,
         }
 
-        # Stop the model first (always)
+        # Stop the shared process first (always).
         await self.stop(model_name)
 
         if not cache_path:
@@ -834,37 +868,14 @@ class ModelArkestra:
         cache_root = self._cache_root()
         cache_dir = self._cache_dir_for_checkpoint(cache_path)
 
-        # Get the context for this model (exists in runner after stop)
+        # Get the (shared) context for this model.
         ctx = None
         for r in self._runners.values():
             if model_name in r._models:
                 ctx = r._models[model_name]
                 break
 
-        # Safety check: other running contexts sharing this cache?
-        if cache_dir.exists():
-            targets = []
-            for ctx in self.models.values():
-                if ctx.name == model_name or ctx.state != RunnerState.RUNNING:
-                    continue
-                other_cfg = cfg.get(ctx.name, {})
-                other_raw = other_cfg.get("model")
-                other_resolved = resolve_model_ref(
-                    raw=other_raw,
-                    default_section=default_section,
-                    model_repos=self._cm.get("default/model-repos"),
-                )
-                if not other_resolved.cache_path:
-                    continue
-                if self._cache_dir_for_checkpoint(other_resolved.cache_path) == cache_dir:
-                    targets.append(ctx.name)
-            if targets:
-                raise ValueError(
-                    f"Model '{model_name}' is in use by other running runners: "
-                    + ", ".join(targets)
-                )
-
-        # Delete cache, mark context as UNCACHED (cache gone)
+        # Delete cache, mark context as UNCACHED (cache gone).
         if cache_dir.exists():
             shutil.rmtree(cache_dir)
             result["cache_deleted"] = True

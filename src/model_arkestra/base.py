@@ -367,8 +367,17 @@ class BaseRunner(ABC):
         await self.start_health_watcher()
 
     async def stop(self) -> None:
-        """Stop the single model on this runner."""
+        """Stop the models on this runner.
+
+        Dedupes by context identity: several names may alias the same shared
+        context (models of one checkpoint), so each is stopped exactly once.
+        """
+        seen = set()
         for key in list(self._models):
+            ctx = self._models[key]
+            if id(ctx) in seen:
+                continue
+            seen.add(id(ctx))
             await self._stop_single(key)
 
     async def _stop_single(self, model_name: str) -> None:

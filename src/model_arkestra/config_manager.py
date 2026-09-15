@@ -30,18 +30,55 @@ class ModelConfigManager(ConfigManager):
         return None
 
     def get_models(self) -> list[str]:
-        """Return a list of all available model names."""
+        """Return a list of all model instance names (the ``models:`` keys).
+
+        These are the invocable, user-facing names. Distinct from checkpoint
+        ids (see :meth:`get_checkpoints`) which name the shared weight files.
+        """
         models = self.data.get("models")
         return list(models.keys()) if isinstance(models, dict) else []
+
+    def get_checkpoints(self) -> list[str]:
+        """Return a list of checkpoint ids (the ``checkpoints:`` keys).
+
+        Each names one weight file and the load-profile args shared by every
+        model instance that references it.
+        """
+        ckpts = self.data.get("checkpoints")
+        return list(ckpts.keys()) if isinstance(ckpts, dict) else []
+
+    def get_checkpoint(self, checkpoint_id: str) -> Union[Dict[str, Any], None]:
+        """Return the raw config dict for a checkpoint id (no merge)."""
+        ckpts = self.data.get("checkpoints")
+        if not isinstance(ckpts, dict):
+            return None
+        ckpt = ckpts.get(checkpoint_id)
+        return dict(ckpt) if isinstance(ckpt, dict) else None
+
+    def checkpoint_for(self, model_name: str) -> Optional[str]:
+        """Return the checkpoint id a model instance references, or None."""
+        models = self.data.get("models")
+        if not isinstance(models, dict):
+            return None
+        model = models.get(model_name)
+        if not isinstance(model, dict):
+            return None
+        return model.get("checkpoint")
 
     def get_model(
         self, model_name: str, env_vars: Optional[Dict[str, Any]] = None
     ) -> Union[Dict[str, Any], None]:
-        """Return the config dict for a named model.
+        """Return the *effective* config dict for a named model instance.
 
-        If *env_vars* is provided the model's string values are resolved
-        against them (*strict=True*).  Unresolved placeholders (e.g. $PORT)
-        survive when *env_vars* is not given so they can be resolved at runtime.
+        A model instance references a shared checkpoint via its ``checkpoint:``
+        key. The effective config is the checkpoint's load-profile args merged
+        with the instance's own args (instance wins on conflict). The
+        checkpoint's ``ref`` is surfaced as ``model`` so existing callers that
+        read ``cfg["model"]`` work unchanged.
+
+        If *env_vars* is provided the values are resolved against them
+        (*strict=True*).  Unresolved placeholders survive when *env_vars* is not
+        given so they can be resolved at runtime.
         """
         models = self.data.get("models")
         if not isinstance(models, dict):
@@ -49,10 +86,33 @@ class ModelConfigManager(ConfigManager):
         model = models.get(model_name)
         if model is None:
             return None
+        if not isinstance(model, dict):
+            return None
+
+        # Merge the referenced checkpoint underneath the instance config.
+        merged: Dict[str, Any] = {}
+        ckpt_id = model.get("checkpoint")
+        if ckpt_id is not None:
+            ckpt = self.get_checkpoint(ckpt_id)
+            if ckpt is None:
+                raise ValueError(
+                    f"Model '{model_name}' references unknown checkpoint "
+                    f"'{ckpt_id}'. Declare it in the 'checkpoints:' section."
+                )
+            merged.update(ckpt)
+        # Instance args override checkpoint args.
+        instance = {k: v for k, v in model.items() if k != "checkpoint"}
+        merged.update(instance)
+        # The weight ref lives only on the checkpoint; surface it as 'model'
+        # so callers reading cfg["model"] work unchanged. An instance cannot
+        # set its own ref.
+        if "ref" in merged:
+            merged["model"] = merged.pop("ref")
+
         if env_vars is not None:
-            return self._traverse(model, env_vars, strict=self.strict_expansion)
+            return self._traverse(merged, env_vars, strict=self.strict_expansion)
         # Normalise whitespace without strict mode so unresolved keys survive.
-        return self._traverse(model, {}, strict=False)
+        return self._traverse(merged, {}, strict=False)
 
     def get_backend(self, backend_id: str) -> Union[Dict[str, Any], None]:
         """Return the backend dict for *backend_id*.
