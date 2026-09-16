@@ -321,7 +321,7 @@ class ArkestraAdmin:
                         if ctx
                         else self._resolve_model_backend(model_name, model_cfg)
                     )
-                    runner_type = ctx.runner_type or ""
+                    runner_type = (ctx.runner_type or "") if ctx else ""
 
                     # Size and checkpoint-hash from HuggingFace (optional, cached)
                     info = await asyncio.to_thread(hf_model_info, resolved.ref) or {}

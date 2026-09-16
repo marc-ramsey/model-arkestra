@@ -43,9 +43,18 @@ def _load_config(path: str | None = None) -> dict:
 
 
 def _read_admin_key(config_path: str | None = None) -> str | None:
-    """Read admin_key from config.yaml default-env section or return None."""
+    """Read the admin API key from config.yaml.
+
+    Checks, in order: default.admin-key, default-env.admin_key, env.ADMIN_KEY.
+    Returns None if none are set.
+    """
     data = _load_config(config_path)
-    return (data.get("default-env") or {}).get("admin_key")
+    for section, key in (("default", "admin-key"), ("default-env", "admin_key")):
+        val = (data.get(section) or {}).get(key)
+        if val:
+            return str(val)
+    val = (data.get("env") or {}).get("ADMIN_KEY")
+    return str(val) if val else None
 
 
 # ── HTTP helpers ───────────────────────────────────────────────────────
@@ -105,13 +114,14 @@ async def cmd_models(args: argparse.Namespace) -> None:
     print(header)
     print("-" * len(header))
     for m in models:
-        runner = m.get("runner_type") or ""
+        runner = m.get("runner") or ""
         if isinstance(runner, str):
             runner = runner.replace("runnerstate.", "").lower()
         status_val = m.get("status", {})
         if isinstance(status_val, dict):
             status_val = status_val.get("value", "stopped")
-        print(f"{m['id']:<30} {str(status_val):<12} {str(m['port']) or '-':<8} {str(m.get('backend_id') or '-'):<20} {runner}")
+        port = m.get("port") or "-"
+        print(f"{m['name']:<30} {str(status_val):<12} {str(port):<8} {str(m.get('backend') or '-'):<20} {runner}")
 
 
 async def cmd_start(args: argparse.Namespace) -> None:
