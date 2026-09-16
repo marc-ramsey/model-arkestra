@@ -276,13 +276,47 @@ async def cmd_logs(args: argparse.Namespace) -> None:
 
 
 async def cmd_pull(args: argparse.Namespace) -> None:
+    """Pull a checkpoint, blocking until complete with a progress indicator.
+
+    The server never blocks; this client polls /admin/pull-status until the
+    download finishes (state leaves 'downloading').
+    """
     result = await _request("POST", args.conn, f"/admin/pull/{args.name}", api_key=args.api_key)
     if getattr(args, "json", False):
         _print_json(result)
-    elif result.get("ok") or result.get("already_downloading"):
-        print(f"Download started for '{args.name}'")
-    else:
+        return
+    if not (result.get("ok") or result.get("already_downloading") or result.get("already_loaded")):
         print(result.get("detail", "Failed to pull"), file=sys.stderr)
+        sys.exit(1)
+    if result.get("already_loaded"):
+        print(f"'{args.name}' is already loaded")
+        return
+
+    # Block here (client-side) until the background download completes.
+    last = ""
+    while True:
+        st = await _request("GET", args.conn, f"/admin/pull-status/{args.name}", api_key=args.api_key)
+        state = st.get("state", "")
+        if state == "stopped":  # download_ok -> STOPPED
+            print(f"\n'{args.name}' downloaded.")
+            return
+        if state in ("error",):
+            print(f"\nPull failed: {st.get('error')}", file=sys.stderr)
+            sys.exit(1)
+        pct = st.get("pct")
+        cur = st.get("current") or ""
+        line = f"downloading {args.name}"
+        if cur:
+            line += f"  [{cur}]"
+        if pct is not None:
+            line += f"  {pct:5.1f}%"
+        speed = st.get("speed_mbps")
+        if speed:
+            line += f"  {speed:6.2f} MB/s"
+        if line != last:
+            print(f"\r{line}", end="", flush=True)
+            last = line
+        await asyncio.sleep(1)
 
 
 async def cmd_restart(args: argparse.Namespace) -> None:

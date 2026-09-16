@@ -73,7 +73,8 @@ Missing or incorrect keys return `401 Unauthorized`. Public paths (`/`, `/index.
 | `POST` | `/admin/stop-all` | Yes | Stop all running models — models restart implicitly on next inference request |
 | `POST` | `/admin/shutdown` | Yes | Full server teardown — stops uvicorn and all models |
 | `POST` | `/admin/restart/{model}` | Yes | Stop and restart a running/loading model (accepts override params) |
-| `POST` | `/admin/pull/{model}` | Yes | Start pulling a model checkpoint from HuggingFace |
+| `POST` | `/admin/pull/{model}` | Yes | Start pulling a model checkpoint (exact file set, non-blocking) |
+| `GET` | `/admin/pull-status/{model}` | Yes | Pull progress for client poll loops |
 | `POST` | `/admin/cancel-pull/{model}` | Yes | Cancel an in-progress model pull |
 
 ### GET /admin/models
@@ -411,7 +412,9 @@ If the model has no model configured, or the cache directory doesn't exist, `cac
 
 ### POST /admin/pull/{model}
 
-Start pulling a model's checkpoint from HuggingFace. Returns immediately with `200 OK` — the pull runs as a background task. Progress is streamed to the model's log buffer (poll via `GET /admin/log/{model}`).
+Start pulling a model's checkpoint from HuggingFace. Returns immediately with `200 OK` — the download runs as a background task and **never blocks the server**.
+
+The pull resolves `repo:quant` to the *exact* file set the engine will load (primary GGUF + any `mmproj`/`mtp` sidecars, plus split shards) using llama.cpp's own selection rules, then fetches only those files into the HF cache. It does **not** download the whole repository.
 
 ```bash
 curl -X POST 'http://localhost:8080/admin/pull/qwen3.5-4b' \
@@ -423,24 +426,31 @@ Returns on success:
 {"ok": true, "model": "qwen3.5-4b"}
 ```
 
-Returns `200` with `{"already_pulling": true}` if a pull is already in progress for this model.
-
-Returns `409 Conflict` if:
-- Model is already running (`"Cannot pull: model is running"`)
-- Model is stopping (`"Cannot pull: model is stopping"`)
-- Model is already uncached (`"Model 'qwen3.5-4b' is already uncached"`)
+Returns `200` with `already_downloading: true` if a pull is already in progress, or `already_loaded: true` if the model is already running.
 
 Returns `404` if the model is not in config.
 
-**Progress via log endpoint:**
-```json
-{"lines": [
-  {"seq": 1, "text": "[pull] qwen3.5-4b: Fetching 3 files (14.2GB total)"},
-  {"seq": 2, "text": "[pull] qwen3.5-4b: 25% (3.55/14.2GB, 180MB/s)"},
-  {"seq": 3, "text": "[pull] qwen3.5-4b: 100% (14.2/14.2GB)"}
-]}
+### GET /admin/pull-status/{model}
+
+Lightweight pull-progress endpoint for client poll loops (no HuggingFace metadata calls). The `arkestra-admin pull` CLI uses this to block and render a live progress indicator until the download completes.
+
+```bash
+curl 'http://localhost:8080/admin/pull-status/qwen3.5-4b' \
+     -H 'Authorization: Bearer your-secret-key'
 ```
 
+Returns:
+```json
+{
+  "state": "downloading",
+  "pct": 33.3,
+  "current": "mmproj-BF16.gguf",
+  "speed_mbps": null,
+  "error": null
+}
+```
+
+`state` becomes `stopped` when the download finishes (checkpoint on disk, model not yet started) and `error` on failure.
 ### POST /admin/cancel-pull/{model}
 
 Cancel an in-progress model pull. The pull task is cancelled and partially downloaded files may remain in cache (subsequent pulls resume from cache).
@@ -708,8 +718,8 @@ arkestra-admin --url http://localhost:8080 --api-key SECRET <command>
 | `arkestra-admin images list` | Show OCI image availability per backend |
 | `arkestra-admin images build <backend> [--tag TAG]` | Build an OCI container image |
 | `arkestra-admin images rm <image_tag>` | Remove a container image |
-| `arkestra-admin pull <name>` | Pull model checkpoint from HuggingFace |
-| `arkestra-admin pull-stop <name>` | Cancel an in-progress pull |
+| `arkestra-admin pull <name>` | Pull model checkpoint (blocks with live progress until complete) |
+| `arkestra-admin cancel-pull <name>` | Cancel an in-progress pull |
 | `arkestra-admin shutdown` | Gracefully stop the server |
 
 ### Examples

@@ -14,7 +14,7 @@ from model_arkestra.base import BaseRunner
 from model_arkestra.common import (
     _resolve_backend, _resolve_device_profile, default_cache_root,
     resolve_config_path, image_and_runner_for_backend, resolve_model_ref,
-    resolve_tags as _resolve_model_tags, download_hf_model,
+    resolve_tags as _resolve_model_tags,
 )
 from model_arkestra.docker import DockerRunner
 from model_arkestra.onnx_runner import OnnxRunner
@@ -757,15 +757,48 @@ class ModelArkestra:
                     pass
                 return
 
-    async def pull_model(self, ctx: _Model) -> None:
-        """Background task: pull model checkpoint from HuggingFace.
+    async def pull(self, model_name: str) -> Dict[str, Any]:
+        """Begin pulling a model's checkpoint (non-blocking).
 
-        Resolves the model reference, calls ``snapshot_download`` with
-        progress callbacks, and transitions the context state on
-        completion (STOPPED) or failure (ERROR). On cancel,
-        returns to UNCACHED and cleans partial cache files.
+        Transitions the context to DOWNLOADING and spawns the download as a
+        background task. Returns immediately; callers poll status for progress.
+        Never blocks the event loop.
         """
-        model_name = ctx.name
+        _, _, local_name = self.resolve_model_cluster_addr(model_name)
+        if not self.get_model(local_name):
+            raise ValueError(f"Unknown model '{local_name}'")
+
+        ctx = self.model_obj(local_name)
+        if ctx is None:
+            # Create a context so the download has somewhere to report state.
+            from model_arkestra.types import _Model as _M
+            ctx = _M(local_name, 0)
+            self._registry.register(local_name, ctx)
+
+        if ctx.state == RunnerState.RUNNING:
+            return {"ok": True, "model": local_name, "already_loaded": True}
+        if ctx.state == RunnerState.DOWNLOADING and ctx.download_task and not ctx.download_task.done():
+            return {"ok": True, "model": local_name, "already_downloading": True}
+
+        ctx.set_state("pull")
+        task = asyncio.create_task(self.pull_model(ctx, local_name))
+        ctx.download_task = task
+        self.log(f"[action=pull model={local_name}]")
+        return {"ok": True, "model": local_name}
+
+    async def pull_model(self, ctx: _Model, model_name: str | None = None) -> None:
+        """Background task: download the checkpoint's exact file set.
+
+        Resolves ``repo:quant`` to the specific GGUF files (primary + any
+        mmproj/mtp sidecars) via :mod:`model_arkestra.hf_gguf` and fetches only
+        those into the HF cache. Runs in a worker thread; never blocks the
+        event loop.
+
+        ``model_name`` is the *model* name (not the checkpoint id) — required
+        for grouped checkpoints where ``ctx.name`` is the shared checkpoint id
+        and does not resolve via :meth:`get_model`.
+        """
+        model_name = model_name or ctx.name
         try:
             model_data = self.get_model(model_name) or {}
             raw = model_data.get("model", "")
@@ -777,23 +810,34 @@ class ModelArkestra:
             if not resolved.cache_path:
                 raise ValueError(f"No cacheable model ref: {raw}")
 
-            cache_dir = self._cache_dir_for_checkpoint(resolved.cache_path)
-            cache_dir.mkdir(parents=True, exist_ok=True)
+            from model_arkestra.hf_gguf import resolve_plan, download_plan, split_repo_tag
+            from huggingface_hub import HfApi
+
+            repo, _tag = split_repo_tag(resolved.ref)
+            if not repo:
+                raise ValueError(f"Cannot pull non-HF ref: {resolved.ref}")
 
             def log_progress(line: str) -> None:
                 ctx._append_log_line(f"[pull] {model_name}: {line}")
 
-            def progress_hook(event_type: str, evt: dict) -> None:
-                if event_type == "progress":
-                    ctx.download_pct = evt.get("pct")
-                    ctx.download_downloaded = evt.get("n", 0)
-                    ctx.download_speed_mbps = evt.get("speed", 0) / 1e6
+            def _do_download() -> list[str]:
+                files = HfApi().list_repo_files(repo)
+                plan = resolve_plan(resolved.ref, files)
+                total = len(plan.files)
 
-            pull_task = asyncio.to_thread(
-                download_hf_model, resolved.ref.split(":", 1)[0], cache_dir, log_progress,
-                progress_callback=progress_hook,
-            )
-            await pull_task
+                def _prog(filename: str, i: int) -> None:
+                    ctx._append_log_line(f"[pull] {model_name}: ({i}/{total}) {filename}")
+                    ctx.download_current = filename
+                    if total:
+                        ctx.download_pct = round(100.0 * (i - 1) / total, 1)
+
+                log_progress(f"fetching {total} file(s): "
+                             f"{', '.join(plan.files)}")
+                return download_plan(plan, cache_dir=str(self._cache_root()),
+                                     token=self._cm.get("default/hf-token", None),
+                                     progress_cb=_prog)
+
+            await asyncio.to_thread(_do_download)
 
             ctx.set_state("download_ok")
             self.log(f"[pull] model={model_name} complete")

@@ -115,6 +115,7 @@ class ArkestraAdmin:
         self._add_global_log_route()
         self._add_images_route()
         self._add_pull_route()
+        self._add_pull_status_route()
         self._add_pull_stop_route()
         self._add_api_models_route()
         self._add_api_clusters_route()
@@ -589,6 +590,11 @@ class ArkestraAdmin:
         @self._app.post("/admin/start/{model:path}")
         async def admin_start(model: str, body: Dict[str, Any] | None = None):
 
+            ctx = self.server._arkestra.model_obj(model)
+            # Already serving — idempotent no-op, don't 409.
+            if ctx is not None and ctx.state == RunnerState.RUNNING:
+                return {"ok": True, "model": model, "port": ctx.port, "already_running": True}
+
             if not self.server._arkestra.can_start(model):
                 raise HTTPException(status_code=409, detail="model not available")
 
@@ -777,45 +783,33 @@ class ArkestraAdmin:
     def _add_pull_route(self) -> None:
         @self._app.post("/admin/pull/{model:path}")
         async def admin_pull(model: str):
-            """Start pulling a model's checkpoint from HuggingFace."""
+            """Start pulling a model's checkpoint (non-blocking).
+
+            Spawns the download as a background task and returns immediately.
+            The CLI blocks by polling /admin/pull-status until it completes.
+            Never blocks the server event loop.
+            """
+            try:
+                result = await self.server._arkestra.pull(model)
+                return result
+            except Exception as exc:
+                raise HTTPException(status_code=503, detail=f"Pull failed: {exc}")
+
+    def _add_pull_status_route(self) -> None:
+        @self._app.get("/admin/pull-status/{model:path}")
+        async def admin_pull_status(model: str):
+            """Lightweight pull progress for the CLI poll loop (no HF calls)."""
             cfg = self._models_cfg
             if model not in cfg:
                 raise HTTPException(status_code=404, detail=f"Model '{model}' not in config")
-
             ctx = self.server._arkestra.model_obj(model)
-
-            # If already pulling, cancel and restart
-            if ctx and ctx.state == RunnerState.DOWNLOADING and ctx.download_task:
-                ctx.download_task.cancel()
-                try:
-                    await ctx.download_task
-                except asyncio.CancelledError:
-                    pass
-                ctx.download_task = None
-
-            # If model is running or stopping, reject
-            if ctx.state in (RunnerState.RUNNING, RunnerState.STOPPING):
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Cannot download: model is {ctx.state.name.lower()}"
-                )
-
-            # If already uncached, nothing to download
-            if ctx.state == RunnerState.UNCACHED:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Model '{model}' is already uncached (checkpoint present)"
-                )
-
-            # Transition to downloading and spawn the pull task
-            ctx.set_state("pull")
-
-            # Spawn pull task
-            task = asyncio.create_task(
-                self.server._arkestra.pull_model(ctx)
-            )
-            ctx.download_task = task
-            return {"ok": True, "model": model}
+            return {
+                "state": ctx.state.name.lower() if ctx else "unknown",
+                "pct": getattr(ctx, "download_pct", None),
+                "speed_mbps": getattr(ctx, "download_speed_mbps", None),
+                "current": getattr(ctx, "download_current", ""),
+                "error": getattr(ctx, "last_error", None),
+            }
 
     def _add_pull_stop_route(self) -> None:
         @self._app.post("/admin/cancel-pull/{model:path}")

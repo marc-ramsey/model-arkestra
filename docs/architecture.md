@@ -152,6 +152,12 @@ See [API Reference — ModelArkestra](../api/model-arkestra.md) for full method 
 
 For crash detection, shutdown sequencing, and teardown behavior, see [Lifecycle](../lifecycle.md).
 
+### Checkpoint Pulling
+
+`arkestra-admin pull <model>` (or `POST /admin/pull`) downloads a model's weights. The server never blocks: it spawns the download as a background task and returns at once; the CLI polls `GET /admin/pull-status/{model}` and renders progress until done.
+
+The download is driven by `model_arkestra/hf_gguf.py`, which ports llama.cpp's file-selection rules (`common/download.cpp`) to resolve a `repo:quant` ref to the *exact* GGUF file set the engine will load — primary model, optional `mmproj` (vision) and `mtp` (speculative) sidecars, plus split shards. Only those files are fetched into the standard HF cache layout that `llama-server -hf repo:quant` reads, so a pull never drags in an entire repository.
+
 ## Argument Passing and Resolution
 
 CLI arguments flow through a two-phase pipeline:

@@ -51,6 +51,7 @@ class _Model:
         self.download_pct: Optional[float] = None
         self.download_downloaded: Optional[int] = None
         self.download_speed_mbps: Optional[float] = None
+        self.download_current: str = ""
 
         # ── remote routing (remote models only) ───────────────
         self._remote_base_url: Optional[str] = None
