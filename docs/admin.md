@@ -700,6 +700,7 @@ arkestra-admin --url http://localhost:8080 --api-key SECRET <command>
 
 | Command | Description |
 |---|---|
+| `arkestra-admin status` | Show server status, hardware, cache, and config info |
 | `arkestra-admin models` | List all configured models with status, port, backend |
 | `arkestra-admin start <name>` | Start a model (supports `--port`, `--backend`, `--runner`, `key=value` params) |
 | `arkestra-admin restart <name>` | Restart a running/loading model (supports override params) |

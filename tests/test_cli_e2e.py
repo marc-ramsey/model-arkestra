@@ -35,12 +35,13 @@ SRC = str(Path(__file__).parent.parent / "src")
 
 
 def _run_cli(*args: str, env_extra: dict | None = None,
-             timeout: float = 30.0, stdin: str | None = None) -> subprocess.CompletedProcess:
+             timeout: float = 30.0, stdin: str | None = None,
+             module: str = "model_arkestra.cli") -> subprocess.CompletedProcess:
     env = os.environ.copy()
     env["PYTHONPATH"] = SRC
     if env_extra:
         env.update(env_extra)
-    cmd = [CLI, "-m", "model_arkestra.cli", *args]
+    cmd = [CLI, "-m", module, *args]
     return subprocess.run(cmd, capture_output=True, text=True,
                           timeout=timeout, env=env, input=stdin)
 
@@ -167,3 +168,54 @@ class TestCliInit:
         result = _run_cli("init", "--force", env_extra=env)
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert "existing" not in (tmp_path / "config.yaml").read_text()
+
+
+@pytest.mark.e2e
+class TestCliStatus:
+
+    @pytest.mark.parametrize("e2e_cli_server", COMBOS[:1], indirect=True)
+    def test_status_shows_banner(self, e2e_cli_server):
+        env = {"ARKESTRA_URL": f"http://127.0.0.1:{ADMIN_PORT}"}
+        result = _run_cli("status", env_extra=env, module="model_arkestra.admin_cli")
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        assert "ModelArkestra v" in result.stdout
+        assert "URL" in result.stdout
+        assert "Hardware" in result.stdout
+        assert "Cache" in result.stdout
+        assert "Config" in result.stdout
+        assert "Status" in result.stdout
+        assert "ok" in result.stdout
+
+
+@pytest.mark.e2e
+class TestCliClusters:
+
+    @pytest.mark.parametrize("e2e_cli_server", COMBOS[:1], indirect=True)
+    def test_clusters_lifecycle(self, e2e_cli_server):
+        env = {"ARKESTRA_URL": f"http://127.0.0.1:{ADMIN_PORT}"}
+
+        # Add a cluster
+        result = _run_cli("clusters", "add", "test-remote",
+                          "http://10.99.99.99:8080", env_extra=env,
+                          module="model_arkestra.admin_cli")
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        assert "added" in result.stdout
+
+        # List should show it
+        result = _run_cli("clusters", "list", env_extra=env,
+                          module="model_arkestra.admin_cli")
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        assert "test-remote" in result.stdout
+        assert "http://10.99.99.99:8080" in result.stdout
+
+        # Delete it
+        result = _run_cli("clusters", "delete", "test-remote", env_extra=env,
+                          module="model_arkestra.admin_cli")
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        assert "removed" in result.stdout
+
+        # List should no longer show it
+        result = _run_cli("clusters", "list", env_extra=env,
+                          module="model_arkestra.admin_cli")
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        assert "test-remote" not in result.stdout

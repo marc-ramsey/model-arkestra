@@ -13,6 +13,7 @@ import asyncio
 import json
 import os
 import sys
+from pathlib import Path
 from typing import Any, Dict, List
 
 from model_arkestra.conn import Conn, add_common_args, resolve_conn
@@ -98,6 +99,80 @@ def _print_json(data: Any) -> None:
 
 
 # ── Subcommand handlers ───────────────────────────────────────────────
+
+async def cmd_status(args: argparse.Namespace) -> None:
+    """Print server status similar to startup banner."""
+    import importlib.metadata
+    import platform
+    import re as _re
+
+    version = importlib.metadata.version("model-arkestra")
+    print(f"ModelArkestra v{version}")
+
+    # URL from resolved connection
+    url = args.conn.url.rstrip("/")
+    print(f"  URL       → {url}")
+    print(f"  API docs  → {url}/docs")
+
+    # Hardware (local detection, same as server startup)
+    try:
+        from model_arkestra.gpu_detect import detect_all
+        hw = detect_all()
+    except Exception:
+        hw = {}
+    primary = hw.get("primary_gpu")
+    if primary:
+        vendor_map = {"amd": "AMD", "nvidia": "NVIDIA", "intel": "Intel"}
+        vendor_name = vendor_map.get(primary["vendor"], "GPU")
+        raw = primary["name"]
+        brackets = _re.findall(r'\[([^\]]+)\]', raw)
+        skus = [s.strip() for b in brackets if "/ " in b for s in b.split(" / ")]
+        short = skus[-1] if skus else (brackets[-1] if brackets else raw.split(": ", 1)[-1].strip())
+        line = f"{vendor_name} {short} • {primary['backend']}"
+        gfx = hw.get("gfx_family")
+        if gfx:
+            line += f" ({gfx})"
+    else:
+        cpu_info = hw.get("cpu", {})
+        line = f"CPU ({cpu_info.get('arch', platform.machine())})"
+    print(f"  Hardware  → {line}")
+
+    # Cache path from config / env / default
+    from model_arkestra.common import default_cache_root, resolve_config_path
+    data = _load_config(args.config)
+    hf_cache = None
+    hc = (data.get("default-env") or {}).get("hf-hub-cache") or os.environ.get("HF_HUB_CACHE")
+    if hc:
+        hf_cache = str(Path(hc).expanduser())
+    if not hf_cache:
+        hf_cache = str(default_cache_root())
+    print(f"  Cache     → {hf_cache}")
+
+    # Config path
+    from model_arkestra.common import resolve_config_path as _rcp
+    config_path = _rcp(args.config)
+    print(f"  Config    → {config_path}")
+
+    # Live status from server /health
+    try:
+        async with ClientSession(timeout=ClientTimeout(total=5)) as session:
+            headers = {"Accept": "application/json"}
+            if args.conn.api_key:
+                headers["Authorization"] = f"Bearer {args.conn.api_key}"
+            async with session.get(args.conn.url_for("/health"), headers=headers) as resp:
+                health = await resp.json()
+        uptime = health.get("uptime_seconds", 0)
+        running = health.get("models_running", 0)
+        # Format uptime
+        if uptime < 60:
+            up_str = f"{uptime:.0f}s"
+        elif uptime < 3600:
+            up_str = f"{uptime / 60:.0f}m"
+        else:
+            up_str = f"{uptime / 3600:.1f}h"
+        print(f"  Status    → ok • up {up_str} • {running} model(s) running")
+    except Exception:
+        print("  Status    → unreachable")
 
 async def cmd_models(args: argparse.Namespace) -> None:
     data = await _request("GET", args.conn, "/admin/models", api_key=args.api_key)
@@ -477,6 +552,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub = parser.add_subparsers(dest="command", help="Available commands")
 
+    sub.add_parser("status", help="Show server status and environment info")
+
     # ── models ──
     sub.add_parser("models", help="List all configured models with status")
 
@@ -617,6 +694,7 @@ async def _dispatch(args: argparse.Namespace) -> None:
         await _cmd_clusters_dispatch(args)
     else:
         dispatch = {
+            "status": cmd_status,
             "models": cmd_models,
             "start": cmd_start,
             "stop": cmd_stop,
