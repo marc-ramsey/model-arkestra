@@ -108,6 +108,12 @@ class Registry:
     def clusters(self) -> Dict[str, Dict[str, Any]]:
         return self._clusters
 
+    def reload_clusters(self) -> None:
+        """Re-read cluster config from cm (after add/remove)."""
+        local_url = self._cm.get("default/url", "http://127.0.0.1:8080")
+        self._clusters.clear()
+        self._load_clusters(local_url)
+
     def parse_prefix(self, model_name: str) -> Tuple[str, str]:
         if "/" in model_name:
             return model_name.split("/", 1)

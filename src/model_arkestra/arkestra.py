@@ -268,6 +268,10 @@ class ModelArkestra:
     def local_cluster_key(self) -> str:
         return self._registry.local_cluster_key
 
+    def reload_clusters(self) -> None:
+        """Re-read cluster config from cm (after add/remove)."""
+        self._registry.reload_clusters()
+
     def _parse_cluster_prefix(self, model_name: str) -> Tuple[str, str]:
         """Split ``<cluster>/<model-id>``; no prefix → local cluster."""
         return self._registry.parse_prefix(model_name)

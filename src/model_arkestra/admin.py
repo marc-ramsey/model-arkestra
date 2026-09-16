@@ -186,7 +186,7 @@ class ArkestraAdmin:
         @self._app.get("/admin/clusters")
         async def admin_clusters():
             """Return managed cluster list with connectivity status."""
-            clusters = self.server._arkestra._clusters
+            clusters = self.server._arkestra.clusters
             result = []
             for name, cfg in clusters.items():
                 base_url = str(cfg.get("url", ""))
@@ -220,7 +220,7 @@ class ArkestraAdmin:
                 "admin-key": body.get("admin-key"),
             }
             cm.export(cm.config_path)
-            self.server._arkestra._load_clusters()
+            self.server._arkestra.reload_clusters()
             return {"ok": True, "cluster": name}
 
         @self._app.delete("/admin/clusters/{name:path}")
@@ -233,7 +233,7 @@ class ArkestraAdmin:
                 raise HTTPException(status_code=404, detail=f"Cluster '{name}' not configured")
             del clusters[name]
             cm.export(cm.config_path)
-            self.server._arkestra._load_clusters()
+            self.server._arkestra.reload_clusters()
             return {"ok": True, "cluster": name}
 
     def _add_root_route(self) -> None:
@@ -854,7 +854,9 @@ class ArkestraAdmin:
 
             data = []
             for model_name in self.server._arkestra.get_models():
-                model_cfg = self._models_cfg.get(model_name, {})
+                # Merged config (checkpoint + model) — raw models: entries may
+                # only carry ``checkpoint:`` with the ref living on the checkpoint.
+                model_cfg = self.server._arkestra.get_model(model_name) or {}
                 model_ref = model_cfg.get("model", "")
 
                 resolved = self._resolve_ref(model_ref)
@@ -881,7 +883,7 @@ class ArkestraAdmin:
         @self._app.get("/api/clusters")
         async def api_clusters():
             """Cluster list: name and url pairs."""
-            clusters = self.server._arkestra._clusters
+            clusters = self.server._arkestra.clusters
             result = []
             for name, cfg in clusters.items():
                 base_url = str(cfg.get("url", ""))

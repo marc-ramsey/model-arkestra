@@ -383,7 +383,7 @@ async def cmd_clusters(args: argparse.Namespace) -> None:
 
 
 async def cmd_cluster_add(args: argparse.Namespace) -> None:
-    body = {"url": args.url}
+    body = {"url": args.cluster_url}
     if getattr(args, "admin_key", None):
         body["admin-key"] = args.admin_key
     result = await _request("POST", args.conn, f"/admin/clusters/{args.name}", api_key=args.api_key, json_body=body)
@@ -432,21 +432,6 @@ async def cmd_images_list(args: argparse.Namespace) -> None:
         avail = "yes" if img.get("available") else "no"
         image = img.get("image") or "-"
         print(f"{img['backend_id']:<20} {img.get('runner', '-'):<12} {image:<45} {avail}")
-
-
-async def cmd_images_build(args: argparse.Namespace) -> None:
-    body = {"backend": args.backend}
-    if getattr(args, "tag", None):
-        body["tag"] = args.tag
-    result = await _request("POST", args.conn, "/admin/images/build", api_key=args.api_key, json_body=body)
-    if getattr(args, "json", False):
-        _print_json(result)
-    elif result.get("skipped"):
-        print(f"Skipped: {result.get('reason')}")
-    else:
-        ok = result.get("ok", True)
-        status = "built" if ok else "failed"
-        print(f"Image '{result.get('image')}' for backend '{args.backend}' {status}")
 
 
 async def cmd_images_rm(args: argparse.Namespace) -> None:
@@ -568,7 +553,7 @@ def build_parser() -> argparse.ArgumentParser:
     clsubs.add_parser("list", help="List all clusters")
     cla = clsubs.add_parser("add", help="Add a remote cluster")
     cla.add_argument("name")
-    cla.add_argument("--url", required=True, help="Cluster public URL (scheme://host:port/prefix)")
+    cla.add_argument("cluster_url", metavar="URL", help="Cluster public URL (scheme://host:port/prefix)")
     cla.add_argument("--admin-key", default=None, help="Cluster's admin key")
     cld = clsubs.add_parser("delete", help="Remove a remote cluster")
     cld.add_argument("name")
@@ -578,10 +563,6 @@ def build_parser() -> argparse.ArgumentParser:
     ips = ip.add_subparsers(dest="image_cmd")
 
     ips.add_parser("list", help="Show image availability per backend")
-
-    pb = ips.add_parser("build", help="Build an OCI image for a backend")
-    pb.add_argument("backend")
-    pb.add_argument("--tag", default=None, help="Override image tag")
 
     pr = ips.add_parser("rm", help="Remove an OCI image")
     pr.add_argument("tag", help="Full image tag (e.g. docker.io/kyuz0/amd-strix-halo-toolboxes:rocm-7.14)")
@@ -678,12 +659,11 @@ async def _cmd_images_dispatch(args: argparse.Namespace) -> None:
     """Route images sub-commands to their handlers."""
     handlers = {
         "list": cmd_images_list,
-        "build": cmd_images_build,
         "rm": cmd_images_rm,
     }
     cmd = getattr(args, "image_cmd", None)
     if not cmd:
-        print("Error: images requires a sub-command (list|build|rm)", file=sys.stderr)
+        print("Error: images requires a sub-command (list|rm)", file=sys.stderr)
         sys.exit(1)
     handler = handlers.get(cmd)
     if not handler:

@@ -711,12 +711,11 @@ arkestra-admin --url http://localhost:8080 --api-key SECRET <command>
 | `arkestra-admin config create --model PATH` | Add a new model to config |
 | `arkestra-admin config rm <name>` | Remove a model from config |
 | `arkestra-admin clusters list` | List managed clusters with health status (API only) |
-| `arkestra-admin clusters add <name> --url URL` | Add a managed cluster (API only) |
-| `arkestra-admin clusters rm <name>` | Remove a managed cluster (API only) |
+| `arkestra-admin clusters add <name> <URL>` | Add a managed cluster (API only) |
+| `arkestra-admin clusters delete <name>` | Remove a managed cluster (API only) |
 | `arkestra-admin logs <name\|all> [--lines 100]` | Tail model or global server logs |
 | `arkestra-admin eject <name>` | Stop model and delete its cached files |
 | `arkestra-admin images list` | Show OCI image availability per backend |
-| `arkestra-admin images build <backend> [--tag TAG]` | Build an OCI container image |
 | `arkestra-admin images rm <image_tag>` | Remove a container image |
 | `arkestra-admin pull <name>` | Pull model checkpoint (blocks with live progress until complete) |
 | `arkestra-admin cancel-pull <name>` | Cancel an in-progress pull |
@@ -734,8 +733,7 @@ arkestra-admin start qwen3-4b --backend vulkan-radv temp=0.7 top-k=20
 # Tail logs with custom count
 arkestra-admin logs gemma-4-e2b --lines 50
 
-# Build and check OCI images
-arkestra-admin images build rocm-container --tag rocm-7.14
+# Check and remove OCI images
 arkestra-admin images list
 
 # Full server shutdown on remote host
