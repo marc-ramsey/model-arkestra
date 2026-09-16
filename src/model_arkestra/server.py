@@ -336,7 +336,7 @@ class ArkestraServer:
             if ctx is not None and ctx.state.name == 'UNCACHED':
                 raise HTTPException(
                     status_code=503,
-                    detail=f"Model '{model_name}' has no cached weights.",
+                    detail=f"Model '{model_name}' is not currently available.",
                 )
             if ctx is None or ctx.state.name not in ('RUNNING', 'LOADING'):
                 try:
