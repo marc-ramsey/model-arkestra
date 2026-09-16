@@ -233,7 +233,6 @@ class OnnxRunner(BaseRunner):
             if resolved.cache_path:
                 cache_root = default_cache_root()
                 ctx._cache_dir = cache_root / f"models--{resolved.cache_path}"
-                os.makedirs(ctx._cache_dir, exist_ok=True)
 
             self._models[model_name] = ctx
             if self.arkestra is not None and hasattr(self.arkestra, "_registry"):

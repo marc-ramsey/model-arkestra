@@ -44,16 +44,14 @@ models:
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
     """Server with a checkpoint-style config and an isolated HF cache."""
-    monkeypatch.delenv("HF_HUB_CACHE", raising=False)
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "hub"))
     cfg = tmp_path / "config.yaml"
     cfg.write_text(CHECKPOINT_CFG)
 
+    # Create cache files BEFORE server construction so is_cached sees them
+    _make_cached(tmp_path / "hub")
+
     server = ArkestraServer(str(cfg), port=18301, ready_timeout=5)
-    # Point the cache root at an isolated temp dir (never touches real cache)
-    server._arkestra._cm.data["default-env"] = {
-        "hf-hub-cache": str(tmp_path / "hub")
-    }
-    server._arkestra._env = None  # force rebuild on next resolve_config
     return TestClient(server.get_app())
 
 
@@ -67,8 +65,6 @@ def _make_cached(hub: Path) -> None:
 class TestApiModels:
     def test_cached_model_listed_with_checkpoint_config(self, client, tmp_path):
         """Cached checkpoint-style model appears with name, ref, size."""
-        _make_cached(tmp_path / "hub")
-
         r = client.get("/api/models")
         assert r.status_code == 200
         models = r.json()["models"]
@@ -79,8 +75,16 @@ class TestApiModels:
         # Ref comes from the checkpoint — proves merged config was used
         assert entry["model"] == "unsloth/gemma-4-E2B-it-GGUF:Q4_K_M"
 
-    def test_uncached_model_absent(self, client, tmp_path):
-        """No cache dir → model not listed."""
-        r = client.get("/api/models")
+    def test_uncached_model_absent(self, tmp_path, monkeypatch):
+        """No cache files → model not listed."""
+        monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "empty-hub"))
+        cfg = tmp_path / "config2.yaml"
+        cfg.write_text(CHECKPOINT_CFG)
+
+        # Do NOT create cache files — server sees UNCACHED
+        server = ArkestraServer(str(cfg), port=18302, ready_timeout=5)
+        c = TestClient(server.get_app())
+
+        r = c.get("/api/models")
         assert r.status_code == 200
         assert r.json()["models"] == []

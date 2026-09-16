@@ -305,7 +305,7 @@ class ArkestraAdmin:
         async def admin_models():
             try:
                 cfg = self._models_cfg
-                contexts_by_name = {ctx.name: ctx for ctx in self.server._arkestra.models.values()}
+                contexts_by_name = self.server._arkestra.models
 
                 data = []
                 for model_name in self.server._arkestra.get_models():
@@ -497,7 +497,7 @@ class ArkestraAdmin:
                     status_code=404, detail=f"Model '{model}' not in config"
                 )
             # Also resolve current runtime status if the model is loaded
-            contexts = {ctx.name: ctx for ctx in self.server._arkestra.models.values()}
+            contexts = self.server._arkestra.models
             ctx = contexts.get(model)
             status = model_status_for_ctx(ctx)
 
@@ -848,11 +848,8 @@ class ArkestraAdmin:
         @self._app.get("/api/models")
         async def api_models():
             """Cached models only: name, model-name, size (GB)."""
-            hf_cache = self.server._arkestra.resolve_config("hf_hub_cache")
-            if not hf_cache:
-                hf_cache = str(default_cache_root())
-
             data = []
+            contexts = self.server._arkestra.models
             for model_name in self.server._arkestra.get_models():
                 # Merged config (checkpoint + model) — raw models: entries may
                 # only carry ``checkpoint:`` with the ref living on the checkpoint.
@@ -861,12 +858,9 @@ class ArkestraAdmin:
 
                 resolved = self._resolve_ref(model_ref)
 
-                # Only include cached models
-                cache_path = None
-                if resolved.cache_path:
-                    cache_path = Path(hf_cache).expanduser() / f"models--{resolved.cache_path}"
-                is_cached = cache_path.exists() if cache_path else False
-                if not is_cached:
+                # Only include models whose weights are cached (not UNCACHED)
+                ctx = contexts.get(model_name)
+                if ctx is not None and ctx.state == RunnerState.UNCACHED:
                     continue
 
                 info = await asyncio.to_thread(hf_model_info, resolved.ref) or {}

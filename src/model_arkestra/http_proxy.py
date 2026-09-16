@@ -82,8 +82,8 @@ def model_status(state: RunnerState, error_message: str | None = None) -> Dict[s
         RunnerState.LOADING:  {"value": "loading"},
         RunnerState.RUNNING:  {"value": "loaded"},
         RunnerState.STOPPED:  {"value": "stopped"},
-        RunnerState.STOPPING: {"value": "stopped"},
-        RunnerState.UNCACHED: {"value": "unloaded"},
+        RunnerState.STOPPING: {"value": "stopping"},
+        RunnerState.UNCACHED: {"value": "uncached"},
         RunnerState.DOWNLOADING: {"value": "downloading"},
     }
     entry = state_map.get(state, {})
@@ -95,7 +95,7 @@ def model_status(state: RunnerState, error_message: str | None = None) -> Dict[s
 def model_status_for_ctx(ctx) -> Dict[str, str]:
     """Helper for call sites that hold a _Model or None."""
     if ctx is None:
-        return {"value": "unloaded"}
+        return {"value": "uncached"}
     return model_status(ctx.state, ctx.last_error)
 
 

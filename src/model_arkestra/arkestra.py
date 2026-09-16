@@ -231,12 +231,13 @@ class ModelArkestra:
             is_cached = False
             if resolved.cache_path:
                 cache_path = Path(hf_cache).expanduser() / f"models--{resolved.cache_path}"
-                # A usable cache has at least one GGUF blob or snapshot
+                # A usable cache has at least one model blob (GGUF or ONNX)
                 snapshots_dir = cache_path / "snapshots"
                 blobs_dir = cache_path / "blobs"
-                has_snapshots = any(snapshots_dir.glob("*/*.gguf")) if snapshots_dir.exists() else False
-                has_blobs = any(blobs_dir.glob("*.gguf")) if blobs_dir.exists() else False
-                is_cached = has_snapshots or has_blobs
+                if snapshots_dir.exists():
+                    is_cached = any(snapshots_dir.glob("*/*.gguf")) or any(snapshots_dir.glob("*/*.onnx"))
+                if not is_cached and blobs_dir.exists():
+                    is_cached = any(blobs_dir.glob("*.gguf")) or any(blobs_dir.glob("*.onnx"))
 
             # Create the shared context — named by checkpoint id (or model name
             # for standalone). Port assigned at first start only.
@@ -249,7 +250,6 @@ class ModelArkestra:
             if resolved.cache_path:
                 cache_root = default_cache_root()
                 ctx._cache_dir = cache_root / f"models--{resolved.cache_path}"
-                os.makedirs(ctx._cache_dir, exist_ok=True)
 
             # Register once (single owner) and alias under every model name that
             # shares this checkpoint, so existing per-name lookups keep working.
