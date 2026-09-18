@@ -35,6 +35,31 @@ class TestSSEParser:
         result = _SSEParser.parse_line(f"data: {json.dumps(chunk)}")
         assert result is None
 
+    def test_reasoning_content_event(self):
+        """llama.cpp reasoning_content deltas surface as a distinct event."""
+        chunk = {"choices": [{"delta": {"reasoning_content": "Thinking..."}}]}
+        result = _SSEParser.parse_line(f"data: {json.dumps(chunk)}")
+        assert result == {"reasoning": "Thinking..."}
+
+    def test_tool_call_delta_event(self):
+        """OpenAI-style tool-call deltas surface as a distinct event."""
+        tc = [{"index": 0, "id": "call_1", "type": "function",
+              "function": {"name": "get_weather", "arguments": "{\"city\":"}}]
+        chunk = {"choices": [{"delta": {"tool_calls": tc}}]}
+        result = _SSEParser.parse_line(f"data: {json.dumps(chunk)}")
+        assert result == {"tool_call": tc}
+
+    def test_finish_reason_event(self):
+        """Final chunk with only a finish reason surfaces it."""
+        chunk = {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}
+        result = _SSEParser.parse_line(f"data: {json.dumps(chunk)}")
+        assert result == {"finish_reason": "tool_calls"}
+
+    def test_content_wins_over_tool_call(self):
+        chunk = {"choices": [{"delta": {"content": "Hi", "tool_calls": [{"index": 0}]}}]}
+        result = _SSEParser.parse_line(f"data: {json.dumps(chunk)}")
+        assert result == {"token": "Hi"}
+
     def test_usage_event(self):
         chunk = {"usage": {"prompt_tokens": 5, "completion_tokens": 10}}
         result = _SSEParser.parse_line(f"data: {json.dumps(chunk)}")
@@ -149,6 +174,26 @@ class TestParseCompletion:
         data = {"choices": [{"message": {"content": "Final answer", "reasoning_content": "Thinking..."}}]}
         result = parse_completion(data)
         assert result["content"] == "Final answer"
+
+    def test_tool_calls_extracted(self):
+        data = {
+            "choices": [{
+                "message": {"role": "assistant", "content": None,
+                            "tool_calls": [{"type": "function",
+                                            "function": {"name": "f", "arguments": "{}"}}]},
+                "finish_reason": "tool_calls",
+            }],
+        }
+        result = parse_completion(data)
+        assert result["content"] == ""
+        assert result["tool_calls"][0]["function"]["name"] == "f"
+        assert result["finish_reason"] == "tool_calls"
+
+    def test_finish_reason_defaults_to_stop(self):
+        data = {"choices": [{"message": {"content": "hi"}, "finish_reason": None}]}
+        result = parse_completion(data)
+        assert result["finish_reason"] == "stop"
+        assert result["tool_calls"] is None
 
 
 # ═══════════════════════════════════════════════════════════════

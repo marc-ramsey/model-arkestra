@@ -75,6 +75,16 @@ class FakeHandler:
     async def handle_completion(self, req: aiohttp_web.Request) -> aiohttp_web.Response:
         body = await req.json()
         self.calls.append({"path": "/v1/chat/completions", "body": body})
+        if body.get("tools"):
+            # Mimic llama-server: tools present → tool-call response
+            return aiohttp_web.json_response({
+                "choices": [{"message": {"role": "assistant", "content": None,
+                                          "tool_calls": [{"type": "function",
+                                                          "function": {"name": "get_weather",
+                                                                        "arguments": "{\"city\": \"Paris\"}"}}]},
+                              "finish_reason": "tool_calls"}],
+                "usage": {"model": "test", "prompt_tokens": 3, "completion_tokens": 7, "total_tokens": 10}
+            })
         return aiohttp_web.json_response({
             "choices": [{"message": {"content": "hello from test"}}],
             "usage": {"model": "test", "prompt_tokens": 3, "completion_tokens": 7, "total_tokens": 10}
@@ -85,9 +95,20 @@ class FakeHandler:
         self.calls.append({"path": "/v1/chat/completions", "body": body})
         resp = aiohttp_web.StreamResponse(status=200, reason="OK")
         await resp.prepare(req)
-        for token in ["Hello", ", ", "world"]:
-            chunk = {"choices": [{"delta": {"content": token}}]}
-            await resp.write(f"data: {json.dumps(chunk)}\n\n".encode())
+        if body.get("tools"):
+            # Mimic llama-server tool-call stream: argument deltas then a
+            # finish-reason-only final chunk (no usage).
+            tc_first = {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_1",
+                                                                "type": "function",
+                                                                "function": {"name": "get_weather", "arguments": "{\"city\":"}}]}}]}
+            tc_rest = {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": "Paris\""}}]}}]}
+            final = {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}
+            for chunk in (tc_first, tc_rest, final):
+                await resp.write(f"data: {json.dumps(chunk)}\n\n".encode())
+        else:
+            for token in ["Hello", ", ", "world"]:
+                chunk = {"choices": [{"delta": {"content": token}}]}
+                await resp.write(f"data: {json.dumps(chunk)}\n\n".encode())
         await resp.write(b"data: [DONE]\n\n")
         return resp
 
@@ -125,6 +146,18 @@ class TestAinvoke:
         prov = _provider(server[0])
         assert prov._base.startswith("http://127.0.0.1:")
 
+    async def test_tools_forwarded_and_calls_extracted(self, server):
+        """tools/tool_choice reach llama-server; tool_calls + finish_reason come back."""
+        runner, handler, app, _server = server
+        tools = [{"type": "function", "function": {"name": "get_weather",
+                                                   "parameters": {"type": "object"}}}]
+        res = await _provider(runner).invoke_full("hi", tools=tools, tool_choice="auto")
+        sent = handler.calls[-1]["body"]
+        assert sent["tools"] == tools
+        assert sent["tool_choice"] == "auto"
+        assert res["tool_calls"][0]["function"]["name"] == "get_weather"
+        assert res["finish_reason"] == "tool_calls"
+
 
 # ── Tests: async_stream ───────────────────────────────────────────────────
 
@@ -149,6 +182,20 @@ class TestAsyncStream:
         usage_chunks = [c for c in chunks if "usage" in c]
         assert len(usage_chunks) == 1
         assert "tokens_per_second" in usage_chunks[0]["usage"]
+
+    async def test_sse_tool_call_events(self, stream_server):
+        """Tool-call deltas and the finish reason surface as typed events."""
+        runner, handler, app, _server = stream_server
+        tools = [{"type": "function", "function": {"name": "get_weather"}}]
+        chunks = []
+        async for chunk in _provider(runner).stream({"prompt": "hi", "tools": tools}):
+            chunks.append(chunk)
+
+        tool_chunks = [c["tool_call"] for c in chunks if "tool_call" in c]
+        assert len(tool_chunks) == 2
+        assert tool_chunks[0][0]["function"]["name"] == "get_weather"
+        finish = [c for c in chunks if "finish_reason" in c]
+        assert finish and finish[0]["finish_reason"] == "tool_calls"
 
 
 # ── Tests: request (generic POST) ─────────────────────────────────────────

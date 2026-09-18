@@ -24,6 +24,8 @@ LLAMA_FIELDS = frozenset({
     "frequency_penalty", "presence_penalty", "stop", "seed",
     "mirostat", "mirostat_tau", "mirostat_eta", "grammar",
     "max_tokens", "min_tokens", "logit_bias",
+    # OpenAI-style function calling — forwarded verbatim to llama-server.
+    "tools", "tool_choice",
 })
 
 _RETRIES = 12
@@ -113,6 +115,12 @@ class LlamaProvider(Provider):
                         if "token" in event:
                             tokens_so_far.append(event["token"])
                             yield {"token": event["token"]}
+                        elif "reasoning" in event:
+                            yield {"reasoning": event["reasoning"]}
+                        elif "tool_call" in event:
+                            yield {"tool_call": event["tool_call"]}
+                        elif "finish_reason" in event:
+                            yield {"finish_reason": event["finish_reason"]}
                         elif "usage" in event:
                             usage_info.update(event["usage"])
                         else:

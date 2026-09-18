@@ -106,6 +106,8 @@ def _build_app(mock_arkestra, aliases=None):
                     "frequency_penalty": req.frequency_penalty,
                     "presence_penalty": req.presence_penalty,
                     "stop": req.stop,
+                    "tools": req.tools,
+                    "tool_choice": req.tool_choice,
                 }.items() if v is not None},
             )
 
@@ -358,6 +360,50 @@ class TestChatCompletionsNonStreaming:
         })
         assert resp.status_code == 200
 
+    def test_tools_forwarded_to_backend(self, mock_arkestra):
+        """tools/tool_choice are accepted and forwarded to the backend."""
+        client, _ = _build_app(mock_arkestra)
+        tools = [{"type": "function", "function": {"name": "get_weather",
+                                                   "parameters": {"type": "object"}}}]
+        resp = client.post("/v1/chat/completions", json={
+            "model": "qwen3-4b",
+            "messages": [{"role": "user", "content": "weather in Paris?"}],
+            "tools": tools,
+            "tool_choice": "auto",
+        })
+        assert resp.status_code == 200
+        call_kwargs = mock_arkestra.ainvoke.call_args.kwargs
+        assert call_kwargs["tools"] == tools
+        assert call_kwargs["tool_choice"] == "auto"
+
+    def test_complete_chat_tool_calls(self, mock_arkestra):
+        """Real ArkestraServer._complete_chat returns tool_calls + finish_reason."""
+        import asyncio
+        from model_arkestra.server import ArkestraServer, ChatCompletionRequest, Message
+
+        proxy = _make_proxy(mock_arkestra)
+
+        async def fake_ainvoke_full(model_name, prompt="", **kwargs):
+            return {
+                "content": "",
+                "tool_calls": [{"type": "function", "id": "call_1",
+                                "function": {"name": "get_weather", "arguments": "{}"}}],
+                "finish_reason": "tool_calls",
+                "usage": {"prompt_tokens": 5, "completion_tokens": 10},
+            }
+        mock_arkestra.ainvoke_full = fake_ainvoke_full
+
+        req = ChatCompletionRequest(
+            model="qwen3-4b",
+            messages=[Message(role="user", content="weather in Paris?")],
+            tools=[{"type": "function"}],
+        )
+        resp = asyncio.get_event_loop().run_until_complete(proxy._complete_chat("qwen3-4b", req))
+        body = json.loads(resp.body)
+        choice = body["choices"][0]
+        assert choice["finish_reason"] == "tool_calls"
+        assert choice["message"]["tool_calls"][0]["function"]["name"] == "get_weather"
+
 
 # ═══════════════════════════════════════════════════════════════
 # POST /v1/chat/completions — streaming
@@ -426,6 +472,49 @@ class TestChatCompletionsStreaming:
             "stream": True,
         })
         assert resp.status_code == 200
+
+    def test_streaming_tool_call_deltas(self, mock_arkestra):
+        """tool_call events become tool_calls deltas in the SSE stream."""
+        client, _ = _build_app(mock_arkestra)
+
+        async def tool_stream():
+            yield {"tool_call": [{"index": 0, "id": "call_1", "type": "function",
+                                  "function": {"name": "get_weather", "arguments": "{\"city\":"}}]}
+            yield {"tool_call": [{"index": 0, "function": {"arguments": "Paris\"}"}}]}
+            yield {"finish_reason": "tool_calls"}
+
+        mock_arkestra.astream = lambda model_name, payload: tool_stream()
+
+        resp = client.post("/v1/chat/completions", json={
+            "model": "qwen3-4b",
+            "messages": [{"role": "user", "content": "weather in Paris?"}],
+            "tools": [{"type": "function"}],
+            "stream": True,
+        })
+        assert resp.status_code == 200
+
+        lines = [l for l in resp.text.split("\n") if l.strip()]
+        data_lines = [json.loads(l.split(": ", 1)[1]) for l in lines
+                      if l.startswith("data: ") and "choices" in l]
+        # Two tool-call delta chunks + one final chunk with the finish reason
+        assert len(data_lines) == 3
+        first_delta = data_lines[0]["choices"][0]["delta"]
+        assert first_delta["tool_calls"][0]["function"]["name"] == "get_weather"
+        last_choice = data_lines[-1]["choices"][0]
+        assert last_choice["finish_reason"] == "tool_calls"
+
+    def test_streaming_finish_reason_from_usage_event(self, mock_arkestra):
+        """When the stream ends with a usage event, finish_reason is 'stop'."""
+        client, _ = _build_app(mock_arkestra)
+        resp = client.post("/v1/chat/completions", json={
+            "model": "qwen3-4b",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "stream": True,
+        })
+        lines = [l for l in resp.text.split("\n") if l.strip()]
+        data_lines = [json.loads(l.split(": ", 1)[1]) for l in lines
+                      if l.startswith("data: ") and "choices" in l]
+        assert data_lines[-1]["choices"][0]["finish_reason"] == "stop"
 
 
 # ═══════════════════════════════════════════════════════════════

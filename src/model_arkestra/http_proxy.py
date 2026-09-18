@@ -49,9 +49,22 @@ class _SSEParser:
         content = delta.get("content")
         if content:
             return {"token": content}
+        # llama.cpp emits thinking as a non-standard reasoning_content delta;
+        # surface it so web UIs can render a native reasoning block.
+        reasoning = delta.get("reasoning_content")
+        if reasoning:
+            return {"reasoning": reasoning}
+        # OpenAI-style tool-call deltas (streaming function calling).
+        tool_calls = delta.get("tool_calls")
+        if tool_calls:
+            return {"tool_call": tool_calls}
         usage = chunk.get("usage")
         if usage:
             return {"usage": usage}
+        # Final chunk: no delta content, just the finish reason.
+        finish_reason = choices[0].get("finish_reason") if choices else None
+        if finish_reason:
+            return {"finish_reason": finish_reason}
         return None
 
 
@@ -100,12 +113,15 @@ def model_status_for_ctx(ctx) -> Dict[str, str]:
 
 
 def parse_completion(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract {content, usage} from an OpenAI non-streaming response dict."""
+    """Extract {content, tool_calls, finish_reason, usage} from an OpenAI
+    non-streaming response dict."""
     choices = data.get("choices", [])
     msg = choices[0].get("message", {}) if choices else {}
     content = _extract_content(msg) or ""
     return {
         "content": content,
+        "tool_calls": msg.get("tool_calls"),
+        "finish_reason": (choices[0].get("finish_reason") if choices else None) or "stop",
         "usage": data.get("usage", {
             "model": "",
             "prompt_tokens": 0,

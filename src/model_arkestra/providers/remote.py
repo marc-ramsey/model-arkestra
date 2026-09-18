@@ -90,6 +90,12 @@ class RemoteProvider(Provider):
                 async for event in sse_events(resp.content):
                     if "token" in event:
                         yield {"token": event["token"]}
+                    elif "reasoning" in event:
+                        yield {"reasoning": event["reasoning"]}
+                    elif "tool_call" in event:
+                        yield {"tool_call": event["tool_call"]}
+                    elif "finish_reason" in event:
+                        yield {"finish_reason": event["finish_reason"]}
                     elif "usage" in event:
                         yield {"usage": event["usage"]}
 

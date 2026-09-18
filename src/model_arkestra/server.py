@@ -73,11 +73,16 @@ class ChatCompletionRequest(BaseModel):
     presence_penalty: Optional[float] = None
     stop: Optional[List[str]] = None
     stream: bool = False
+    # OpenAI-style function calling — forwarded verbatim to the backend.
+    tools: Optional[List[Any]] = None
+    tool_choice: Optional[Any] = None
 
 
 class ChoiceDelta(BaseModel):
     role: Optional[str] = None
     content: Optional[str] = None
+    reasoning_content: Optional[str] = None
+    tool_calls: Optional[List[Any]] = None
 
 
 class UsageInfo(BaseModel):
@@ -113,6 +118,10 @@ class ChatCompletionStreamResponse(BaseModel):
     created: int = Field(default_factory=lambda: int(time.time()))
     model: str
     choices: List[ChatCompletionStreamChoice]
+
+    def model_dump(self, **kwargs: Any) -> Dict[str, Any]:
+        # OpenAI streams omit null delta fields; keep chunks minimal.
+        return super().model_dump(exclude_none=True, **kwargs)
 
 
 class ModelInfo(BaseModel):
@@ -249,6 +258,8 @@ class ArkestraServer:
             "frequency_penalty": req.frequency_penalty,
             "presence_penalty": req.presence_penalty,
             "stop": req.stop,
+            "tools": req.tools,
+            "tool_choice": req.tool_choice,
         }.items() if v is not None}
 
     async def _run_with_autostart(self, model_name: str, fn, *args: Any, **kwargs: Any) -> Any:
@@ -642,6 +653,8 @@ class ArkestraServer:
             raise HTTPException(status_code=503, detail=f"Model error: {e}")
 
         content = res.get("content", "")
+        tool_calls = res.get("tool_calls")
+        finish_reason = res.get("finish_reason") or ("tool_calls" if tool_calls else "stop")
         usage = res.get("usage") or {}
         completion_tokens = usage.get("completion_tokens") or max(1, len(content.split()) // 4)
         prompt_tokens = usage.get("prompt_tokens") or max(
@@ -656,8 +669,8 @@ class ArkestraServer:
                 model=model_name,
                 choices=[ChatCompletionResponseChoice(
                     index=0,
-                    message=ChoiceDelta(role="assistant", content=content),
-                    finish_reason="stop",
+                    message=ChoiceDelta(role="assistant", content=content, tool_calls=tool_calls),
+                    finish_reason=finish_reason,
                 )],
                 usage=UsageInfo(
                     prompt_tokens=prompt_tokens,
@@ -677,6 +690,7 @@ class ArkestraServer:
         msg_count = len(req.messages)
         tokens_seen = 0
         first_chunk_sent = False
+        finish_reason = "stop"  # real reason from backend, or default
 
         try:
             async for event in self._arkestra.astream(
@@ -701,13 +715,39 @@ class ArkestraServer:
                     )
                     yield _sse_format(chunk.model_dump())
 
+                elif "reasoning" in event:
+                    # Thinking tokens — forwarded as reasoning_content so web
+                    # UIs (e.g. Open WebUI) can show a native reasoning block.
+                    chunk = ChatCompletionStreamResponse(
+                        model=model_name,
+                        choices=[ChatCompletionStreamChoice(
+                            index=0,
+                            delta=ChoiceDelta(reasoning_content=event["reasoning"]),
+                        )],
+                    )
+                    yield _sse_format(chunk.model_dump())
+
+                elif "tool_call" in event:
+                    # Streaming function-calling deltas — forwarded verbatim.
+                    chunk = ChatCompletionStreamResponse(
+                        model=model_name,
+                        choices=[ChatCompletionStreamChoice(
+                            index=0,
+                            delta=ChoiceDelta(tool_calls=event["tool_call"]),
+                        )],
+                    )
+                    yield _sse_format(chunk.model_dump())
+
+                elif "finish_reason" in event:
+                    finish_reason = event["finish_reason"]
+
                 elif "usage" in event:
                     chunk = ChatCompletionStreamResponse(
                         model=model_name,
                         choices=[ChatCompletionStreamChoice(
                             index=0,
                             delta=ChoiceDelta(),
-                            finish_reason="stop",
+                            finish_reason=finish_reason,
                         )],
                     )
                     yield _sse_format(chunk.model_dump())
@@ -728,13 +768,15 @@ class ArkestraServer:
         if not first_chunk_sent:
             latency_ms = round((time.monotonic() - t0) * 1000)
             self._arkestra.log(f"[action=stream_end model={model_name} duration_ms={latency_ms} tokens={tokens_seen}] status=no_tokens")
-            # No tokens produced — send an empty final chunk
+            # No tokens produced — send an empty final chunk. Covers streams
+            # that end on a finish_reason event with no usage (e.g. llama.cpp
+            # tool-call responses).
             chunk = ChatCompletionStreamResponse(
                 model=model_name,
                 choices=[ChatCompletionStreamChoice(
                     index=0,
                     delta=ChoiceDelta(),
-                    finish_reason="stop",
+                    finish_reason=finish_reason,
                 )],
             )
             yield _sse_format(chunk.model_dump())
