@@ -37,6 +37,7 @@ _TRANSITIONS: dict[str, dict[RunnerState, RunnerState]] = {
         RunnerState.ERROR: RunnerState.LOADING,
         RunnerState.RUNNING: RunnerState.LOADING,   # crash-restart
         RunnerState.STOPPING: RunnerState.LOADING,  # restart during stop race
+        RunnerState.LOADING: RunnerState.LOADING,   # idempotent — request during crash-restart window
     },
     "pull": {
         RunnerState.UNCACHED: RunnerState.DOWNLOADING,
