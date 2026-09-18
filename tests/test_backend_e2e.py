@@ -553,7 +553,7 @@ class TestPullAndEject:
         r = client.get(f"{base_url}/admin/models", timeout=10)
         for m in r.json()["models"]:
             if m["name"] == eject_model_id:
-                assert m.get("status", {}).get("value") == "unloaded", \
+                assert m.get("status", {}).get("value") == "uncached", \
                     f"Ejected model in unexpected state: {m['status']}"
 
         # Inference must fail — no weights on disk after eject

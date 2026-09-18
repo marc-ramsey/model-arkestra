@@ -94,7 +94,7 @@ class TestContainerStartAndDetectExit:
         port = 18000
 
         ctx = _Model("alpine-sleeper", port)
-        runner._models["alpine-sleeper"] = ctx
+        runner._ctx = ctx
         ctx._state = RunnerState.RUNNING
 
         proc = await asyncio.create_subprocess_shell(
@@ -133,7 +133,7 @@ class TestWatchContainerDetectsExit:
         name = f"alpine-watcher-{uuid.uuid4().hex[:8]}"
 
         ctx = _Model("alpine-exit", port)
-        runner._models["alpine-exit"] = ctx
+        runner._ctx = ctx
         ctx._state = RunnerState.RUNNING
 
         proc = await asyncio.create_subprocess_shell(
@@ -178,7 +178,7 @@ class TestStopPreventsRestart:
         name = f"alpine-stop-{uuid.uuid4().hex[:8]}"
 
         ctx = _Model("alpine-stop-test", port)
-        runner._models["alpine-stop-test"] = ctx
+        runner._ctx = ctx
         ctx._state = RunnerState.RUNNING
 
         proc = await asyncio.create_subprocess_shell(
@@ -266,7 +266,7 @@ class TestFullLifecycle:
             async with runner as r:
                 await r.start("test-model", port=port)
 
-                ctx = next(iter(r._models.values()))
+                ctx = r._ctx
                 assert ctx.state == RunnerState.RUNNING
                 cid = getattr(ctx, "container_id", None)
                 assert cid
@@ -277,7 +277,7 @@ class TestFullLifecycle:
             PodmanRunner._start_model_process = orig
 
         # Clean up the container (may have been removed by --rm already)
-        ctx = runner._models.get("test-model")
+        ctx = runner._ctx
         if ctx and getattr(ctx, "container_id", None):
             _podman("rm", "-f", ctx.container_id)
         _kill_port(port)

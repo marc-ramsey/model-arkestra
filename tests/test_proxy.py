@@ -5,8 +5,8 @@ from unittest.mock import MagicMock, AsyncMock
 import pytest
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
-from fastapi import HTTPException
 
 from model_arkestra.server import (
     ArkestraServer,
@@ -29,6 +29,43 @@ def _make_proxy(mock_arkestra, aliases=None):
     return proxy
 
 
+def _register_v1_error_handlers(app):
+    """Mirror ArkestraServer's /v1 error envelopes in the test app."""
+    from fastapi import HTTPException, Request
+    from fastapi.exceptions import RequestValidationError
+    from fastapi.responses import JSONResponse
+
+    error_types = {400: "invalid_request_error", 404: "model_not_found",
+                   422: "invalid_request_error"}
+
+    def v1_resp(status_code, message):
+        return JSONResponse(status_code=status_code, content={"error": {
+            "message": message,
+            "type": error_types.get(status_code, "server_error"),
+        }})
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation(request: Request, exc: RequestValidationError):
+        if not request.url.path.startswith("/v1"):
+            return JSONResponse(422, {"detail": exc.errors()})
+        first = (exc.errors() or [{}])[0]
+        loc = ".".join(str(x) for x in first.get("loc", []) if x not in ("body", "query"))
+        msg = str(first.get("msg", "Invalid request"))
+        return v1_resp(400, f"{msg} ({loc})" if loc else msg)
+
+    @app.exception_handler(HTTPException)
+    async def _http(request: Request, exc: HTTPException):
+        if not request.url.path.startswith("/v1"):
+            return JSONResponse(exc.status_code, {"detail": exc.detail})
+        return v1_resp(exc.status_code, str(exc.detail))
+
+    @app.exception_handler(Exception)
+    async def _unhandled(request: Request, exc: Exception):
+        if not request.url.path.startswith("/v1"):
+            raise exc
+        return v1_resp(500, str(exc) or "Internal server error")
+
+
 def _build_app(mock_arkestra, aliases=None):
     """Build a FastAPI test app with real proxy route handlers.
 
@@ -37,13 +74,14 @@ def _build_app(mock_arkestra, aliases=None):
     proxy = _make_proxy(mock_arkestra, aliases=aliases)
 
     app = FastAPI(title="Test ArkestraServer")
+    _register_v1_error_handlers(app)
 
     # ── POST /v1/chat/completions ───────────────────────────────
 
     @app.post("/v1/chat/completions")
     async def chat_completions(req: ChatCompletionRequest):
         model_name = proxy.openai_aliases.get(req.model, req.model)
-        await mock_arkestra.start(model_name)
+        await mock_arkestra.start(model_name)  # unhandled exceptions → generic handler
 
         if req.stream:
             return StreamingResponse(
@@ -105,7 +143,8 @@ def _build_app(mock_arkestra, aliases=None):
             data.append(ModelInfo(
                 id=entry.get("name", entry.get("id", "unknown")),
                 owned_by=entry.get("owned_by", "local"),
-                status=entry.get("status", {"value": "stopped"}),
+                status=entry.get("status") or {"value": "stopped"},
+                context_length=entry.get("context_length", "n/a"),
             ).model_dump())
         return {"object": "list", "data": data}
 
@@ -126,7 +165,30 @@ def _build_app(mock_arkestra, aliases=None):
     async def health_v1():
         return await health()
 
-    client = TestClient(app)
+    @app.post("/v1/audio/transcriptions")
+    async def transcriptions(request: Request):
+        if request.headers.get("Content-Type", "").startswith("multipart"):
+            data = await request.form()
+            model_name = str(data.get("model", ""))
+            audio_file = data.get("file")
+            if not audio_file:
+                raise HTTPException(status_code=400, detail="No file provided")
+        else:
+            try:
+                req_body = await request.json()
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid JSON body")
+            if not isinstance(req_body, dict):
+                raise HTTPException(status_code=400, detail="Invalid JSON body")
+            model_name = str(req_body.get("model", ""))
+        model_name = proxy._resolve_tagged_model(
+            model_name, "asr",
+            "No STT model available. Configure a model with tags: [asr]",
+            legacy_key="stt-model",
+        )
+        return {"text": "mock transcript"}
+
+    client = TestClient(app, raise_server_exceptions=False)
     return client, mock_arkestra
 
 
@@ -166,14 +228,29 @@ def mock_arkestra():
                 "name": "qwen3-4b",
                 "owned_by": "local",
                 "status": {"value": "loaded"},
+                "context_length": 8192,
             },
             {
                 "name": "gemma-4-e2b",
                 "owned_by": "local",
                 "status": {"value": "sleeping"},
+                "context_length": "n/a",
             },
         ],
     })
+    # Non-streaming chat path uses ainvoke_full (full content+usage dict)
+    mock.ainvoke_full = AsyncMock(return_value={
+        "content": "Quantum entanglement is when particles connect across space.",
+        "usage": {
+            "model": "qwen3-4b",
+            "prompt_tokens": 5,
+            "completion_tokens": 10,
+            "total_tokens": 15,
+        },
+    })
+    # Transcription routing: asr tag on qwen3-4b
+    mock.cm = MagicMock()
+    mock.cm.data = {"models": {"qwen3-4b": {"tags": ["asr"]}}}
     return mock
 
 
@@ -379,17 +456,19 @@ class TestListModels:
         qwen = next(m for m in data if m["id"] == "qwen3-4b")
         assert qwen["object"] == "model"
         assert qwen["owned_by"] == "local"
-        assert qwen.get("status", {}).get("value") == "loaded"
+        # Ollama-style status dict passes through unflattened
+        assert qwen["status"] == {"value": "loaded"}
+        assert qwen["context_length"] == 8192
 
-    def test_list_models_stopped_model(self, mock_arkestra):
-        """Stopped models are listed with correct status."""
+    def test_list_models_unresolvable_context(self, mock_arkestra):
+        """Models without a resolvable ctx-size report 'n/a'."""
         client, _ = _build_app(mock_arkestra)
         resp = client.get("/v1/models")
-        body = resp.json()
-        data = body["data"]
+        data = resp.json()["data"]
 
         gemma = next(m for m in data if m["id"] == "gemma-4-e2b")
-        assert gemma.get("status", {}).get("value") == "sleeping"
+        assert gemma["status"] == {"value": "sleeping"}
+        assert gemma["context_length"] == "n/a"
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -430,22 +509,98 @@ class TestRequestValidation:
     """Tests for request body validation."""
 
     def test_missing_messages_rejected(self, mock_arkestra):
-        """Request without messages field is rejected with 422."""
+        """Missing messages → 400 with OpenAI-style error envelope."""
         client, _ = _build_app(mock_arkestra)
         resp = client.post("/v1/chat/completions", json={
             "model": "qwen3-4b",
             # missing: messages
         })
-        assert resp.status_code == 422
+        assert resp.status_code == 400
+        body = resp.json()
+        assert "detail" not in body
+        err = body["error"]
+        assert err["type"] == "invalid_request_error"
+        assert "messages" in err["message"]
 
     def test_messages_not_a_list_rejected(self, mock_arkestra):
-        """Messages field that is not a list is rejected with 422."""
+        """Messages field that is not a list is rejected with 400."""
         client, _ = _build_app(mock_arkestra)
         resp = client.post("/v1/chat/completions", json={
             "model": "qwen3-4b",
             "messages": "this should be a list",
         })
-        assert resp.status_code == 422
+        assert resp.status_code == 400
+        assert resp.json()["error"]["type"] == "invalid_request_error"
+
+    def test_model_error_503_openai_shape(self, mock_arkestra):
+        """Inference failures surface as 503 with the error envelope."""
+        client, _ = _build_app(mock_arkestra)
+        mock_arkestra.ainvoke = AsyncMock(side_effect=Exception("boom"))
+        resp = client.post("/v1/chat/completions", json={
+            "model": "qwen3-4b",
+            "messages": [{"role": "user", "content": "Hi"}],
+        })
+        assert resp.status_code == 503
+        body = resp.json()
+        assert "detail" not in body
+        assert body["error"]["type"] == "server_error"
+        assert "boom" in body["error"]["message"]
+
+    def test_unhandled_exception_500_openai_shape(self, mock_arkestra):
+        """Unexpected exceptions on /v1 routes → 500 with error envelope."""
+        client, _ = _build_app(mock_arkestra)
+        mock_arkestra.start = AsyncMock(side_effect=RuntimeError("kaboom"))
+        resp = client.post("/v1/chat/completions", json={
+            "model": "qwen3-4b",
+            "messages": [{"role": "user", "content": "Hi"}],
+        })
+        assert resp.status_code == 500
+        body = resp.json()
+        assert "detail" not in body
+        assert body["error"]["type"] == "server_error"
+        assert "kaboom" in body["error"]["message"]
+
+
+# ═══════════════════════════════════════════════════════════════
+# POST /v1/audio/transcriptions — request handling
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestTranscriptions:
+    """Tests for the ASR endpoint request validation."""
+
+    def test_empty_body_rejected_400(self, mock_arkestra):
+        """Empty (non-multipart) body → 400, not a raw 500."""
+        client, _ = _build_app(mock_arkestra)
+        resp = client.post("/v1/audio/transcriptions", content=b"")
+        assert resp.status_code == 400
+        body = resp.json()
+        assert "detail" not in body
+        assert body["error"]["type"] == "invalid_request_error"
+
+    def test_invalid_json_body_rejected_400(self, mock_arkestra):
+        """Malformed JSON body → 400 with error envelope."""
+        client, _ = _build_app(mock_arkestra)
+        resp = client.post(
+            "/v1/audio/transcriptions",
+            content=b"{not json",
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status_code == 400
+        assert resp.json()["error"]["type"] == "invalid_request_error"
+
+    def test_no_asr_model_404(self, mock_arkestra):
+        """No model with 'asr' tag → 404 model_not_found."""
+        client, _ = _build_app(mock_arkestra)
+        mock_arkestra.cm.data = {"models": {}}
+        resp = client.post(
+            "/v1/audio/transcriptions",
+            json={"model": "", "audio_b64": "aGk="},
+        )
+        assert resp.status_code == 404
+        body = resp.json()
+        assert body["error"]["type"] == "model_not_found"
+        assert "detail" not in body
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -656,8 +811,17 @@ class TestImports:
         d = stream.model_dump()
         assert d["choices"][0]["delta"]["content"] == "Hi"
 
-        # Model info
-        model_info = ModelInfo(id="qwen3-4b", status={"value": "loaded"}, port=18000)
+        # Model info — status is the Ollama-style dict, context_length int or 'n/a'
+        model_info = ModelInfo(
+            id="qwen3-4b",
+            status={"value": "loaded"},
+            context_length=8192,
+        )
         d = model_info.model_dump()
         assert d["id"] == "qwen3-4b"
-        assert d.get("status", {}).get("value") == "loaded"
+        assert d["status"] == {"value": "loaded"}
+        assert d["context_length"] == 8192
+
+        default_info = ModelInfo(id="x")
+        assert default_info.status == {"value": "stopped"}
+        assert default_info.context_length == "n/a"

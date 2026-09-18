@@ -51,7 +51,7 @@ class RemoteRunner(BaseRunner):
         **inference_kwargs: Any,
     ) -> None:
         """Start remote model — no local health check, only proxy to worker."""
-        ctx = next((v for k, v in self._models.items() if k == model_name), None)
+        ctx = self._ctx
         if not ctx:
             raise ModelNotStarted(model_name)
 
@@ -79,7 +79,7 @@ class RemoteRunner(BaseRunner):
         ctx.set_state("ready")
 
     async def _start_model_process(
-        self, ctx: _Model, model_data: Dict[str, Any]
+        self, ctx: _Model, model_data: Dict[str, Any], model_name: str = ""
     ) -> None:
         """Proxy model start to the remote worker."""
         try:

@@ -86,7 +86,7 @@ class TestAdminModels:
         # Every model should have a valid status value
         for name, m in models_by_id.items():
             val = m["status"]["value"]
-            assert val in ("stopped", "loading", "loaded", "unloaded", "downloading"), \
+            assert val in ("stopped", "stopping", "loading", "loaded", "uncached", "downloading"), \
                 f"{name}: unexpected status '{val}'"
 
         # All configured models must have a context (pre-created at startup)

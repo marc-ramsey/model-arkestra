@@ -1,8 +1,12 @@
-"""Registry: name → Model, cluster resolution, and the port pool.
+"""Registry: checkpoint contexts, model-name resolution, port pool, clusters.
 
-The single place that knows how a model *name* maps to a Model object and
-which cluster it belongs to. ``<cluster>/<model-id>`` parsing lives here and
-only here — every other call site does one ``resolve()`` lookup.
+Two dicts separate concerns:
+  _checkpoints: checkpoint_id → _Model   (one context per shared weight set)
+  _models:      model_name    → checkpoint_id  (resolution table)
+
+A model name always resolves to exactly one checkpoint. A checkpoint may
+serve multiple model names (aliases). The context is owned by the checkpoint;
+model names are pure lookup keys.
 """
 from __future__ import annotations
 
@@ -12,7 +16,8 @@ from typing import Any, Dict, List, Optional, Tuple
 class Registry:
     def __init__(self, cm: Any, local_url: str = ""):
         self._cm = cm
-        self._models: Dict[str, _Model] = {}   # type: ignore[name-defined]
+        self._checkpoints: Dict[str, Any] = {}   # checkpoint_id → _Model
+        self._models: Dict[str, str] = {}        # model_name → checkpoint_id
         self._local_cluster_key: str = cm.get("default/local-cluster-key", "local")
 
         # ── port pool ───────────────────────────────────────────
@@ -24,57 +29,64 @@ class Registry:
         self._clusters: Dict[str, Dict[str, Any]] = {}
         self._load_clusters(local_url)
 
-    # ── model storage ───────────────────────────────────────────
-    def register(self, model: Any, aliases: Optional[List[str]] = None) -> None:
-        """Register a context under its own name plus any alias names.
+    # ── registration ────────────────────────────────────────────
+    def register(self, checkpoint_id: str, ctx: Any, model_names: List[str]) -> None:
+        """Register a checkpoint context and its model names.
 
-        A context may be shared by several model names (models that reference
-        the same checkpoint). Each alias resolves to the same context object.
-        ``aliases`` should include at least one *model* name (not the checkpoint
-        id) so config/capability lookup works against the ``models:`` section.
+        *checkpoint_id* is the canonical name for the weight set (e.g.
+        "qwen3.6-35B"). *model_names* are the config keys that resolve to it
+        (e.g. ["qwen3.6-35B-instruct", "qwen3.6-35B-think"]).
         """
-        self._attach_config(model, aliases)
-        self._models[model.name] = model
-        for alias in (aliases or []):
-            if alias != model.name:
-                self._models[alias] = model
+        self._checkpoints[checkpoint_id] = ctx
+        for name in model_names:
+            self._models[name] = checkpoint_id
 
-    def _attach_config(self, model: Any, aliases: Optional[List[str]] = None) -> None:
-        """Best-effort fill of ``_model_cfg`` / ``_backend_cfg`` from the registry's cm.
-
-        Uses the first alias (a real model name) for config lookup, since the
-        context itself may be named by checkpoint id rather than a model key.
-        """
+        # Attach config for capability derivation (use first model name).
         try:
-            lookup_name = aliases[0] if aliases else model.name
+            lookup_name = model_names[0] if model_names else checkpoint_id
             cfg = self._cm.get_model(lookup_name) or {}
-            model._model_cfg = dict(cfg)
+            ctx._model_cfg = dict(cfg)
             be_id = cfg.get("backend")
             if be_id:
-                model._backend_cfg = self._cm.get_backend(be_id) or {}
+                ctx._backend_cfg = self._cm.get_backend(be_id) or {}
         except Exception:
-            # Capability derivation degrades to defaults; never block registration.
             pass
 
-    def get(self, name: str) -> Optional[Any]:
-        return self._models.get(name)
+    # ── lookup ──────────────────────────────────────────────────
+    def get_checkpoint_id(self, model_name: str) -> Optional[str]:
+        """Resolve a model name to its checkpoint id."""
+        return self._models.get(model_name)
+
+    def get_context(self, model_name: str) -> Optional[Any]:
+        """Resolve a model name to its context (via checkpoint)."""
+        ckpt_id = self._models.get(model_name)
+        if ckpt_id is None:
+            return None
+        return self._checkpoints.get(ckpt_id)
+
+    def get_context_by_checkpoint(self, checkpoint_id: str) -> Optional[Any]:
+        return self._checkpoints.get(checkpoint_id)
 
     @property
-    def all(self) -> List[Any]:
-        return list(self._models.values())
+    def all_contexts(self) -> List[Any]:
+        """All unique contexts (one per checkpoint)."""
+        return list(self._checkpoints.values())
 
-    def find_by_local_name(self, local_name: str) -> Optional[Any]:
-        return self._models.get(local_name)
+    @property
+    def model_names(self) -> List[str]:
+        """All configured model names."""
+        return list(self._models.keys())
 
     # ── port pool ───────────────────────────────────────────────
     def allocate_port(self, model_name: str) -> int:
-        """Reuse a stopped model's port, else take the next from the pool."""
-        m = self._models.get(model_name)
-        if m is not None and m.port is not None:
-            return m.port
+        """Reuse a stopped checkpoint's port, else take the next from the pool."""
+        ckpt_id = self._models.get(model_name)
+        ctx = self._checkpoints.get(ckpt_id) if ckpt_id else None
+        if ctx is not None and ctx.port is not None:
+            return ctx.port
         end_port = self._start_port + self._pool_size - 1
         if self._next_port > end_port:
-            raise RuntimeError(f"Port range exceeded: {self._start_port}–{end_port}")
+            raise RuntimeError(f"Port range exceeded: {self._start_port}\u2013{end_port}")
         port = self._next_port
         self._next_port += 1
         return port
@@ -128,7 +140,6 @@ class Registry:
         cluster_name, local_id = self.parse_prefix(model_name)
         cfg = self._clusters.get(cluster_name)
         if cfg is None:
-            # Legacy fallback: backend with runner=remote + base_url
             be = (self._cm.get("backends", {}) or {}).get(cluster_name, {})
             if isinstance(be, dict) and be.get("runner") == "remote" and be.get("base_url"):
                 return cluster_name, str(be["base_url"]).rstrip("/"), local_id

@@ -1,27 +1,27 @@
+"""ProcessRunner: spawn and manage llama-server as a local subprocess."""
 from __future__ import annotations
 import asyncio
 import os
 import signal
 from typing import Any, Dict, List
+
 from model_arkestra.base import BaseRunner
 from model_arkestra.common import build_model_args
 from model_arkestra.llama_cpp import LlamaCppEngine
 from model_arkestra.types import _Model
 
 
-
 class ProcessRunner(BaseRunner):
 
-    async def get_logs(self, model_name: str, lines: int = 100) -> List[str]:
-        """Return the last N log line texts for a model (backward compat)."""
-        ctx = self._models.get(model_name)
+    async def get_logs(self, ctx: _Model, lines: int = 100) -> List[str]:
+        """Return the last N log lines from the context's ring buffer."""
         if not ctx:
             return []
         result, _oldest = ctx._get_lines_since(0, lines)
         return [t for _, t in result]
 
     async def _start_model_process(
-        self, ctx: _Model, model_data: Dict[str, Any]
+        self, ctx: _Model, model_data: Dict[str, Any], model_name: str
     ) -> None:
         await self._ensure_port_available(ctx.port)
 
@@ -36,23 +36,22 @@ class ProcessRunner(BaseRunner):
                 f"Binary '{binary_path}' not found for backend '{be_id}'"
             )
 
-        # Build merged param dict and convert to CLI tokens via engine.
-        merged = build_model_args(self.cm, ctx.name,
-                                  inference_kwargs=self._inference_kwargs.get(ctx.name, {}))
+        # Build merged args using the model name (config key), not ctx.name.
+        merged = build_model_args(self.cm, model_name,
+                                  inference_kwargs=self._inference_kwargs.get(model_name, {}))
         if merged is None:
-            raise RuntimeError(f"Model '{ctx.name}' has no backend configured")
+            raise RuntimeError(f"Model '{model_name}' has no backend configured")
 
         engine_name = (backend or {}).get("engine", "llama-cpp")
         if engine_name == "llama-cpp":
             args_list = LlamaCppEngine.build_cli_args(merged, ctx.port)
         else:
-            args_list = list(merged.values())  # fallback — future engines subclass
+            args_list = list(merged.values())
 
-        # Merge environment: process + global env + device-profile env + backend env_container.
+        # Merge environment.
         env = os.environ.copy()
         for k, v in (self.cm.data.get("env") or {}).items():
             env[k] = str(v)
-        # Device-profile env vars from detected GPU (cached on Arkestra)
         if self.arkestra:
             for k, v in self.arkestra.device_profile.items():
                 env[k] = str(v)
@@ -68,38 +67,40 @@ class ProcessRunner(BaseRunner):
         )
 
         if self.arkestra:
-            self.arkestra.log(f"[launch] model={ctx.name} pid={ctx.process.pid} binary={binary_path} port={ctx.port}")
+            self.arkestra.log(f"[launch] model={model_name} pid={ctx.process.pid} binary={binary_path} port={ctx.port}")
 
-        # Start log capture: feed stdout/stderr lines into ctx ring buffer
-        async def _read_stream(stream: asyncio.Stream, model_name: str) -> None:
-            """Read one stream and append each line to the model's log buffer."""
+        # Start log capture.
+        async def _read_stream(stream: asyncio.Stream) -> None:
             while True:
                 try:
                     raw = await stream.readline()
                     if not raw:
                         break
-                    ctx = self._models.get(model_name)
-                    if ctx and len(raw) > 0:
-                        line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
-                        if line:
-                            ctx._append_log_line(line)
+                    line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+                    if line:
+                        ctx._append_log_line(line)
                 except asyncio.CancelledError:
                     return
                 except Exception:
                     break
 
-        log_task_stdout = asyncio.create_task(
-            _read_stream(ctx.process.stdout, ctx.name)
-        ) if ctx.process.stdout else None
-        log_task_stderr = asyncio.create_task(
-            _read_stream(ctx.process.stderr, ctx.name)
-        ) if ctx.process.stderr else None
-        if not hasattr(self, '_log_tasks'):
-            self._log_tasks = {}
-        self._log_tasks[ctx.name] = (log_task_stdout, log_task_stderr)
+        self._log_tasks = []
+        if ctx.process.stdout:
+            self._log_tasks.append(asyncio.create_task(_read_stream(ctx.process.stdout)))
+        if ctx.process.stderr:
+            self._log_tasks.append(asyncio.create_task(_read_stream(ctx.process.stderr)))
 
     async def _stop_model_process(self, ctx: _Model) -> None:
-        """Kill model process group using mandated strategy: SIGHUP → wait 20s → SIGKILL."""
+        """Kill model process group: SIGHUP → wait 20s → SIGKILL."""
+        # Cancel log capture tasks.
+        for t in getattr(self, '_log_tasks', []):
+            t.cancel()
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
+        self._log_tasks = []
+
         if ctx.process and ctx.process.returncode is None:
             pid = ctx.process.pid
             if self.arkestra:
@@ -119,7 +120,7 @@ class ProcessRunner(BaseRunner):
                 pass
 
     async def _before_restart(self, ctx: _Model, new_size=None) -> bool:
-        """Reset process reference so the next ``_start_model_process`` call creates a fresh one."""
+        """Reset process reference so the next start creates a fresh one."""
         if ctx.process is not None and ctx.process.returncode is not None:
-            ctx.process = None  # replace stale process handle
+            ctx.process = None
         return await super()._before_restart(ctx, new_size)

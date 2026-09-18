@@ -156,7 +156,14 @@ class ModelArkestra:
         Includes alias names: several model names may map to the same shared
         context (models referencing one checkpoint).
         """
-        return dict(self._registry._models)
+        result: Dict[str, Any] = {}
+        for name in self._registry.model_names:
+            ckpt_id = self._registry.get_checkpoint_id(name)
+            if ckpt_id:
+                ctx = self._registry.get_context_by_checkpoint(ckpt_id)
+                if ctx:
+                    result[name] = ctx
+        return result
 
     @property
     def device_detection(self) -> Dict[str, Any]:
@@ -253,10 +260,9 @@ class ModelArkestra:
 
             # Register once (single owner) and alias under every model name that
             # shares this checkpoint, so existing per-name lookups keep working.
-            self._registry.register(ctx, aliases)
+            self._registry.register(ctx_name, ctx, aliases)
             runner = self.get_runner_instance(runner_type, primary)
-            for alias in aliases:
-                runner._models[alias] = ctx
+            runner._ctx = ctx
 
 
     # ── cluster topology (delegates to the registry) ───────────────
@@ -314,7 +320,7 @@ class ModelArkestra:
         Distinct from ``get_model()`` which returns the static config dict.
         """
         local_name = self.local_model_name(model_name)
-        return self._registry.find_by_local_name(local_name)
+        return self._registry.get_context(local_name)
 
     def _provider_for(self, model_name: str):
         """Return the inference Provider for *model_name* (raises if unknown)."""
@@ -345,11 +351,30 @@ class ModelArkestra:
                 "created": int(time()),
                 "owned_by": owned_by,
                 "status": model_status_for_ctx(ctx),
+                "context_length": self._resolve_context_length(model_name),
             }
 
             data.append(entry)
 
         return {"object": "list", "data": data}
+
+    def _resolve_context_length(self, model_name: str) -> Union[int, str]:
+        """Resolved ``ctx-size`` for a model, or ``"n/a"`` when unresolvable.
+
+        Uses the same config chain as process launch (model → backend →
+        default). Unexpanded placeholders and non-llama models yield "n/a".
+        """
+        try:
+            from model_arkestra.common import build_model_args
+            merged = build_model_args(self._cm, model_name)
+            val = merged.get("ctx-size") if merged else None
+            if isinstance(val, int):
+                return val
+            if isinstance(val, str) and val.isdigit():
+                return int(val)
+        except Exception:
+            pass
+        return "n/a"
 
     # ── runner class map — one hop, no magic ─────────────────────────
 
@@ -406,11 +431,11 @@ class ModelArkestra:
         return _resolve_backend(self._cm, model, model_name, None)
 
     def _get_runner(self, model_name: str, env_vars: Dict[str, Any], backend: Optional[str] = None) -> BaseRunner:
-        # Find the runner that has this model (cluster names tracked under local id)
+        # Find the runner that owns this context
         local_name = self.local_model_name(model_name)
-        for r in self._runners.values():
-            if local_name in r._models and r._models[local_name].state == RunnerState.RUNNING:
-                return r
+        ctx = self.model_obj(local_name)
+        if ctx is not None and getattr(ctx, '_runner', None) is not None:
+            return ctx._runner
         runner_type = self.resolve_runner_type(model_name, env_vars, backend)
         return self.get_runner_instance(runner_type, model_name)
 
@@ -606,8 +631,10 @@ class ModelArkestra:
         # runner= selects the transport layer
         if runner_type_override is not None:
             inst = self.get_runner_instance(self._normalize_container(runner_type_override), local_name)
+            if inst._ctx is None and ctx is not None:
+                inst._ctx = ctx
             await inst.start(local_name, port=port, backend=backend, **inference_kwargs)
-            ctx = inst._models[local_name]
+            ctx = inst.ctx
             ctx.runner_type = runner_type_override
             ctx._runner = inst
             self.log(f"[action=start model={model_name} port={port}]")
@@ -625,8 +652,12 @@ class ModelArkestra:
             )
 
         runner = self.get_runner_instance(resolved_runner, local_name)
+        # Aliases of a shared checkpoint have no runner of their own — reuse
+        # the owner's (runner._ctx is the shared context).
+        if runner._ctx is None and ctx is not None:
+            runner._ctx = ctx
         await runner.start(local_name, port=port, backend=backend, **inference_kwargs)
-        ctx = runner._models[local_name]
+        ctx = runner.ctx
         ctx.runner_type = resolved_runner
         ctx._runner = runner
         if resolved_runner == "remote" and not ctx._remote_base_url:
@@ -682,13 +713,13 @@ class ModelArkestra:
             ctx._model_path = model_path_str  # store for runner to use
             ctx._runner = runner
             ctx.set_state("load")
-            self._registry.register(ctx)
-            runner._models[model_name] = ctx  # noqa: SLF001
+            self._registry.register(model_name, ctx, [model_name])
+            runner._ctx = ctx
 
         # Start the ONNX model (loads InferenceSession into memory)
         await runner.start(model_name, port=ctx.port, backend="onnx",
                            **{k: v for k, v in inference_kwargs.items()})
-        ctx = runner._models[model_name]  # noqa: SLF001
+        ctx = runner.ctx
         ctx.runner_type = "onnx"
 
         logger.info("ONNX model '%s' loaded into memory", model_name)
@@ -714,9 +745,9 @@ class ModelArkestra:
             ctx.cluster = cluster_name
             ctx._remote_base_url = base_url
             ctx._admin_key = cluster_cfg.get("admin-key") or cluster_cfg.get("admin_key") or ""
-            self._registry.register(ctx)
-            runner = self.get_runner_instance("remote")
-            runner._models[local_name] = ctx  # noqa: SLF001
+            self._registry.register(local_name, ctx, [local_name])
+            runner = self.get_runner_instance("remote", local_name)
+            runner._ctx = ctx
             ctx._runner = runner
 
         # Pass inference kwargs and start (proxies to worker)
@@ -752,14 +783,13 @@ class ModelArkestra:
     async def stop(self, model_name: str) -> None:
         """Stop the named model."""
         _, _, local_name = self.resolve_model_cluster_addr(model_name)
-        for r in self._runners.values():
-            if local_name in r._models:  # noqa: SLF001
-                self.log(f"[action=stop model={model_name}]")
-                try:
-                    await r.stop()
-                except Exception:
-                    pass
-                return
+        ctx = self.model_obj(local_name)
+        if ctx is not None and getattr(ctx, '_runner', None) is not None:
+            self.log(f"[action=stop model={model_name}]")
+            try:
+                await ctx._runner.stop()
+            except Exception:
+                pass
 
     async def pull(self, model_name: str) -> Dict[str, Any]:
         """Begin pulling a model's checkpoint (non-blocking).
@@ -777,7 +807,7 @@ class ModelArkestra:
             # Create a context so the download has somewhere to report state.
             from model_arkestra.types import _Model as _M
             ctx = _M(local_name, 0)
-            self._registry.register(local_name, ctx)
+            self._registry.register(local_name, ctx, [local_name])
 
         if ctx.state == RunnerState.RUNNING:
             return {"ok": True, "model": local_name, "already_loaded": True}
@@ -917,11 +947,7 @@ class ModelArkestra:
         cache_dir = self._cache_dir_for_checkpoint(cache_path)
 
         # Get the (shared) context for this model.
-        ctx = None
-        for r in self._runners.values():
-            if model_name in r._models:
-                ctx = r._models[model_name]
-                break
+        ctx = self.model_obj(model_name)
 
         # Delete cache, mark context as UNCACHED (cache gone).
         if cache_dir.exists():
@@ -956,11 +982,9 @@ class ModelArkestra:
         """Full teardown — stop models, clear runners, reset port allocator."""
         self.log(f"[action=shutdown]")
         # Cancel any active pull tasks
-        for r in self._runners.values():
-            models = getattr(r, '_models', {})
-            for ctx in models.values():
-                if ctx.download_task and not ctx.download_task.done():
-                    ctx.download_task.cancel()
+        for ctx in self._registry.all_contexts:
+            if ctx.download_task and not ctx.download_task.done():
+                ctx.download_task.cancel()
         for r in self._runners.values():
             await r.shutdown()
         self._runners.clear()
@@ -998,7 +1022,7 @@ class ModelArkestra:
     async def get_logs(self, model_name: str, lines: int = 100) -> List[str]:
         """Return the last N log lines for a model."""
         local_name = self.local_model_name(model_name)
-        for r in self._runners.values():
-            if local_name in r._models:  # noqa: SLF001
-                return await r.get_logs(local_name, lines)
+        ctx = self.model_obj(local_name)
+        if ctx is not None and getattr(ctx, '_runner', None) is not None:
+            return await ctx._runner.get_logs(ctx, lines)
         return []

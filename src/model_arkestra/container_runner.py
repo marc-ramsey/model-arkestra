@@ -145,17 +145,16 @@ class ContainerRunner(BaseRunner, ABC):
     def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
 
-    async def get_logs(self, model_name: str, lines: int = 100) -> List[str]:
+    async def get_logs(self, ctx: _Model, lines: int = 100) -> List[str]:
         """Return the last N log lines for a model via container runtime.
 
         Lines from stdout and stderr are interleaved in arrival order;
         stderr lines are prefixed with ``[err] `` for easy distinction.
         """
-        ctx = self._models.get(model_name)
         if not ctx:
             return []
         cid = getattr(ctx, "container_id", None)
-        name = getattr(ctx, "name", model_name)
+        name = getattr(ctx, "name", "")
         cmd_parts = [self._container_cmd(), "logs"]
         if lines:
             cmd_parts.extend(["--tail", str(lines)])
@@ -217,7 +216,9 @@ class ContainerRunner(BaseRunner, ABC):
 
     async def shutdown(self) -> None:
         """Full teardown — stop models, force-remove containers, clear state."""
-        cids = [getattr(ctx, "container_id", None) for ctx in list(self._models.values())]
+        cids = []
+        if self._ctx and getattr(self._ctx, 'container_id', None):
+            cids.append(self._ctx.container_id)
         await super().shutdown()
         await self._remove_containers(cids)
 
@@ -299,7 +300,7 @@ class ContainerRunner(BaseRunner, ABC):
             raise RuntimeError(f"{cmd} pull failed for {image} (exit {rc})")
 
     async def _start_model_process(
-        self, ctx: _Model, model_data: Dict[str, Any]
+        self, ctx: _Model, model_data: Dict[str, Any], model_name: str
     ) -> None:
         """Shared container launch logic. Subclasses may override hooks."""
         await self._ensure_port_available(ctx.port)
@@ -348,7 +349,7 @@ class ContainerRunner(BaseRunner, ABC):
 
         extra_args = self._extra_run_args()
         cmd_parts = _build_container_cmd(
-            self._container_cmd(), self, ctx.name, ctx.port,
+            self._container_cmd(), self, model_name, ctx.port,
             self.broadcast_addr, type(self).INSIDE_PORT,
             backend,
             backend_id=ctx.backend_id,
@@ -430,11 +431,11 @@ class ContainerRunner(BaseRunner, ABC):
                 raw = await stream.readline()
                 if not raw:
                     break
-                ctx = self._models.get(model_name)
-                if ctx and raw:
+                c = self._ctx
+                if c and raw:
                     line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
                     if line:
-                        ctx._append_log_line(line)
+                        c._append_log_line(line)
 
         tasks = []
         for stream in (proc.stdout, proc.stderr):

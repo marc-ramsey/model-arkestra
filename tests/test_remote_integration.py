@@ -134,6 +134,7 @@ class TestRemoteIntegration:
         # 503 because worker can't load the model, but the proxy path is
         # exercised: master → RemoteRunner → worker (retries worker 503s)
         assert r.status_code == 503
-        detail = r.json()["detail"]
-        assert "Model error:" in detail
-        assert "503" in detail or "not reachable" in detail
+        err = r.json()["error"]
+        assert err["type"] == "server_error"
+        assert "Model error:" in err["message"]
+        assert "503" in err["message"] or "not reachable" in err["message"]

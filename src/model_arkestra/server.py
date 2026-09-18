@@ -25,8 +25,9 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
 try:
     from fastapi import FastAPI, HTTPException, Request, Response, WebSocket
+    from fastapi.exceptions import RequestValidationError
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import StreamingResponse
+    from fastapi.responses import JSONResponse, StreamingResponse
 except ImportError:
     raise RuntimeError(
         "model_arkestra.server requires fastapi+uvicorn. "
@@ -119,7 +120,8 @@ class ModelInfo(BaseModel):
     object: str = "model"
     created: int = Field(default_factory=lambda: int(time.time()))
     owned_by: str = "local"
-    status: Any = "running"
+    status: Any = {"value": "stopped"}
+    context_length: Union[int, str] = "n/a"
 
 
 class ListModelsResponse(BaseModel):
@@ -314,6 +316,50 @@ class ArkestraServer:
                     response.headers[key] = value
                 return response
 
+        # ── Error envelopes ───────────────────────────────────────────────
+        # /v1/* routes speak the OpenAI error shape {"error": {message, type}};
+        # /admin/* keeps FastAPI's {"detail": ...} for existing clients.
+
+        _V1_ERROR_TYPES = {
+            400: "invalid_request_error",
+            404: "model_not_found",
+            422: "invalid_request_error",
+        }
+
+        def _v1_error_response(status_code: int, message: str) -> JSONResponse:
+            return JSONResponse(
+                status_code=status_code,
+                content={"error": {
+                    "message": message,
+                    "type": _V1_ERROR_TYPES.get(status_code, "server_error"),
+                }},
+            )
+
+        @app.exception_handler(RequestValidationError)
+        async def _validation_error_handler(request: Request, exc: RequestValidationError):
+            if not request.url.path.startswith("/v1"):
+                # Keep FastAPI's native 422 shape for /admin/* clients.
+                return JSONResponse(
+                    status_code=422,
+                    content={"detail": exc.errors()},
+                )
+            first = (exc.errors() or [{}])[0]
+            loc = ".".join(str(x) for x in first.get("loc", []) if x not in ("body", "query"))
+            msg = str(first.get("msg", "Invalid request"))
+            return _v1_error_response(400, f"{msg} ({loc})" if loc else msg)
+
+        @app.exception_handler(HTTPException)
+        async def _http_error_handler(request: Request, exc: HTTPException):
+            if not request.url.path.startswith("/v1"):
+                return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+            return _v1_error_response(exc.status_code, str(exc.detail))
+
+        @app.exception_handler(Exception)
+        async def _unhandled_error_handler(request: Request, exc: Exception):
+            if not request.url.path.startswith("/v1"):
+                raise exc  # let Starlette render the default 500 elsewhere
+            return _v1_error_response(500, str(exc) or "Internal server error")
+
         # ── Route: POST /v1/chat/completions ──────────────────────
 
         @app.post("/v1/chat/completions")
@@ -371,13 +417,11 @@ class ArkestraServer:
 
             models: List[ModelInfo] = []
             for entry in v1_data.get("data", []):
-                status = entry.get("status")
-                if isinstance(status, dict):  # WebUI shape: {"value": "loaded", ...}
-                    status = status.get("value", "stopped")
                 models.append(ModelInfo(
                     id=entry.get("name", entry.get("id", "unknown")),
                     owned_by=entry.get("owned_by", "local"),
-                    status=status or "stopped",
+                    status=entry.get("status") or {"value": "stopped"},
+                    context_length=entry.get("context_length", "n/a"),
                 ))
 
             return ListModelsResponse(data=models).model_dump()
@@ -434,7 +478,12 @@ class ArkestraServer:
                     raise HTTPException(status_code=400, detail="No file provided")
                 audio_bytes = await audio_file.read()
             else:
-                req_body = await request.json()
+                try:
+                    req_body = await request.json()
+                except Exception:
+                    raise HTTPException(status_code=400, detail="Invalid JSON body")
+                if not isinstance(req_body, dict):
+                    raise HTTPException(status_code=400, detail="Invalid JSON body")
                 model_name = str(req_body.get("model", ""))
                 b64_audio = req_body.get("audio_b64", req_body.get("audio", ""))
                 if isinstance(b64_audio, str):
@@ -810,7 +859,7 @@ def main(argv: list[str] | None = None) -> None:
     args.api_key = conn.api_key
     args.bind = conn.bind_host
     if args.ready_timeout is None:
-        cfg_to = _cfg_get("default/warmup-time")
+        cfg_to = _cfg_get("default/model-start-timeout")
         if cfg_to is not None:
             try:
                 args.ready_timeout = float(cfg_to)

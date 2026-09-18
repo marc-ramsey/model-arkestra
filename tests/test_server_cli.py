@@ -105,17 +105,23 @@ class TestBindResolution:
 
 
 class TestTimeoutResolution:
-    """Resolution for --ready-timeout: CLI > config warmup-time > 120.0."""
+    """Resolution for --ready-timeout: CLI > config model-start-timeout > 120.0."""
 
     def test_cli_timeout_overrides_config(self, tmp_path):
-        cfg = _make_config({"warmup-time": "30"}, tmp_path)
+        cfg = _make_config({"model-start-timeout": "30"}, tmp_path)
         kwargs = _run_main(["--config", str(cfg), "--ready-timeout", "45.5"], cfg)
         assert kwargs["ready_timeout"] == 45.5
 
-    def test_config_warmup_time_used(self, tmp_path):
-        cfg = _make_config({"default": {"warmup-time": "60"}}, tmp_path)
+    def test_config_model_start_timeout_used(self, tmp_path):
+        cfg = _make_config({"default": {"model-start-timeout": "60"}}, tmp_path)
         kwargs = _run_main(["--config", str(cfg)], cfg)
         assert kwargs["ready_timeout"] == 60.0
+
+    def test_warmup_time_does_not_set_ready_timeout(self, tmp_path):
+        """warmup-time is a post-ready delay — it must not cap model loading."""
+        cfg = _make_config({"default": {"warmup-time": "10"}}, tmp_path)
+        kwargs = _run_main(["--config", str(cfg)], cfg)
+        assert kwargs["ready_timeout"] == 120.0
 
     def test_hardwired_default_120(self, tmp_path):
         cfg = _make_config({}, tmp_path)

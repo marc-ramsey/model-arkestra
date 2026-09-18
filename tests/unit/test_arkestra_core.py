@@ -265,11 +265,13 @@ class TestRunningModelsProperty:
         # Fake RUNNING contexts
         c1 = _Model("model-a", 18000)
         c1._state = RunnerState.RUNNING
-        r1._models["model-a"] = c1
+        r1._ctx = c1
+        c1._runner = r1
 
         c2 = _Model("model-b", 18001)
         c2._state = RunnerState.RUNNING
-        r2._models["model-b"] = c2
+        r2._ctx = c2
+        c2._runner = r2
 
         models = arkestra.running_models
         assert "model-a" in models

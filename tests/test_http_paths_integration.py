@@ -32,12 +32,12 @@ async def server():
 
     ctx = _Model("m", port)
     ctx._state = RunnerState.RUNNING
-    runner._models["m"] = ctx
+    runner._ctx = ctx
 
     yield runner, handler, app, test_server
 
     # Cleanup.
-    runner._models.clear()
+    runner._ctx = None
     await test_server.close()
 
 
@@ -57,12 +57,12 @@ async def stream_server():
 
     ctx = _Model("m", port)
     ctx._state = RunnerState.RUNNING
-    runner._models["m"] = ctx
+    runner._ctx = ctx
 
     yield runner, handler, app, test_server
 
     # Cleanup.
-    runner._models.clear()
+    runner._ctx = None
     await test_server.close()
 
 
@@ -99,7 +99,7 @@ class FakeHandler:
 
 def _provider(runner):
     """Build a LlamaProvider pointed at the mock server port for model 'm'."""
-    ctx = runner._models["m"]
+    ctx = runner._ctx
     return LlamaProvider("m", ctx.port)
 
 

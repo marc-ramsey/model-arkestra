@@ -67,7 +67,7 @@ class OnnxRunner(BaseRunner):
     # ── Abstract lifecycle hooks (override base class defaults) ─────
 
     async def _start_model_process(
-        self, ctx: "model_arkestra.types._Model", model_data: Dict[str, Any]
+        self, ctx: "model_arkestra.types._Model", model_data: Dict[str, Any], model_name: str = ""
     ) -> None:
         """Load ONNX InferenceSession into context — no subprocess needed."""
         import onnxruntime as ort
@@ -193,7 +193,7 @@ class OnnxRunner(BaseRunner):
         """Start an ONNX model — load into memory, no HTTP needed."""
         from model_arkestra.types import RunnerState
 
-        ctx = self._models.get(model_name)
+        ctx = self._ctx
         model_data = None
 
         # ── Restart path: reuse existing context ─────────────────────
@@ -234,9 +234,9 @@ class OnnxRunner(BaseRunner):
                 cache_root = default_cache_root()
                 ctx._cache_dir = cache_root / f"models--{resolved.cache_path}"
 
-            self._models[model_name] = ctx
+            self._ctx = ctx
             if self.arkestra is not None and hasattr(self.arkestra, "_registry"):
-                self.arkestra._registry.register(ctx)
+                self.arkestra._registry.register(model_name, ctx, [model_name])
             ctx.set_state("load")
 
         # Apply transient overrides

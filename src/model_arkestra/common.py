@@ -702,7 +702,11 @@ def build_model_args(
     models = cm.data.get("models")
     if not models:
         return None
-    model = models.get(model_name)
+    # Use the merged view (checkpoint + instance) when available — checkpoint
+    # keys like spec-type/parallel/backend live on the checkpoint, not the
+    # bare model entry.
+    get_model = getattr(cm, "get_model", None)
+    model = get_model(model_name) if callable(get_model) else models.get(model_name)
     if model is None:
         return None
 

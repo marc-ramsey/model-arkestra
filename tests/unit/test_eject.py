@@ -19,30 +19,24 @@ from model_arkestra.types import RunnerState, _Model
 
 
 class MockRunner:
-    """Minimal runner mock that exposes _models like a real runner."""
+    """Minimal runner mock that exposes _ctx like a real runner."""
 
     def __init__(self) -> None:
-        self._models = {}
+        self._ctx = None
 
     async def stop(self) -> None:
-        # Transition each context through stop→stopped (dedupe by identity for
-        # aliases), mirroring the real runner's full stop cycle.
-        seen = set()
-        for name, ctx in list(self._models.items()):
-            if id(ctx) in seen:
-                continue
-            seen.add(id(ctx))
-            if ctx.state in (RunnerState.RUNNING, RunnerState.LOADING):
-                ctx.set_state("stop")
-            if ctx.state == RunnerState.STOPPING:
-                ctx.set_state("stopped")
+        # Transition the context through stop→stopped, mirroring the real runner.
+        ctx = self._ctx
+        if ctx and ctx.state in (RunnerState.RUNNING, RunnerState.LOADING):
+            ctx.set_state("stop")
+        if ctx and ctx.state == RunnerState.STOPPING:
+            ctx.set_state("stopped")
 
     @property
     def running_models(self):
-        return {
-            name for name, ctx in self._models.items()
-            if ctx.state == RunnerState.RUNNING
-        }
+        if self._ctx and self._ctx.state == RunnerState.RUNNING:
+            return {self._ctx.name}
+        return set()
 
 
 def make_ctx(name: str, port: int, state: RunnerState) -> _Model:
@@ -144,8 +138,10 @@ class TestEjectMethod:
             # Build runner with qwen3.5-4b in RUNNING state
             runner = MockRunner()
             ctx = make_ctx("qwen3.5-4b", 18000, RunnerState.RUNNING)
-            runner._models["qwen3.5-4b"] = ctx
+            runner._ctx = ctx
+            ctx._runner = runner
             ma._runners["process"] = runner
+            ma._registry.register("qwen3.5-4b", ctx, ["qwen3.5-4b"])
 
             # Create the physical cache dir (cache paths strip quantizer tag)
             cache_dir = ma._cache_dir_for_checkpoint("unsloth/Qwen3.5-4B-GGUF")
@@ -173,8 +169,10 @@ class TestEjectMethod:
 
             runner = MockRunner()
             ctx = make_ctx("qwen3.5-4b", 18000, RunnerState.RUNNING)
-            runner._models["qwen3.5-4b"] = ctx
+            runner._ctx = ctx
+            ctx._runner = runner
             ma._runners["process"] = runner
+            ma._registry.register("qwen3.5-4b", ctx, ["qwen3.5-4b"])
 
             result = asyncio.run(ma.eject("qwen3.5-4b"))
 
@@ -191,8 +189,10 @@ class TestEjectMethod:
 
         runner = MockRunner()
         ctx = make_ctx("bare-model", 18003, RunnerState.RUNNING)
-        runner._models["bare-model"] = ctx
+        runner._ctx = ctx
+        ctx._runner = runner
         ma._runners["runner-bare"] = runner
+        ma._registry.register("bare-model", ctx, ["bare-model"])
 
         result = asyncio.run(ma.eject("bare-model"))
 
@@ -227,15 +227,17 @@ class TestEjectMethod:
 
             runner_a = MockRunner()
             ctx_a = make_ctx("model-a", 18000, RunnerState.RUNNING)
-            runner_a._models["model-a"] = ctx_a
+            runner_a._ctx = ctx_a
+            ctx_a._runner = runner_a
             ma._runners["runner-a"] = runner_a
-            ma._registry.register(ctx_a)
+            ma._registry.register("model-a", ctx_a, ["model-a"])
 
             runner_b = MockRunner()
             ctx_b = make_ctx("model-b", 18001, RunnerState.RUNNING)
-            runner_b._models["model-b"] = ctx_b
+            runner_b._ctx = ctx_b
+            ctx_b._runner = runner_b
             ma._runners["runner-b"] = runner_b
-            ma._registry.register(ctx_b)
+            ma._registry.register("model-b", ctx_b, ["model-b"])
 
             # Eject via one name — succeeds, no conflict, cache deleted.
             result = asyncio.run(ma.eject("model-a"))
@@ -265,10 +267,10 @@ class TestEjectMethod:
             # (same backend/runner-type), aliased to one shared context.
             runner = MockRunner()
             ctx = make_ctx("model-a", 18000, RunnerState.RUNNING)
-            runner._models["model-a"] = ctx
-            runner._models["model-b"] = ctx   # alias → same shared context
+            runner._ctx = ctx
+            ctx._runner = runner
             ma._runners["runner"] = runner
-            ma._registry.register(ctx, ["model-a", "model-b"])
+            ma._registry.register("shared-ckpt", ctx, ["model-a", "model-b"])
 
             result = asyncio.run(ma.eject("model-a"))
 
