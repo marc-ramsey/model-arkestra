@@ -62,6 +62,9 @@ def worker_server():
         warmup-time: 5
         backends:
           default: test-backend
+          test-backend:
+            runner: process
+            binary_dir: /nonexistent
         runners:
           default: process
         models:

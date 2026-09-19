@@ -25,9 +25,15 @@ class ProcessRunner(BaseRunner):
     ) -> None:
         await self._ensure_port_available(ctx.port)
 
-        # Resolve backend and locate binary.
+        # Resolve backend and locate binary. Unknown backend → empty dict,
+        # which fails fast with a clear "Binary not found" error below.
         be_id = ctx.backend_id or model_data.get("backend")
-        backend = self.cm[f"backends/{be_id}"] if be_id else {}
+        backend = {}
+        if be_id:
+            if self.arkestra is not None:
+                backend = self.arkestra.get_backend(be_id) or {}
+            else:
+                backend = self.cm.get(f"backends/{be_id}") or {}
         binary_dir = (backend or {}).get("binary_dir", "") or ""
         binary_name = (backend or {}).get("binary", "llama-server") or "llama-server"
         binary_path = os.path.join(binary_dir, binary_name)

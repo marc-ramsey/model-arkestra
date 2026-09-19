@@ -152,23 +152,30 @@ class BaseRunner(ABC):
         # ── Update context ───────────────────────────────────────────
         ctx.port = eff_port
         ctx.backend_id = effective_backend
+        was_loading = ctx.state == RunnerState.LOADING
         ctx.set_state("load")
         if self.arkestra:
             self.arkestra.log(f"[start] model={model_name} port={eff_port} backend={effective_backend}")
 
-        await self._ensure_port_available(eff_port)
+        try:
+            await self._ensure_port_available(eff_port)
 
-        # ── Apply transient overrides ────────────────────────────────
-        for key in ('args', 'model'):
-            if key in inference_kwargs and inference_kwargs[key] is not None:
-                model_data[key] = inference_kwargs[key]
-        if inference_kwargs.get('backend') is not None:
-            effective_backend = inference_kwargs['backend']
-            ctx.backend_id = effective_backend
+            # ── Apply transient overrides ────────────────────────────────
+            for key in ('args', 'model'):
+                if key in inference_kwargs and inference_kwargs[key] is not None:
+                    model_data[key] = inference_kwargs[key]
+            if inference_kwargs.get('backend') is not None:
+                effective_backend = inference_kwargs['backend']
+                ctx.backend_id = effective_backend
 
-        self._inference_kwargs[model_name] = inference_kwargs
+            self._inference_kwargs[model_name] = inference_kwargs
 
-        await self._start_model_process(ctx, model_data, model_name)
+            await self._start_model_process(ctx, model_data, model_name)
+        except Exception:
+            # Roll back so a failed start never leaves the context stuck in LOADING.
+            if not was_loading:
+                ctx.set_state("start_fail")
+            raise
 
         # ── Watch process ────────────────────────────────────────────
         if self._watcher is not None:
