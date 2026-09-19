@@ -171,7 +171,13 @@ class BaseRunner(ABC):
             self._inference_kwargs[model_name] = inference_kwargs
 
             await self._start_model_process(ctx, model_data, model_name)
-        except Exception:
+        except Exception as e:
+            # Record so failed starts are visible in /admin/models and OWUI
+            # (model_status shows error_message for ERROR states; UIs also
+            # read last_error directly).
+            ctx.last_error = str(e)
+            if self.arkestra:
+                self.arkestra.log(f"[start_fail] model={model_name} port={eff_port} error={e}", level="ERROR")
             # Roll back so a failed start never leaves the context stuck in LOADING.
             if not was_loading:
                 ctx.set_state("start_fail")

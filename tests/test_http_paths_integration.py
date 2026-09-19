@@ -71,6 +71,9 @@ class FakeHandler:
 
     def __init__(self) -> None:
         self.calls: list[dict] = []
+        # When set, handle_stream sleeps this long before writing anything.
+        # Simulates a llama-server stuck in prefill (no first token).
+        self.stream_delay: float = 0.0
 
     async def handle_completion(self, req: aiohttp_web.Request) -> aiohttp_web.Response:
         body = await req.json()
@@ -95,6 +98,14 @@ class FakeHandler:
         self.calls.append({"path": "/v1/chat/completions", "body": body})
         resp = aiohttp_web.StreamResponse(status=200, reason="OK")
         await resp.prepare(req)
+        if self.stream_delay:
+            # Simulate a llama-server stuck in prefill: one token, then silence
+            # past the client's sock_read timeout. The stream never completes.
+            import asyncio as _asyncio
+            await _asyncio.sleep(0.5)
+            await resp.write(b'data: {"choices": [{"delta": {"content": "hi"}}]}\n\n')
+            await _asyncio.sleep(self.stream_delay)
+            return resp
         if body.get("tools"):
             # Mimic llama-server tool-call stream: argument deltas then a
             # finish-reason-only final chunk (no usage).
@@ -196,6 +207,32 @@ class TestAsyncStream:
         assert tool_chunks[0][0]["function"]["name"] == "get_weather"
         finish = [c for c in chunks if "finish_reason" in c]
         assert finish and finish[0]["finish_reason"] == "tool_calls"
+
+    async def test_stream_timeout_raises_runner_error(self, stream_server):
+        """A backend silent past the timeout must raise RunnerError (not hang).
+
+        Regression: aiohttp's default total timeout is 5 min — a llama-server
+        stuck mid-stream made OWUI show 'Stream error' only after ~5 minutes.
+        The mock sends one token then stalls for 40 s; with sock_read=30 the
+        provider must give up well before the stream could ever finish.
+        """
+        runner, handler, app, _server = stream_server
+        handler.stream_delay = 40.0
+        prov = _provider(runner)
+        import asyncio as _asyncio
+        from model_arkestra.types import RunnerError
+
+        async def run():
+            try:
+                async for _ in prov.stream({"prompt": "hi"}):
+                    pass
+            except RunnerError as e:
+                return str(e)
+            return None
+
+        err = await _asyncio.wait_for(run(), timeout=45.0)
+        assert err is not None, "stream never raised — it hung or completed"
+        assert "timeout" in err.lower()
 
 
 # ── Tests: request (generic POST) ─────────────────────────────────────────

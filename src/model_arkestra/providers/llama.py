@@ -30,6 +30,11 @@ LLAMA_FIELDS = frozenset({
 
 _RETRIES = 12
 _RETRY_SLEEP = 2.5
+# Per-request timeout for chat/stream calls. aiohttp's default total is 5 min,
+# which made a backend stuck in prefill surface as "Stream error" only after
+# ~5 minutes of silence. Socket timeout bounds gaps between chunks; the total
+# covers slow prefills on long contexts (10 min).
+_STREAM_TIMEOUT = aiohttp.ClientTimeout(total=600, sock_read=30)
 
 
 class LlamaProvider(Provider):
@@ -108,7 +113,7 @@ class LlamaProvider(Provider):
 
         async with aiohttp.ClientSession() as session:
             try:
-                async with session.post(url, json=stream_payload, timeout=60) as resp:
+                async with session.post(url, json=stream_payload, timeout=_STREAM_TIMEOUT) as resp:
                     if resp.status != 200:
                         raise RunnerError(f"Server error: {resp.status}")
                     async for event in sse_events(resp.content):

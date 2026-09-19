@@ -214,6 +214,34 @@ class TestStartValidation:
         with pytest.raises(ValueError, match="Unknown backend"):
             asyncio.run(run())
 
+    def test_failed_start_records_last_error(self):
+        """A start failure must record ctx.last_error so the UI can show why."""
+        arkestra = _make_cm(
+            backend_cfg={"default": "vulkan-radv", "vulkan-radv": {"runner": "process"}},
+            runner_cfg={"default": "process"},
+            models_section="ghost-model:\n    model: dummy/x:Q4\n",
+        )
+
+        from model_arkestra.base import BaseRunner
+
+        class FailingRunner(BaseRunner):
+            async def _start_model_process(self, ctx, model_data, model_name):
+                raise RuntimeError("Port 12000 is already in use")
+
+            async def _stop_model_process(self, ctx):
+                pass
+
+        runner = FailingRunner(arkestra._cm, arkestra=arkestra)
+        arkestra._runners["process:ghost-model"] = runner
+
+        import asyncio
+        with pytest.raises(RuntimeError, match="already in use"):
+            asyncio.run(arkestra.start("ghost-model"))
+
+        ctx = arkestra.model_obj("ghost-model")
+        assert ctx.state == RunnerState.STOPPED
+        assert "Port 12000 is already in use" in (ctx.last_error or "")
+
 
 # ── Tests: back-compat shim properties ────────────────────────────────────
 

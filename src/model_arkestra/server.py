@@ -76,6 +76,8 @@ class ChatCompletionRequest(BaseModel):
     # OpenAI-style function calling — forwarded verbatim to the backend.
     tools: Optional[List[Any]] = None
     tool_choice: Optional[Any] = None
+    # e.g. {"include_usage": true} — forwarded so streaming clients get usage.
+    stream_options: Optional[Dict[str, Any]] = None
 
 
 class ChoiceDelta(BaseModel):
@@ -262,6 +264,7 @@ class ArkestraServer:
             "stop": req.stop,
             "tools": req.tools,
             "tool_choice": req.tool_choice,
+            "stream_options": req.stream_options,
         }.items() if v is not None}
 
     async def _run_with_autostart(self, model_name: str, fn, *args: Any, **kwargs: Any) -> Any:
