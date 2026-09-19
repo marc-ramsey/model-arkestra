@@ -8,7 +8,7 @@ from model_arkestra.conn import (
 )
 
 _ENV_VARS = [
-    "ARKESTRA_CONFIG", "ARKESTRA_DIR", "ARKESTRA_URL", "ARKESTRA_API_KEY",
+    "ARKESTRA_CONFIG", "ARKESTRA_URL", "ARKESTRA_API_KEY",
 ]
 
 
@@ -101,12 +101,7 @@ class TestResolveConn:
 
 
 class TestConfigPath:
-    def test_dir_env(self, monkeypatch):
-        monkeypatch.setenv("ARKESTRA_DIR", "/tmp/arak")
-        assert str(resolve_conn(_args(), server=False).config_path) == "/tmp/arak/config.yaml"
-
-    def test_full_env_beats_dir(self, monkeypatch):
-        monkeypatch.setenv("ARKESTRA_DIR", "/tmp/arak")
+    def test_full_env(self, monkeypatch):
         monkeypatch.setenv("ARKESTRA_CONFIG", "/tmp/custom.yaml")
         assert str(resolve_conn(_args(), server=False).config_path) == "/tmp/custom.yaml"
 

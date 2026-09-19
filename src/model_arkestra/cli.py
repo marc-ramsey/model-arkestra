@@ -3,7 +3,7 @@
 Usage:
     arkestra models                # list cached models (name, size)
     arkestra chat -m qwen3-4b      # interactive chat (auto-starts if stopped)
-    arkestra init [--force]        # scaffold config.yaml + backends.yaml
+    arkestra init [--force]        # scaffold config.yaml
 
 Connection resolution is shared with arkestra-server via model_arkestra.conn:
     CLI flag  >  ARKESTRA_* env  >  config.yaml  >  default
@@ -294,8 +294,7 @@ def _print_help(params: dict) -> None:
 # ── init ──────────────────────────────────────────────────────────────
 
 def cmd_init(args) -> None:
-    """Scaffold config.yaml + backends.yaml from bundled templates."""
-    import jinja2
+    """Scaffold config.yaml from the bundled template."""
     from importlib.resources import files
     from model_arkestra.gpu_detect import detect_all
 
@@ -303,7 +302,6 @@ def cmd_init(args) -> None:
     out_dir = config_dir()
     targets = {
         out_dir / "config.yaml": (templates / "config.yaml.j2").read_text(),
-        out_dir / "backends.yaml": (templates / "backends.yaml.j2").read_text(),
     }
 
     if not args.force:
@@ -379,7 +377,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_common_args(c_parser)
 
     # ── init ──────────────────────────────────────────────────────────
-    i_parser = subparsers.add_parser("init", help="Scaffold config.yaml + backends.yaml")
+    i_parser = subparsers.add_parser("init", help="Scaffold config.yaml")
     i_parser.add_argument("--force", action="store_true",
                           help="Overwrite existing files")
     add_common_args(i_parser)

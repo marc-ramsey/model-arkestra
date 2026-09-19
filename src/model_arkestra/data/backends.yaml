@@ -1,0 +1,121 @@
+backends:
+  vulkan-radv:
+    description: "Vulkan (RADV) — AMD GPU; also the generic Vulkan build for other GPUs/CPU"
+    runner: process
+    source_ref: official-vulkan-radv
+    engine: llama-cpp
+    args:
+      ngl: 999
+      ctx-size: ${default/ctx-size}
+      flash-attn: 'on'
+      parallel: 1
+      no-mmap: true
+      cache-type-k: q8_0
+      cache-type-v: q8_0
+  rocm:
+    description: "ROCm — best for AMD iGPU and discrete GPUs"
+    runner: process
+    source_ref: rocm-gfx1151
+    engine: llama-cpp
+    args:
+      ngl: 999
+      ctx-size: ${default/ctx-size}
+      flash-attn: 'on'
+      parallel: 1
+      no-mmap: true
+      cache-type-k: q8_0
+      cache-type-v: q8_0
+  rocm-container:
+    description: "ROCm in a container — crash isolation for the GPU build"
+    runner: podman
+    image: docker.io/rocm/dev-ubuntu-26.04:7.14.1-full
+    entrypoint: /llm-server/bin/llama-server
+    binary_dir: /path/to/your/rocm-bin   # mounted at /llm-server/bin (ro)
+    env_container:
+      LD_LIBRARY_PATH: /llm-server/bin:/opt/rocm/lib
+    devices:
+    - /dev/kfd
+    - /dev/dri
+    engine: llama-cpp
+    args:
+      ngl: 999
+      ctx-size: ${default/ctx-size}
+      flash-attn: 'on'
+      parallel: 1
+      no-mmap: true
+      cache-type-k: q8_0
+      cache-type-v: q8_0
+  cuda:
+    description: "NVIDIA CUDA — for NVIDIA discrete GPUs"
+    runner: process
+    source_ref: official-cuda
+    engine: llama-cpp
+    args:
+      ngl: 999
+      ctx-size: ${default/ctx-size}
+      flash-attn: 'on'
+      parallel: 1
+      no-mmap: true
+      cache-type-k: q8_0
+      cache-type-v: q8_0
+  cpu:
+    description: "CPU-only mode — uses all available cores"
+    runner: process
+    source_ref: ggml-org-cpu
+    engine: llama-cpp
+    args:
+      threads: ${NPROC}
+      ctx-size: ${default/ctx-size}
+      no-mmap: true
+sources:
+  official-vulkan-radv:
+    type: github-release
+    repo: ggml-org/llama.cpp
+    release_type: latest
+    asset_pattern: llama-*-bin-*-vulkan-x64*
+    sha256_asset: '*.sha256'
+  rocm-gfx110X:
+    type: github-release
+    repo: lemonade-sdk/llamacpp-rocm
+    release_type: latest
+    asset_pattern: llama-*-ubuntu-rocm-gfx110X-x64.zip
+  rocm-gfx1150:
+    type: github-release
+    repo: lemonade-sdk/llamacpp-rocm
+    release_type: latest
+    asset_pattern: llama-*-ubuntu-rocm-gfx1150-x64.zip
+  rocm-gfx1151:
+    type: github-release
+    repo: lemonade-sdk/llamacpp-rocm
+    release_type: latest
+    asset_pattern: llama-*-ubuntu-rocm-gfx1151-x64.zip
+  rocm-gfx120X:
+    type: github-release
+    repo: lemonade-sdk/llamacpp-rocm
+    release_type: latest
+    asset_pattern: llama-*-ubuntu-rocm-gfx120X-x64.zip
+  rocm-gfx90a:
+    type: github-release
+    repo: lemonade-sdk/llamacpp-rocm
+    release_type: latest
+    asset_pattern: llama-*-ubuntu-rocm-gfx90a-x64.zip
+  rocm-gfx103X:
+    type: github-release
+    repo: lemonade-sdk/llamacpp-rocm
+    release_type: latest
+    asset_pattern: llama-*-ubuntu-rocm-gfx103X-x64.zip
+  official-cuda:
+    type: github-release
+    repo: ai-dock/llama.cpp-cuda
+    release_type: latest
+    asset_pattern: llama.cpp-*-cuda-*-amd64.tar.gz
+  ggml-org-cpu:
+    type: github-release
+    repo: ggml-org/llama.cpp
+    release_type: latest
+    asset_pattern: llama-*-bin-*-static-x86_64*
+    sha256_asset: ''
+defaults:
+  release_type: latest
+  verify_checksum: true
+  cache_ttl_hours: 24

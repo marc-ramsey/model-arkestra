@@ -11,7 +11,7 @@ that carries the scheme, host, port, and any URL path prefix.  The server *bind*
 address is a separate input because it can legitimately differ from the dialable
 target (e.g. bind ``0.0.0.0`` for LAN exposure while clients dial the hostname).
 
-Config-location env (``ARKESTRA_CONFIG`` / ``ARKESTRA_DIR``) lives in
+Config-location env (``ARKESTRA_CONFIG``) lives in
 :mod:`model_arkestra.common` so the core library and the CLI share one resolver;
 the connection-side env (url / api-key) is defined here.
 """
@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 from urllib.parse import urlparse
 
-from model_arkestra.common import resolve_config_path, ENV_CONFIG, ENV_DIR
+from model_arkestra.common import resolve_config_path, ENV_CONFIG
 
 # ── Shared env-var names (connection side) ─────────────────────────────
 ENV_URL = "ARKESTRA_URL"
@@ -94,7 +94,7 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     The server additionally registers ``--bind`` (see :func:`add_server_args`).
     """
     parser.add_argument("--config", "-c", default=None,
-                        help=f"Path to config.yaml (env: {ENV_CONFIG} / {ENV_DIR})")
+                        help=f"Path to config.yaml (env: {ENV_CONFIG})")
     parser.add_argument("--url", default=None,
                         help=(f"Public server URL scheme://host:port/prefix "
                               f"(env: {ENV_URL}; default http://{DEFAULT_TARGET_HOST}:{DEFAULT_PORT})"))

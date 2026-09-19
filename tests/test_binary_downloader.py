@@ -14,7 +14,7 @@ from model_arkestra.binary_downloader import (
     GITHUB_RELEASE, LOCAL_FILE, RUNTIME_CHECK, RuntimeCheckError,
     _file_lock,
 )
-from model_arkestra.common import resolve_config_path, resolve_backends_path
+from model_arkestra.common import resolve_config_path
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────

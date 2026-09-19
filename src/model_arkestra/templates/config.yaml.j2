@@ -1,8 +1,12 @@
 # ═══════════════════════════════════════════
 # config.yaml — ModelArkestra model configuration
 # ═══════════════════════════════════════════
-# For backend definitions (binary sources, download channels), see
-# backends.yaml in the same directory.
+# This is the ONLY user-managed file.
+#
+# Backend definitions and engine arg schemas ship read-only inside the
+# package. To change a backend setting, add a per-key OVERRIDE under
+# backends: below — overrides deep-merge over the shipped definitions
+# (override wins). Custom backends may be declared here as full sub-dicts.
 
 default:
   admin-key: whatever          # key for /admin/* and /api/* auth
@@ -18,7 +22,7 @@ env:
   HF_HUB_CACHE: ~/.cache/huggingface
 
 backends:
-  default: vulkan-radv         # references a backend name from backends.yaml
+  default: vulkan-radv         # selects a backend from the shipped definitions
 
 models:
   qwen3-4b:

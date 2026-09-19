@@ -209,27 +209,26 @@ class TestParamsFromArgs:
 # ── init ───────────────────────────────────────────────────────────────────
 
 class TestInit:
-    def test_scaffolds_both_files(self, tmp_path, monkeypatch):
+    def test_scaffolds_config(self, tmp_path, monkeypatch):
         from model_arkestra.cli import cmd_init
-        monkeypatch.setenv("ARKESTRA_DIR", str(tmp_path))
+        monkeypatch.setenv("ARKESTRA_CONFIG", str(tmp_path / "config.yaml"))
         with patch("model_arkestra.gpu_detect.detect_all",
                    return_value={"recommendation": ("cpu", "No GPU found")}):
             cmd_init(_args())
         assert (tmp_path / "config.yaml").exists()
-        assert (tmp_path / "backends.yaml").exists()
         text = (tmp_path / "config.yaml").read_text()
         assert "default: cpu" in text
 
     def test_refuses_overwrite_without_force(self, tmp_path, monkeypatch):
         from model_arkestra.cli import cmd_init
-        monkeypatch.setenv("ARKESTRA_DIR", str(tmp_path))
+        monkeypatch.setenv("ARKESTRA_CONFIG", str(tmp_path / "config.yaml"))
         (tmp_path / "config.yaml").write_text("existing")
         with pytest.raises(SystemExit):
             cmd_init(_args())
 
     def test_force_overwrites(self, tmp_path, monkeypatch):
         from model_arkestra.cli import cmd_init
-        monkeypatch.setenv("ARKESTRA_DIR", str(tmp_path))
+        monkeypatch.setenv("ARKESTRA_CONFIG", str(tmp_path / "config.yaml"))
         (tmp_path / "config.yaml").write_text("existing")
         with patch("model_arkestra.gpu_detect.detect_all", return_value={}):
             cmd_init(_args(force=True))
@@ -237,7 +236,7 @@ class TestInit:
 
     def test_no_detection_still_scaffolds(self, tmp_path, monkeypatch):
         from model_arkestra.cli import cmd_init
-        monkeypatch.setenv("ARKESTRA_DIR", str(tmp_path))
+        monkeypatch.setenv("ARKESTRA_CONFIG", str(tmp_path / "config.yaml"))
         with patch("model_arkestra.gpu_detect.detect_all",
                    side_effect=Exception("no pci")):
             cmd_init(_args())

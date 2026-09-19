@@ -1,0 +1,120 @@
+# ── Schema Registry ────────────────────────────────────────────────
+# Admin UI uses this to render editable fields in the config panel.
+# Keys resolve via: schemas["model-args"][engine_name]
+
+model-args:
+
+  llama-cpp:
+    name:
+      type: string
+    repo:
+      type: string
+      default: hf
+      options: [hf, lcl]
+    model:
+      type: string
+    ctx-size:
+      type: integer
+    temp:
+      type: float
+      minimum: 0.0
+      maximum: 2.0
+    top-p:
+      type: float
+      minimum: 0.0
+      maximum: 1.0
+    top-k:
+      type: integer
+      minimum: 1
+    min-p:
+      type: float
+      minimum: 0.0
+      maximum: 1.0
+    batch-size:
+      type: integer
+      minimum: 1
+    presence-penalty:
+      type: float
+      step: 0.1
+    repeat-penalty:
+      type: float
+      step: 0.1
+    max-tokens:
+      type: integer
+      minimum: 1
+    chat-template-kwargs:
+      type: string
+    ngl:
+      type: integer
+      minimum: 0
+    flash-attn:
+      type: string
+      options: [on, off, auto]
+    no-mmap:
+      type: boolean
+    cache-type-k:
+      type: string
+      options: [f16, q8_0, q4_0]
+    cache-type-v:
+      type: string
+      options: [f16, q8_0, q4_0]
+    parallel:
+      type: integer
+      minimum: 1
+    kv-unified:
+      type: boolean
+    reasoning-effort:
+      type: string
+      options: [none, minimal, low, medium, high, xhigh, max]
+    threads:
+      type: integer
+      minimum: 1
+    device:
+      type: string
+    # ── Speculative decoding (MTP / draft models) ───────────────
+    spec-type:
+      type: string
+      default: none
+      options: [none, draft-mtp, draft-simple, draft-eagle3, draft-dflash, draft-dspark, ngram-cache, ngram-simple, ngram-map-k, ngram-mod]
+    spec-draft-model:
+      type: string
+    spec-draft-n-max:
+      type: integer
+      minimum: 1
+    spec-draft-n-min:
+      type: integer
+      minimum: 0
+    spec-draft-p-split:
+      type: float
+      minimum: 0.0
+      maximum: 1.0
+    spec-draft-p-min:
+      type: float
+      minimum: 0.0
+      maximum: 1.0
+    spec-draft-ngl:
+      type: string
+
+  onnx:
+    name:
+      type: string
+    repo:
+      type: string
+      default: hf
+      options: [hf, lcl]
+    model:
+      type: string
+    path:
+      type: string
+    device:
+      type: string
+      default: CPUExecutionProvider
+    providers:
+      type: list
+    voices_path:
+      type: string
+    g2p_lang:
+      type: string
+      default: en-us
+    tokenizer:
+      type: string

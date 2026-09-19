@@ -15,31 +15,14 @@ INFRA_KEYS = frozenset({
 })
 
 
-def _load_schema_registry(config_path: Optional[str]) -> Dict[str, Any]:
-    """Load named schemas from schemas.yaml in the config directory.
-
-    Falls back to bundled templates/schemas.yaml.j2 if none found.
-    """
-    schemas: Dict[str, Any] = {}
+def _load_schema_registry(config_path: Optional[str] = None) -> Dict[str, Any]:
+    """Load the engine-arg schema registry from package data (read-only)."""
     try:
-        parent = Path(config_path).parent if config_path else Path().resolve()
-        schema_path = parent / "schemas.yaml"
-    except (AttributeError, TypeError):
-        return schemas
-
-    if schema_path.exists():
-        with open(schema_path) as f:
-            schemas = yaml.safe_load(f) or {}
-    else:
-        try:
-            from importlib.resources import files
-            bundled = (files("model_arkestra.templates") / "schemas.yaml.j2").read_text()
-            import jinja2
-            rendered = jinja2.Template(bundled).render()
-            schemas = yaml.safe_load(rendered) or {}
-        except Exception:
-            pass
-    return schemas
+        from importlib.resources import files
+        text = (files("model_arkestra.data") / "schemas.yaml").read_text()
+        return yaml.safe_load(text) or {}
+    except Exception:
+        return {}
 
 
 def _get_inference_keys(model_data: Dict, backend_cfg: Dict, default_section: Dict,
@@ -195,16 +178,12 @@ SUBPROCESS_ENV: Dict[str, str] = dict(os.environ)
 DEFAULT_CONFIG_DIR = Path.home() / ".config" / "arkestra"
 
 # Shared env-var names for config location (connection-side names live in conn.py).
-ENV_CONFIG = "ARKESTRA_CONFIG"   # full path to config.yaml (overrides the dir)
-ENV_DIR = "ARKESTRA_DIR"         # config directory (config.yaml + backends.yaml)
+ENV_CONFIG = "ARKESTRA_CONFIG"   # full path to config.yaml
 
 
 def config_dir() -> Path:
-    """Config directory: ``$ARKESTRA_DIR`` (expanded) or ``~/.config/arkestra``."""
-    val = os.environ.get(ENV_DIR)
-    if val:
-        return Path(os.path.expandvars(val)).expanduser()
-    return DEFAULT_CONFIG_DIR
+    """Directory holding config.yaml: parent of the resolved config path."""
+    return resolve_config_path().parent
 
 
 def resolve_config_path(config_path: Optional[str] = None) -> Path:
@@ -213,7 +192,7 @@ def resolve_config_path(config_path: Optional[str] = None) -> Path:
     Resolution order:
       1. Explicit ``config_path`` argument (absolute or relative)
       2. ``$ARKESTRA_CONFIG`` (full path)
-      3. ``$ARKESTRA_DIR/config.yaml`` (or ``~/.config/arkestra/config.yaml``)
+      3. ``~/.config/arkestra/config.yaml``
 
     Does NOT create the directory — that's left to ConfigManager which will
     raise FileNotFoundError with a clear message pointing users to run
@@ -224,22 +203,7 @@ def resolve_config_path(config_path: Optional[str] = None) -> Path:
     val = os.environ.get(ENV_CONFIG)
     if val:
         return Path(os.path.expandvars(val)).expanduser()
-    return config_dir() / "config.yaml"
-
-
-def resolve_backends_path(config_dir: Optional[str] = None) -> Optional[Path]:
-    """Resolve backends.yaml path from an explicit dir or the config directory.
-
-    Resolution order:
-      1. Explicit ``config_dir`` argument → ``{config_dir}/backends.yaml``
-      2. ``$ARKESTRA_DIR/backends.yaml`` (or ``~/.config/arkestra/backends.yaml``)
-
-    Returns None if neither resolves to an existing file (caller should
-    treat as "no backends configured" and fall back to Containerfile builds).
-    """
-    base = Path(os.path.expandvars(config_dir)).expanduser() if config_dir else config_dir()
-    path = base / "backends.yaml"
-    return path if path.exists() else None
+    return DEFAULT_CONFIG_DIR / "config.yaml"
 
 
 def default_cache_root() -> Path:
@@ -718,7 +682,7 @@ def build_model_args(
         backend_cfg = {}
 
     # Load schema registry to whitelist valid inference keys
-    schema = _load_schema_registry(str(cm.config_path) if hasattr(cm, 'config_path') else None)
+    schema = _load_schema_registry()
     model_args_schema = schema.get("model-args", {})
     bcfg_engine = backend_cfg.get("engine") if isinstance(backend_cfg, dict) else None
     default_engine = (default_section or {}).get("engine")

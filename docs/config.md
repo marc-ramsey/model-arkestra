@@ -1,40 +1,42 @@
 # Configuration Format (YAML)
 
-ModelArkestra uses **two configuration files** that work together:
+ModelArkestra uses **one user file and one shipped file**:
 
-| File | Purpose | User Editability |
-|------|---------|-----------------|
-| `~/.config/arkestra/config.yaml` | Model definitions, ports, global defaults | Full — edit freely |
-| `~/.config/arkestra/backends.yaml` | Backend types, binary sources, download channels | **Advanced** — see below |
+| File | Purpose | Editability |
+|------|---------|-------------|
+| `~/.config/arkestra/config.yaml` | Models, checkpoints, defaults, backend selection + overrides | Full — the only user-managed file |
+| `<package>/data/backends.yaml` | Stock backend definitions, download sources | Read-only — ships with the package; update via package upgrade |
 
-Both files are scaffolded together by `arkestra init`. They live in the XDG-compliant directory `~/.config/arkestra/`, resolvable via `resolve_config_path()` and `resolve_backends_path()`.
+`arkestra init` scaffolds `config.yaml`. Backend definitions and engine arg
+schemas (`<package>/data/schemas.yaml`) are loaded from package data at startup
+and deep-merged **under** config.yaml: any key you set in config.yaml wins.
 
 ```
 ~/.config/arkestra/
-├── config.yaml        ← your models + global settings
-└── backends.yaml      ← backend definitions + download sources
+└── config.yaml        ← everything user-owned
+
+<package>/data/       ← read-only, version-matched to the code
+├── backends.yaml      ← stock backend definitions + download sources
+└── schemas.yaml       ← engine arg schemas (admin UI field types)
 ```
 
 ## Quick Start: The Init Command
 
 ```bash
-arkestra init --force          # writes both files from scratch
-arkestra list-backends         # shows available backends + binary status
-arkestra download-backend rocm  # downloads the ROCm binary
+arkestra init --force          # writes config.yaml from scratch
 arkestra start                 # validates backends, starts server
 ```
 
-**Detection flow:** `init` probes your hardware (GPU vendor, CPU arch), then writes a `config.yaml` with `backends.default:` pointing to the best backend for your machine. The full backend definitions live in `backends.yaml`.
+**Detection flow:** `init` probes your hardware (GPU vendor, CPU arch), then writes a `config.yaml` with `backends.default:` pointing at the best stock backend for your machine.
 
 ## Configuration Commands
 
 | Command | Purpose |
 |---------|---------|
-| `arkestra init [--force]` | Scaffold both config files; sets default backend from detection |
+| `arkestra init [--force]` | Scaffold config.yaml; sets default backend from detection |
 | `arkestra detect` | Read-only hardware report — no file changes |
 | `arkestra list-backends` | Table of backends: type, description, cached binary status |
-| `arkestra add-backend -l /path/to/binary [-n name] [-d desc]` | Add a custom local llama-server binary |
-| `arkestra remove-backend <name>` | Delete a backend from backends.yaml |
+| `arkestra add-backend -l /path/to/binary [-n name] [-d desc]` | Add a custom local llama-server binary (writes to config.yaml) |
 | `arkestra download-backend <name> [--version TAG]` | Download a pre-built binary for a backend |
 | `arkestra download-all` | Auto-detect + download primary + fallback backends |
 
@@ -58,7 +60,7 @@ default-env:
   hf-hub-cache: ~/.cache/huggingface
 
 backends:
-  default: rocm        # picks a backend from backends.yaml
+  default: rocm        # picks a stock backend (shipped definition)
 
 models:
   qwen3.8-27b:
@@ -143,11 +145,11 @@ default-env:
 
 ### `backends.default:` Key
 
-This single key selects which backend from `backends.yaml` is used as the default for all models that don't specify a `backend` override. It does **not** define the backend — that lives in `backends.yaml`.
+This single key selects which stock backend (shipped definition) is the default for all models that don't specify a `backend` override. It does **not** define the backend.
 
 ```yaml
 backends:
-  default: rocm   # references an entry in backends.yaml
+  default: rocm   # references a shipped stock backend
 ```
 
 ### `models:` Section — Model Definitions
@@ -221,9 +223,45 @@ models:
 
 ---
 
-## `backends.yaml` — Backend Definitions & Download Sources
+## Backend Definitions & Overrides
 
-> ⚠️ **Advanced:** This file is auto-generated on `init`. Edit with caution if you're not familiar with backend configuration. Use `arkestra add-backend` for custom binaries.
+Stock backend definitions ship read-only in `<package>/data/backends.yaml`
+(plus download `sources:` and global download `defaults:`). They are merged
+**under** your config.yaml at startup — you never edit the shipped file.
+
+Two things you can do from config.yaml:
+
+**1. Select the default backend** (a name from the shipped definitions):
+
+```yaml
+backends:
+  default: rocm
+```
+
+**2. Override any key of a stock backend, or declare a custom one.**
+Overrides deep-merge over the shipped definition; your value wins per key.
+Unlisted keys keep their shipped values. A full sub-dict declares a new backend.
+
+```yaml
+backends:
+  default: vulkan-radv-custom
+  # sparse override — only ngl changes, everything else ships as-is
+  rocm:
+    args:
+      ngl: 512
+  # custom backend — full definition, lives here because it's yours
+  vulkan-radv-custom:
+    description: "Custom local build"
+    runner: process
+    binary_dir: /home/me/local/vulkan-bin/radv
+    engine: llama-cpp
+    args:
+      ngl: 999
+      ctx-size: ${default/ctx-size}
+```
+
+Declaring a full backend sub-dict in config.yaml logs a one-line warning at
+startup reminding you it is treated as an override of the shipped layer.
 
 ```yaml
 backends:
@@ -338,7 +376,7 @@ arkestra add-backend --local /opt/my-builds/llama-server \
                            --description "Custom AVX512 build"
 ```
 
-This appends to the `backends:` section of backends.yaml:
+This appends to the `backends:` section of config.yaml (your file):
 
 ```yaml
 my-avx512:
@@ -395,11 +433,11 @@ Arguments are resolved per-key through a unified chain, then converted to CLI:
 
 **Phase 1 — Per-key resolution (first match wins):**
 1. Model-level field in config.yaml (e.g. ``models.<m>.ngl``)
-2. Backend ``args:`` dict in backends.yaml (e.g. ``backends.<b>.args.ngl``) — GPU/offload defaults a backend sets for all its models
+2. Backend ``args:`` dict (e.g. ``backends.<b>.args.ngl``) — from config.yaml overrides or the shipped definition; GPU/offload defaults a backend sets for all its models
 3. ``default:`` section in config.yaml
 4. Runtime ``inference_kwargs`` passed to ``start()`` — transient, last-wins override
 
-Only keys present in the engine's schema whitelist (``schemas.yaml`` →
+Only keys present in the engine's schema whitelist (shipped ``schemas.yaml`` →
 ``model-args.<engine>``) are emitted; infra/junk keys are dropped.
 
 **Placeholders:** string values containing ``${...}`` are expanded against the
@@ -415,7 +453,7 @@ tokens. Infrastructure flags (``--port``, ``--model``) are injected by the engin
 ### Backend Selection Resolution:
 
 1. Model's ``backend:`` field (if specified)
-2. ``backends.default:`` key in backends.yaml (or a runtime-detected fallback override when the default backend's runtime is missing)
+2. ``backends.default:`` key in config.yaml (or a runtime-detected fallback override when the default backend's runtime is missing)
 3. GPU-detection recommendation, else ``"cpu"``
 
 ### Runner Resolution:

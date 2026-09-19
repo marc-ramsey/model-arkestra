@@ -41,14 +41,27 @@ class ModelArkestra:
     ):
         # Resolve config path — defaults to ~/.config/arkestra/config.yaml
         self._config_path = resolve_config_path(config_path)
-        self._cm = ModelConfigManager(str(self._config_path))
 
-        # Single source of truth: backends.yaml (base) merged with config.yaml (overlay).
-        # Nested dicts deep-merge; top-level keys coexist.
-        backends_path = Path(self._config_path).parent / "backends.yaml"
-        base = (backends_config if backends_config is not None
-                else (yaml.safe_load(open(backends_path)) or {} if backends_path.exists() else {}))
-        self._cm.merge(base)
+        # Layered config: package-shipped backends.yaml is the read-only base;
+        # config.yaml overlays it (per-key, deep merge — overlay wins).
+        # All user state lives in config.yaml; nothing writes backends.yaml.
+        from importlib.resources import files as _files
+        try:
+            base_text = (_files("model_arkestra.data") / "backends.yaml").read_text()
+        except Exception:
+            base_text = ""
+        base = backends_config if backends_config is not None else (yaml.safe_load(base_text) or {})
+        overlay = yaml.safe_load(Path(self._config_path).read_text()) or {}
+        self._cm = ModelConfigManager(str(self._config_path))
+        self._cm.data = base
+        self._cm.merge(overlay)
+        # Warn if the overlay carries full backend definitions (drift risk).
+        for bid in (overlay.get("backends") or {}):
+            if bid != "default":
+                logger.warning(
+                    "config.yaml defines backends.%s — treated as override of shipped backends.yaml",
+                    bid,
+                )
         default_section = self._cm.get("default", {})
 
         # ── Registry: name→Model ownership, cluster routing, port pool ──
@@ -305,12 +318,9 @@ class ModelArkestra:
         return self._cm.get_models()
 
     def get_backend(self, backend_id: str) -> Optional[Dict[str, Any]]:
-        # Check backends.yaml first (preferred), then config.yaml (legacy)
+        # Merged tree (shipped base + config.yaml overlay) is the only source.
         be = self._cm.get(f"backends/{backend_id}") if backend_id else None
-        if be and isinstance(be, dict):
-            return be
-        # Fall back to config.yaml for legacy inline backend definitions
-        return self._cm.get_backend(backend_id)
+        return be if isinstance(be, dict) else None
 
     # ── model introspection (runtime state) ────────────────────────────
 

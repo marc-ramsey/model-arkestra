@@ -81,10 +81,8 @@ class ArkestraAdmin:
         self._load_schema_registry()
 
     def _load_schema_registry(self) -> None:
-        """Load named schemas from schemas.yaml or bundled fallback."""
-        self._schemas = _load_schema_registry(
-            getattr(self.server._arkestra, "_config_path", None),
-        )
+        """Load the engine-arg schema registry from package data (read-only)."""
+        self._schemas = _load_schema_registry()
 
     def _resolve_ref(self, model_ref: str):
         """Resolve a raw model reference against config defaults/repos."""

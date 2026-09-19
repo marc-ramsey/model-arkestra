@@ -149,22 +149,21 @@ class TestCliChat:
 class TestCliInit:
 
     def test_init_creates_config(self, tmp_path):
-        env = {"ARKESTRA_DIR": str(tmp_path)}
+        env = {"ARKESTRA_CONFIG": str(tmp_path / "config.yaml")}
         result = _run_cli("init", env_extra=env)
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert (tmp_path / "config.yaml").exists()
-        assert (tmp_path / "backends.yaml").exists()
 
     def test_init_refuses_overwrite(self, tmp_path):
         (tmp_path / "config.yaml").write_text("existing")
-        env = {"ARKESTRA_DIR": str(tmp_path)}
+        env = {"ARKESTRA_CONFIG": str(tmp_path / "config.yaml")}
         result = _run_cli("init", env_extra=env)
         assert result.returncode != 0
         assert "Refusing to overwrite" in result.stderr
 
     def test_init_force_overwrites(self, tmp_path):
         (tmp_path / "config.yaml").write_text("existing")
-        env = {"ARKESTRA_DIR": str(tmp_path)}
+        env = {"ARKESTRA_CONFIG": str(tmp_path / "config.yaml")}
         result = _run_cli("init", "--force", env_extra=env)
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert "existing" not in (tmp_path / "config.yaml").read_text()
