@@ -52,12 +52,15 @@ class ModelArkestra:
             base_text = ""
         base = backends_config if backends_config is not None else (yaml.safe_load(base_text) or {})
         overlay = yaml.safe_load(Path(self._config_path).read_text()) or {}
+        # Capture shipped keys before merge — cm.merge() mutates base in place.
+        shipped_backend_ids = set(((base.get("backends") or {}) if isinstance(base, dict) else {}).keys())
         self._cm = ModelConfigManager(str(self._config_path))
         self._cm.data = base
         self._cm.merge(overlay)
-        # Warn if the overlay carries full backend definitions (drift risk).
+        # Warn only when the overlay replaces a shipped backend (drift risk).
+        # New backends not in the base are plain additions — no warning.
         for bid in (overlay.get("backends") or {}):
-            if bid != "default":
+            if bid != "default" and bid in shipped_backend_ids:
                 logger.warning(
                     "config.yaml defines backends.%s — treated as override of shipped backends.yaml",
                     bid,
