@@ -215,6 +215,8 @@ class ArkestraServer:
         self._app: Optional[FastAPI] = None
         self._server: Any = None
         self._started_at = time.time()
+        # Last chat request stats — served by /api/v1/stats (Open WebUI compat)
+        self._last_request_stats: Dict[str, Any] = {}
 
     # ── Readiness / model-lookup helpers ──────────────────────────
 
@@ -453,6 +455,52 @@ class ArkestraServer:
         async def health_v1():
             return await health()
 
+        # ── Open WebUI compat routes (/api/v1/*) ──────────────────
+        # OWUI polls these on a fixed interval; without them the log
+        # fills with 404s and chat stats (tokens, latency) are missing.
+
+        @app.get("/api/v1/health")
+        async def owui_health():
+            return await health()
+
+        @app.get("/api/v1/stats")
+        async def owui_stats():
+            s = self._last_request_stats
+            if not s:
+                return {"status": "ok", "stats": None}
+            return {
+                "status": "ok",
+                "stats": {
+                    "model": s["model"],
+                    "time": s["timestamp"],
+                    "tokens": s["total_tokens"],
+                    "prompt_tokens": s["prompt_tokens"],
+                    "completion_tokens": s["completion_tokens"],
+                    "latency_ms": s["latency_ms"],
+                },
+            }
+
+        @app.get("/api/v1/system-stats")
+        async def owui_system_stats():
+            try:
+                v1_data = self._arkestra.get_v1_models()
+                loaded = sum(1 for m in v1_data.get("data", []) if m.get("status", {}).get("value") == "loaded")
+            except Exception:
+                loaded = 0
+            return {
+                "status": "ok",
+                "uptime_seconds": round(time.time() - self._started_at, 1),
+                "platform": platform.platform(),
+                "models_loaded": loaded,
+            }
+
+        # Stub for OWUI's live-log WebSocket — closes immediately.
+        @app.websocket("/logs/stream")
+        async def logs_stream_stub(websocket: WebSocket):
+            await websocket.accept()
+            await websocket.send_text(json.dumps({"error": "log streaming not supported"}))
+            await websocket.close()
+
         # ── Route: POST /v1/embeddings (tag-based routing) ───────
 
         @app.post("/v1/embeddings")
@@ -662,6 +710,15 @@ class ArkestraServer:
         )
         latency_ms = round((time.monotonic() - t0) * 1000)
         self._arkestra.log(f"[action=req model={model_name} method=POST path=/v1/chat/completions status=200 latency_ms={latency_ms} tokens={completion_tokens}]")
+        # Record for /api/v1/stats (Open WebUI shows these in the chat UI)
+        self._last_request_stats = {
+            "model": model_name,
+            "timestamp": time.time(),
+            "latency_ms": latency_ms,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        }
 
         return Response(
             content=ChatCompletionResponse(
@@ -754,12 +811,30 @@ class ArkestraServer:
                     # Send [DONE] marker
                     latency_ms = round((time.monotonic() - t0) * 1000)
                     self._arkestra.log(f"[action=stream_end model={model_name} duration_ms={latency_ms} tokens={tokens_seen}] status=ok")
+                    # Record for /api/v1/stats (Open WebUI shows these in the chat UI)
+                    self._last_request_stats = {
+                        "model": model_name,
+                        "timestamp": time.time(),
+                        "latency_ms": latency_ms,
+                        "prompt_tokens": max(1, sum(len(str(m.content).split()) for m in req.messages) // 4),
+                        "completion_tokens": tokens_seen,
+                        "total_tokens": max(1, sum(len(str(m.content).split()) for m in req.messages) // 4) + tokens_seen,
+                    }
                     yield "data: [DONE]\n\n"
                     return
 
         except Exception as e:
             latency_ms = round((time.monotonic() - t0) * 1000)
             self._arkestra.log(f"[action=stream_end model={model_name} duration_ms={latency_ms} tokens={tokens_seen}] status=error")
+            # Record for /api/v1/stats even on failure (OWUI tolerates missing keys)
+            self._last_request_stats = {
+                "model": model_name,
+                "timestamp": time.time(),
+                "latency_ms": latency_ms,
+                "prompt_tokens": 0,
+                "completion_tokens": tokens_seen,
+                "total_tokens": tokens_seen,
+            }
             # Never raise from inside a StreamingResponse generator — headers may already be flushed
             yield _sse_format({"error": str(e), "model": model_name})
             yield "data: [DONE]\n\n"
@@ -768,6 +843,15 @@ class ArkestraServer:
         if not first_chunk_sent:
             latency_ms = round((time.monotonic() - t0) * 1000)
             self._arkestra.log(f"[action=stream_end model={model_name} duration_ms={latency_ms} tokens={tokens_seen}] status=no_tokens")
+            # Record for /api/v1/stats even when no tokens were produced
+            self._last_request_stats = {
+                "model": model_name,
+                "timestamp": time.time(),
+                "latency_ms": latency_ms,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+            }
             # No tokens produced — send an empty final chunk. Covers streams
             # that end on a finish_reason event with no usage (e.g. llama.cpp
             # tool-call responses).

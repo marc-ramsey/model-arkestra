@@ -269,7 +269,8 @@ class ArkestraAdmin:
         async def api_auth(request: Request, call_next):
             path = request.url.path
             is_admin = path == "/admin" or path.startswith("/admin/")
-            is_api = path == "/api" or path.startswith("/api/")
+            # OWUI polls /api/v1/health unauthenticated for connection status
+            is_api = (path == "/api" or path.startswith("/api/")) and path != "/api/v1/health"
             any_gated = (is_admin and self.admin_key) or (is_api and self.api_key)
             if not any_gated:
                 return await call_next(request)
