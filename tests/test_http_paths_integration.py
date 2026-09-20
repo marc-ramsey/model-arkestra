@@ -213,12 +213,14 @@ class TestAsyncStream:
 
         Regression: aiohttp's default total timeout is 5 min — a llama-server
         stuck mid-stream made OWUI show 'Stream error' only after ~5 minutes.
-        The mock sends one token then stalls for 40 s; with sock_read=30 the
+        The mock sends one token then stalls; with a short sock_read the
         provider must give up well before the stream could ever finish.
         """
         runner, handler, app, _server = stream_server
-        handler.stream_delay = 40.0
-        prov = _provider(runner)
+        handler.stream_delay = 5.0
+        # Short sock_read so the test stays fast — exercises the same code path
+        # as the production default (120 s), just at a smaller bound.
+        prov = LlamaProvider("m", runner._ctx.port, stream_sock_timeout=2.0)
         import asyncio as _asyncio
         from model_arkestra.types import RunnerError
 

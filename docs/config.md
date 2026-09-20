@@ -140,6 +140,7 @@ default-env:
 | `model-start-port` (in `default:`) | `int` | `18000` | First port in the auto-allocated range. |
 | `model-ports` (in `default:`) | `int` | `32` | Number of ports available — valid range is `model-start-port` through `model-start-port + model-ports - 1`. |
 | `warmup-time` (in `default:`) | `float` | `10.0` | Seconds to wait after `/health` returns OK before marking the model as `"running"`. |
+| `stream-sock-timeout` (in `default:`) | `float` | `120.0` | Max seconds of silence between stream chunks before the request is aborted. Raise for large models whose prefill exceeds the default. |
 | `app-log-lines` (in `default:`) | `int` | `2000` | Number of server-level log entries retained in the global ring buffer. |
 | `container-type` | `str` | `"process"` | Default container runner when a backend uses `runner: container`. Valid values: `"podman"`, `"docker"`. Set to `"process"` to disable containers by default.
 

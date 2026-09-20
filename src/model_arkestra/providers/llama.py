@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, AsyncIterator, Dict
+from typing import Any, AsyncIterator, Dict, Optional
 
 import aiohttp
 
@@ -34,16 +34,29 @@ _RETRY_SLEEP = 2.5
 # which made a backend stuck in prefill surface as "Stream error" only after
 # ~5 minutes of silence. Socket timeout bounds gaps between chunks; the total
 # covers slow prefills on long contexts (10 min).
-_STREAM_TIMEOUT = aiohttp.ClientTimeout(total=600, sock_read=30)
+# Large-model prefills (27B+ on consumer GPUs) can exceed 30s before the first
+# token, so sock_read defaults to 120s and is overridable via config
+# ``default/stream-sock-timeout``.
+_DEFAULT_STREAM_TOTAL = 600.0
+_DEFAULT_STREAM_SOCK_READ = 120.0
+
+
+def stream_timeout(sock_read: Optional[float] = None) -> aiohttp.ClientTimeout:
+    """Build the stream ClientTimeout, honoring a config override for sock_read."""
+    if sock_read is None:
+        sock_read = _DEFAULT_STREAM_SOCK_READ
+    return aiohttp.ClientTimeout(total=_DEFAULT_STREAM_TOTAL, sock_read=sock_read)
 
 
 class LlamaProvider(Provider):
     capabilities = frozenset({"chat", "stream", "embed"})
 
-    def __init__(self, model_name: str, port: int):
+    def __init__(self, model_name: str, port: int,
+                 stream_sock_timeout: Optional[float] = None):
         self.model_name = model_name
         self.port = port
         self._base = f"http://127.0.0.1:{port}"
+        self._stream_timeout = stream_timeout(stream_sock_timeout)
 
     # ── probe ────────────────────────────────────────────────────
     async def probe(self) -> bool:
@@ -113,9 +126,13 @@ class LlamaProvider(Provider):
 
         async with aiohttp.ClientSession() as session:
             try:
-                async with session.post(url, json=stream_payload, timeout=_STREAM_TIMEOUT) as resp:
+                async with session.post(url, json=stream_payload, timeout=self._stream_timeout) as resp:
                     if resp.status != 200:
-                        raise RunnerError(f"Server error: {resp.status}")
+                        # Surface the backend's rejection reason — a bare status
+                        # code (e.g. "Server error: 400") gives no clue whether
+                        # it was tools, message shape, or context overflow.
+                        detail = (await resp.text())[:500]
+                        raise RunnerError(f"Server error: {resp.status}: {detail}")
                     async for event in sse_events(resp.content):
                         if "token" in event:
                             tokens_so_far.append(event["token"])

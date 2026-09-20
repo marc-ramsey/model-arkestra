@@ -268,6 +268,7 @@ class ModelArkestra:
             ctx = _Model(ctx_name, None, max_log_lines=500)
             ctx.backend_id = backend_id
             ctx.runner_type = runner_type
+            ctx._stream_sock_timeout = self._cm.get("default/stream-sock-timeout", None)
             if not is_cached:
                 ctx._state = RunnerState.UNCACHED   # construction-time init
             if resolved.cache_path:

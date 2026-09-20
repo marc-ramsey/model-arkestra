@@ -39,6 +39,8 @@ class _Model:
         # ── capability derivation inputs (set by the registry/factory) ──
         self._model_cfg: dict = {}
         self._backend_cfg: dict = {}
+        # sock_read bound for stream chunks (seconds); None → provider default
+        self._stream_sock_timeout: Optional[float] = None
 
         # ── state machine (mutated only via set_state) ─────────
         self._state = RunnerState.STOPPED
