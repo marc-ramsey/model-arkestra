@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+# arkestra-build: build & install named llama.cpp targets.
+# Usage:
+#   arkestra-build list
+#   arkestra-build <build-name> [--ref REF]
+#   arkestra-build clean <build-name>
+set -euo pipefail
+
+readonly ARKESTRA_DIR="${HOME}/.local/arkestra"
+# Build definitions live in the repo so they're version-controlled & shareable.
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly BUILDS_DIR="${ARKESTRA_BUILD_DIR:-${SCRIPT_DIR}/../arkestra-builds}"
+readonly ROOT_BIN="${ARKESTRA_DIR}/bin"
+readonly ROOT_BUILD="${ARKESTRA_DIR}/build"
+
+# --- commands ---
+cmd_list() {
+    echo "Available builds (${BUILDS_DIR}):"
+    local f name
+    for f in "${BUILDS_DIR}"/*.env; do
+        [[ -e "$f" ]] || continue
+        name="$(basename "$f" .env)"
+        local sha="-"
+        local stamp_file="${ROOT_BUILD}/${name}/.stamp"
+        if [[ -f "$stamp_file" ]]; then
+            sha="$(awk '/^sha=/{print $2}' "$stamp_file")"
+            [[ "${#sha}" -gt 12 ]] && sha="${sha:0:12}…"
+        fi
+        printf "  %-24s %s\n" "$name" "$sha"
+    done
+}
+
+cmd_clean() {
+    local name="$1"
+    rm -rf "${ROOT_BUILD}/${name}" "${ROOT_BIN}/${name}"
+    echo "Cleaned ${name}"
+}
+
+# Fetch a REF (branch tag, or pull/<N>/head) into FETCH_HEAD.
+_fetch_ref() {
+    local dir="$1" ref="$2"
+    if [[ "$ref" == pull/* ]]; then
+        local pr="${ref#pull/}"; pr="${pr%%/*}"
+        git -C "$dir" fetch --depth 1 origin "pull/${pr}/head"
+    else
+        git -C "$dir" fetch --depth 1 origin "$ref"
+    fi
+}
+
+cmd_build() {
+    local name="$1" ref_override="${2:-}"
+    local env_file="${BUILDS_DIR}/${name}.env"
+    [[ -f "$env_file" ]] || { echo "ERROR: no build '${name}' (${env_file})"; exit 1; }
+
+    # Load build definition. Sets: REF, REQUIRES, CMAKE_ARGS, ENV_VARS.
+    # shellcheck disable=SC1090
+    source "$env_file"
+    [[ -n "${ref_override:-}" ]] && REF="$ref_override"
+
+    # --- pre-flight: required tools ---
+    local tool
+    for tool in ${REQUIRES}; do
+        command -v "$tool" >/dev/null 2>&1 || { echo "ERROR: missing required tool: $tool"; exit 1; }
+    done
+
+    local build_dir="${ROOT_BUILD}/${name}"
+    local src_dir="${build_dir}/src"
+    local cmake_dir="${build_dir}/cmake"
+    local bin_dir="${ROOT_BIN}/${name}"
+    local stamp_file="${build_dir}/.stamp"
+
+    # --- clone or update source ---
+    if [[ -d "${src_dir}/.git" ]]; then
+        echo ">> updating source for ${name}"
+        _fetch_ref "$src_dir" "$REF"
+        git -C "$src_dir" checkout -q FETCH_HEAD
+    else
+        echo ">> cloning ${REPO} @ ${REF}"
+        mkdir -p "$src_dir"
+        git clone --depth 1 "$REPO" "$src_dir"
+        _fetch_ref "$src_dir" "$REF"
+        git -C "$src_dir" checkout -q FETCH_HEAD
+    fi
+
+    local sha; sha="$(git -C "$src_dir" rev-parse HEAD)"
+    echo ">> HEAD: $(git -C "$src_dir" log --oneline -1)"
+
+    # --- fingerprint: ref + cmake args + env. Any change => fresh build. ---
+    local fingerprint
+    fingerprint="$(printf '%s\n%s\n%s' "$sha" "${CMAKE_ARGS[*]}" "${ENV_VARS[*]:-}" | sha256sum | awk '{print $1}')"
+    local old_fp=""; [[ -f "$stamp_file" ]] && old_fp="$(awk '/^fp=/{print $2}' "$stamp_file")"
+    if [[ -n "$old_fp" && "$old_fp" != "$fingerprint" ]]; then
+        echo ">> config/ref changed, wiping cmake tree"
+        rm -rf "$cmake_dir"
+    fi
+
+    # --- configure ---
+    local env_prefix=()
+    local kv
+    for kv in ${ENV_VARS[@]:-}; do env_prefix+=("env" "$kv"); done
+
+    echo ">> configuring"
+    cmake -S "$src_dir" -B "$cmake_dir" \
+        -DCMAKE_BUILD_TYPE=Release \
+        "${CMAKE_ARGS[@]}"
+
+    # --- build (export ENV_VARS for the compiler) ---
+    echo ">> building (-j$(nproc))"
+    local -a envcmds=(env)
+    for kv in ${ENV_VARS[@]:-}; do envcmds+=("$kv"); done
+    "${envcmds[@]}" cmake --build "$cmake_dir" --config Release -j"$(nproc)"
+
+    # --- install: copy all llama-* executables ---
+    mkdir -p "$bin_dir"
+    local exe count=0
+    for exe in "${cmake_dir}"/bin/llama-*; do
+        [[ -f "$exe" ]] || continue
+        cp -f "$exe" "$bin_dir/"
+        count=$((count+1))
+    done
+
+    # --- record stamp ---
+    {
+        echo "name=${name}"
+        echo "sha=${sha}"
+        echo "fp=${fingerprint}"
+        echo "built=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    } > "$stamp_file"
+
+    echo ">> done: ${count} binaries -> ${bin_dir}"
+}
+
+# --- dispatch ---
+main() {
+    local action="${1:-list}"
+    case "$action" in
+        list)  cmd_list ;;
+        clean) [[ $# -ge 2 ]] || { echo "usage: $0 clean <name>"; exit 1; }; cmd_clean "$2" ;;
+        *)     [[ $# -ge 1 ]] || { echo "usage: $0 <build-name> [--ref REF]"; exit 1; }
+               local ref=""
+               if [[ "${2:-}" == "--ref" ]]; then ref="${3:-}"; fi
+               cmd_build "$action" "$ref" ;;
+    esac
+}
+
+main "$@"
