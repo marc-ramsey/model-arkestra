@@ -51,6 +51,7 @@ default:
   model-start-port: 18000     # first port in the auto-allocated range
   model-ports: 32              # number of ports available
   warmup-time: 10.0            # seconds after /health before "running"
+  stream-sock-timeout: 120     # seconds to wait for the next SSE chunk (default 120)
   app-log-lines: 2000          # global log ring buffer size
   model-repo: unsloth           # default HuggingFace repo owner
   model-quant: Q4_K_M          # default quantizer suffix
