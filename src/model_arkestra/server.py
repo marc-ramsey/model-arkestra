@@ -80,6 +80,34 @@ class ChatCompletionRequest(BaseModel):
     stream_options: Optional[Dict[str, Any]] = None
 
 
+def _normalize_tools(tools: Optional[List[Any]]) -> Optional[List[Any]]:
+    """Coerce tool defs to the OpenAI shape llama.cpp requires.
+
+    Accepts both the OpenAI form ({"type":"function","function":{...}}) and
+    pi's flat internal form ({"name","description","parameters", ...}).
+    Returns None for None; passes already-correct entries through unchanged.
+    """
+    if not tools:
+        return tools
+    out: List[Any] = []
+    for t in tools:
+        if not isinstance(t, dict):
+            out.append(t)
+            continue
+        # Already OpenAI-shaped.
+        if t.get("type") == "function" and isinstance(t.get("function"), dict):
+            out.append(t)
+            continue
+        # Flat / pi internal shape -> wrap into an OpenAI function tool.
+        fn = {
+            "name": t.get("name", ""),
+            "description": t.get("description", ""),
+            "parameters": t.get("parameters") or {"type": "object", "properties": {}},
+        }
+        out.append({"type": "function", "function": fn})
+    return out
+
+
 class ChoiceDelta(BaseModel):
     role: Optional[str] = None
     content: Optional[str] = None
@@ -262,7 +290,7 @@ class ArkestraServer:
             "frequency_penalty": req.frequency_penalty,
             "presence_penalty": req.presence_penalty,
             "stop": req.stop,
-            "tools": req.tools,
+            "tools": _normalize_tools(req.tools),
             "tool_choice": req.tool_choice,
             "stream_options": req.stream_options,
         }.items() if v is not None}
