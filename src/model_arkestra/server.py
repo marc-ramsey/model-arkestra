@@ -802,6 +802,10 @@ class ArkestraServer:
                     finish_reason = event["finish_reason"]
 
                 elif "usage" in event:
+                    usage = event["usage"]
+                    # Forward the backend's real token counts so OWUI shows
+                    # accurate stats. The empty-delta chunk carries the final
+                    # finish_reason; usage rides on the same SSE frame.
                     chunk = ChatCompletionStreamResponse(
                         model=model_name,
                         choices=[ChatCompletionStreamChoice(
@@ -809,26 +813,35 @@ class ArkestraServer:
                             delta=ChoiceDelta(),
                             finish_reason=finish_reason,
                         )],
-                    )
-                    yield _sse_format(chunk.model_dump())
+                    ).model_dump()
+                    chunk["usage"] = {
+                        "prompt_tokens": usage.get("prompt_tokens", 0),
+                        "completion_tokens": usage.get("completion_tokens", 0),
+                        "total_tokens": usage.get("total_tokens", 0),
+                    }
+                    yield _sse_format(chunk)
                     # Send [DONE] marker
                     latency_ms = round((time.monotonic() - t0) * 1000)
                     self._arkestra.log(f"[action=stream_end model={model_name} duration_ms={latency_ms} tokens={tokens_seen}] status=ok")
                     # Record for /api/v1/stats (Open WebUI shows these in the chat UI)
+                    prompt_tokens = usage.get("prompt_tokens", 0) or max(
+                        1, sum(len(str(m.content).split()) for m in req.messages) // 4
+                    )
+                    completion_tokens = usage.get("completion_tokens", 0) or tokens_seen
                     self._last_request_stats = {
                         "model": model_name,
                         "timestamp": time.time(),
                         "latency_ms": latency_ms,
-                        "prompt_tokens": max(1, sum(len(str(m.content).split()) for m in req.messages) // 4),
-                        "completion_tokens": tokens_seen,
-                        "total_tokens": max(1, sum(len(str(m.content).split()) for m in req.messages) // 4) + tokens_seen,
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
+                        "total_tokens": usage.get("total_tokens", 0) or (prompt_tokens + completion_tokens),
                     }
                     yield "data: [DONE]\n\n"
                     return
 
         except Exception as e:
             latency_ms = round((time.monotonic() - t0) * 1000)
-            self._arkestra.log(f"[action=stream_end model={model_name} duration_ms={latency_ms} tokens={tokens_seen}] status=error")
+            self._arkestra.log(f"[action=stream_end model={model_name} duration_ms={latency_ms} tokens={tokens_seen}] status=error err={e}")
             # Record for /api/v1/stats even on failure (OWUI tolerates missing keys)
             self._last_request_stats = {
                 "model": model_name,
