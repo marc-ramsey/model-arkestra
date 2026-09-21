@@ -240,35 +240,6 @@ class ContainerRunner(BaseRunner, ABC):
         """Extra CLI args to insert into the run command. Override per-runtime."""
         return []
 
-    async def _resolve_image_from_source(
-        self, image: str, source_ref: Optional[str]
-    ) -> str:
-        """Resolve image via BinaryDownloader if backend references an OCI-image source."""
-        from model_arkestra.binary_downloader import BinaryDownloader, BinaryDownloaderError
-        if not source_ref or not isinstance(source_ref, str):
-            return image
-        sources = self.cm.data.get("sources") or {}
-        source_cfg = sources.get(source_ref)
-        if not source_cfg or source_cfg.get("type") != "oci-image":
-            return image
-        cache_dir = getattr(self, "_image_cache_dir", None)
-        if not cache_dir:
-            return image
-        downloader = BinaryDownloader(
-            cache_dir=cache_dir,
-            backend_id=source_ref,
-            source_cfg=source_cfg,
-        )
-        try:
-            resolved = await downloader.resolve(version="latest")
-            return str(resolved)
-        except BinaryDownloaderError as e:
-            self.logger.warning(
-                f"OCI source resolution failed for {source_ref}: {e}. "
-                f"Using raw image reference: {image}"
-            )
-            return image
-
     @abstractmethod
     async def _remove_containers(self, cids: list) -> None:
         """Force-remove a list of stale container IDs."""
@@ -322,21 +293,12 @@ class ContainerRunner(BaseRunner, ABC):
                 "configure a backend with an 'image' key."
             )
 
-        # Resolve image from source (pulls via downloader if oci-image source)
-        raw_image = str(backend.get("image", ""))
-        source_ref = backend.get("source_ref")
-
-        if source_ref:
-            sources = self.cm.data.get("sources") or {}
-            source_cfg = sources.get(source_ref)
-            if source_cfg and source_cfg.get("type") == "oci-image":
-                raw_image = ""
-
-        image = await self._resolve_image_from_source(raw_image, source_ref)
+        # Containers need an explicit image — no source-based resolution.
+        image = str(backend.get("image", ""))
         if not image:
             raise RuntimeError(
-                f"No container image resolved for {self._container_cmd()} backend '{ctx.backend_id}'. "
-                f"Configure an 'image' key or an oci-image 'source_ref' in the backend."
+                f"No container image configured for {self._container_cmd()} backend '{ctx.backend_id}'. "
+                f"Set an 'image' key in the backend."
             )
         if "/" not in image:
             image = f"localhost/{image}"

@@ -408,7 +408,10 @@ def detect_all() -> dict[str, Any]:
         }
         rt_key = runtime_map.get(backend)
         if rt_key and runtimes[rt_key]:
-            recommendation = (backend, f"{_VENDOR_NAMES.get(primary_gpu['vendor'], primary_gpu['vendor'].title())} GPU detected")
+            rec_id = backend
+            if backend == "rocm" and gfx_family:
+                rec_id = f"rocm-{gfx_family}"
+            recommendation = (rec_id, f"{_VENDOR_NAMES.get(primary_gpu['vendor'], primary_gpu['vendor'].title())} GPU detected")
         elif backend == "rocm" and not runtimes["rocm"]:
             # AMD GPU but no ROCm — fall back to vulkan-radv
             if runtimes["vulkan"]:

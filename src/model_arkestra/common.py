@@ -411,70 +411,27 @@ def download_hf_model(
 
 INSPECT_RE = re.compile(r"^(exited|dead|paused|removing)\s*$", re.IGNORECASE)
 
-# ── Known ROCm build directories, keyed by version string ────────────────
-_ROCM_BUILD_MAP: Dict[str, str] = {}
-
-# ── Default build dirs (sensible fallbacks — override via config or env) ────
-_DEFAULT_VULKAN_DIR = "/usr/local/llama.cpp/build-vulkan-radv/bin"
-_DEFAULT_ROCM_DIR = "/usr/local/llama.cpp/build-rocm/bin"
-_DEFAULT_IMAGE = "ark-llama:vulkan-radv"
-
-
-def register_rocm_build(version: str, build_dir: str) -> None:
-    """Register a known ROCm build directory.
-
-    Call this once at import time (or from config initialization) to map
-    backend ``version`` strings to host build directories.
-    """
-    _ROCM_BUILD_MAP[version] = build_dir
-
-
-def get_rocm_build_dirs() -> Dict[str, str]:
-    """Return the full ROCm version → directory mapping."""
-    return dict(_ROCM_BUILD_MAP)
-
-
 def resolve_binary_from_backend(backend: Dict[str, Any]) -> Optional[tuple]:
-    """Resolve host binary dir and devices from a backend dict.
+    """Resolve host binary dir (for container mounts) + devices.
 
     Resolution order:
-    1. Explicit ``backend["binary_dir"]`` — absolute path inside container
-    2. ``backend["version"]`` mapped to known ROCm builds → ``_ROCM_BUILD_MAP``
-    3. Image name substring heuristics (vulkan / rocm) as last resort
+    1. Explicit ``backend["binary_dir"]``
+    2. ``backend["source"]`` of type ``local`` → its ``path``
 
     Returns ``(binary_path, devices)`` or **None** when nothing resolves.
     """
-
-    devices: List[str] = []
-
-    # 1. Explicit binary_dir takes priority over everything
     binary_dir = backend.get("binary_dir")
+    if not binary_dir:
+        src = backend.get("source")
+        if isinstance(src, dict) and src.get("type") == "local":
+            binary_dir = src.get("path")
+
     if binary_dir and os.path.isdir(str(binary_dir)):
         d = str(binary_dir).lower()
+        devices: List[str] = []
         if "rocm" in d or "hip" in d or "vulkan" in d:
             devices = ["/dev/dri/card1:rwm", "/dev/dri/renderD128:rwm"]
         return (str(binary_dir) + "/llama-server", devices)
-
-    version = str(backend.get("version", ""))
-    image = str(backend.get("image", "")).lower()
-
-    # 2. ROCm version → known build directory
-    if version and version in _ROCM_BUILD_MAP:
-        rocm_dir = _ROCM_BUILD_MAP[version]
-        if os.path.isdir(rocm_dir):
-            devices = ["/dev/dri/card1:rwm", "/dev/dri/renderD128:rwm"]
-            return (rocm_dir + "/llama-server", devices)
-
-    # 3. Image-substring fallbacks (legacy convenience)
-    if "vulkan" in image:
-        vulkan_dir = backend.get("vulkan_dir", _DEFAULT_VULKAN_DIR)
-        if os.path.isdir(str(vulkan_dir)):
-            return (str(vulkan_dir) + "/llama-server", devices)
-    elif "rocm" in image or "hip" in image:
-        rocm_dir = backend.get("rocm_dir", _DEFAULT_ROCM_DIR)
-        if os.path.isdir(str(rocm_dir)):
-            devices = ["/dev/dri/card1:rwm", "/dev/dri/renderD128:rwm"]
-            return (str(rocm_dir) + "/llama-server", devices)
 
     return None
 
@@ -495,7 +452,7 @@ def image_and_runner_for_backend(cm_data, backend_id: str) -> tuple[str, str]:
     if not isinstance(backend, dict):
         backend = {}
 
-    # Resolve image: backend.image → default backend's image → hardcoded fallback
+    # Resolve image: backend.image → default backend's image → empty
     image_tag = backend.get("image")
     if not image_tag:
         default_be_id = backends.get("default")
@@ -503,7 +460,7 @@ def image_and_runner_for_backend(cm_data, backend_id: str) -> tuple[str, str]:
             default_be = backends.get(default_be_id)
             if isinstance(default_be, dict) and "image" in default_be:
                 image_tag = str(default_be["image"])
-    image_tag = image_tag or _DEFAULT_IMAGE
+    image_tag = str(image_tag or "")
 
     # Resolve runner: explicit runner → runners section → process fallback
     runner_type = backend.get("runner")

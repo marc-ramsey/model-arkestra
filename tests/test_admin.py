@@ -29,11 +29,19 @@ def live_server():
     """
     import shutil as _shutil
     _shutil.copy2("tests/backends.yaml", os.path.dirname(_TEST_CFG) + "/backends.yaml")
+    # Keep bin-tool state (written during Arkestra init verify) out of
+    # the real ~/.local/arkestra/bin-state.
+    _state_env = os.environ.get("ARKESTRA_BIN_STATE")
+    os.environ["ARKESTRA_BIN_STATE"] = tempfile.mkdtemp(prefix="arkestra-bin-state-")
     server = ArkestraServer(_TEST_CFG, port=18005)
     client = TestClient(server.get_app())
     result = {"server": server, "client": client}
     yield result
     graceful_server_teardown(result)
+    if _state_env is None:
+        os.environ.pop("ARKESTRA_BIN_STATE", None)
+    else:
+        os.environ["ARKESTRA_BIN_STATE"] = _state_env
 
 @pytest.fixture(autouse=True)
 def _set_admin_header(live_server):
@@ -142,7 +150,7 @@ class TestConfigCollection:
             "/admin/config",
             json={
                 "model": "unsloth/test/full-model:Q5",
-                "backend": "rocm",
+                "backend": "vulkan-radv",
                 "ctx-size": 8192,
                 "tags": ["chat", "reasoning"],
             },
@@ -155,7 +163,7 @@ class TestConfigCollection:
         cfg = live_server["server"]._arkestra.cm.data.get("models")
         assert "full-model" in cfg
         assert cfg["full-model"]["model"] == "unsloth/test/full-model:Q5"
-        assert cfg["full-model"]["backend"] == "rocm"
+        assert cfg["full-model"]["backend"] == "vulkan-radv"
         assert cfg["full-model"]["ctx-size"] == 8192
         assert cfg["full-model"]["tags"] == ["chat", "reasoning"]
 

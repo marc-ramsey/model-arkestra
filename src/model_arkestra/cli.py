@@ -317,6 +317,15 @@ def cmd_init(args) -> None:
         hw = {}
     recommendation = hw.get("recommendation")
 
+    # The recommendation must name a resolvable backend — fall back when
+    # the target has no shipped prebuilt (e.g. unknown gfx family).
+    if recommendation:
+        from model_arkestra import bin_tool
+        if recommendation[0] not in bin_tool.merged_backends():
+            from model_arkestra.gpu_detect import has_vulkan
+            fb = "vulkan-radv" if has_vulkan() else "cpu"
+            recommendation = (fb, f"{recommendation[1]} (no prebuilt for target, using {fb})")
+
     out_dir.mkdir(parents=True, exist_ok=True)
     for path, text in targets.items():
         if path.name == "config.yaml" and recommendation:
@@ -328,7 +337,44 @@ def cmd_init(args) -> None:
 
     if recommendation:
         print(f"Default backend: {recommendation[0]} ({recommendation[1]})")
+
+    # One-time binary provisioning for the new config (opt-out:
+    # default/auto-fetch-binaries: false).
+    from model_arkestra import bin_tool
+    from model_arkestra.config_manager import ModelConfigManager
+    if ModelConfigManager(str(out_dir / "config.yaml")).get(
+            "default/auto-fetch-binaries", True):
+        print("\nVerifying backend binaries...")
+        bad = bin_tool.ensure(fetch=True)
+        if bad:
+            print(f"[bin] {bad} backend slot(s) unavailable — see warnings above",
+                  file=sys.stderr)
+
     print("\nNext: edit config.yaml, then run arkestra-server.")
+
+
+def cmd_bin(args) -> None:
+    """Manage backend binary slots (see bin_tool)."""
+    from model_arkestra import bin_tool
+
+    cmd = args.bin_command or "list"
+    try:
+        if cmd == "list":
+            print(bin_tool.list_text())
+        elif cmd == "fetch":
+            state = bin_tool.load_state()
+            for name in args.backends or sorted(bin_tool.sources()):
+                bin_tool.fetch_one(name, bin_tool.require_source(name),
+                                   state, latest=True)
+        elif cmd == "update":
+            sys.exit(bin_tool.update(all_sources=args.all))
+        elif cmd == "pin":
+            bin_tool.pin(args.backend, args.tag)
+        elif cmd == "unpin":
+            bin_tool.unpin(args.backend)
+    except bin_tool.BinError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 def _set_default_backend(text: str, backend: str) -> str:
@@ -382,6 +428,22 @@ def build_parser() -> argparse.ArgumentParser:
                           help="Overwrite existing files")
     add_common_args(i_parser)
 
+    # ── bin ─────────────────────────────────────────────────────────
+    b_parser = subparsers.add_parser(
+        "bin", help="Manage backend binary slots")
+    bsub = b_parser.add_subparsers(dest="bin_command")
+    bsub.add_parser("list", help="Show backends and installed tags")
+    bf = bsub.add_parser("fetch", help="Install latest (or pinned) tag")
+    bf.add_argument("backends", nargs="*", help="Backend ids (default: all)")
+    bu = bsub.add_parser("update", help="Upgrade to newest release (cron)")
+    bu.add_argument("--all", action="store_true",
+                    help="All sources, not just referenced backends")
+    bp = bsub.add_parser("pin", help="Pin a remote backend to a tag")
+    bp.add_argument("backend")
+    bp.add_argument("tag")
+    bun = bsub.add_parser("unpin", help="Stop pinning, track latest again")
+    bun.add_argument("backend")
+
     return parser
 
 
@@ -395,6 +457,10 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "init":
         cmd_init(args)
+        return
+
+    if args.command == "bin":
+        cmd_bin(args)
         return
 
     dispatch = {"models": cmd_models, "chat": cmd_chat}

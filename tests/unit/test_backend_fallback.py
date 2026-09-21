@@ -57,7 +57,9 @@ class TestValidateBackendRuntimeFallback:
             default:
               model-start-port: 18000
             backends:
-              default: rocm
+              default: rocm-gfx1151
+              rocm-gfx1151:
+                runner: process
             models: {}
             """
         ))
@@ -76,7 +78,7 @@ class TestValidateBackendRuntimeFallback:
         assert cm._effective_default_backend == "cpu"
         assert cm.effective_default_backend() == "cpu"
         # Config file value unchanged — a save would not persist the fallback.
-        assert cm.data["backends"]["default"] == "rocm"
+        assert cm.data["backends"]["default"] == "rocm-gfx1151"
 
     def test_present_runtime_leaves_override_unset(self, tmp_path, monkeypatch):
         from model_arkestra import arkestra as ark_mod
@@ -85,7 +87,9 @@ class TestValidateBackendRuntimeFallback:
         cfg.write_text(textwrap.dedent(
             """\
             backends:
-              default: rocm
+              default: rocm-gfx1151
+              rocm-gfx1151:
+                runner: process
             models: {}
             """
         ))
@@ -93,11 +97,11 @@ class TestValidateBackendRuntimeFallback:
 
         class FakeArkestra:
             _cm = cm
-            device_detection = {"recommendation": ("rocm", "ROCm detected")}
+            device_detection = {"recommendation": ("rocm-gfx1151", "ROCm detected")}
 
         monkeypatch.setattr(ark_mod, "has_rocm", lambda: True)
 
         ark_mod.ModelArkestra._validate_backend_runtime(FakeArkestra())
 
         assert cm._effective_default_backend is None
-        assert cm.effective_default_backend() == "rocm"
+        assert cm.effective_default_backend() == "rocm-gfx1151"

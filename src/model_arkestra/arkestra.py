@@ -77,12 +77,12 @@ class ModelArkestra:
         app_log_lines = int(self._cm.get("default/app-log-lines", 2000))
         self._global_log_buf = UnicodeRingBuffer(app_log_lines * _Model.AVG_LINE_BYTES)
         self._global_log_seq: int = 0
-        # Extract sources section for binary_downloader compatibility
-        self._sources: Dict[str, Any] = self._cm.get("sources", {})
         # ── Hardware detection (GPU/CPU, single init-time query) ───
-        self._validate_backend_runtime()
         self._device_profile: Optional[Dict[str, Any]] = None
         self._hardware_detection: Optional[Dict[str, Any]] = None
+        self._validate_backend_runtime()
+        self._verify_backend_binaries()
+        self._warn_gfx_mismatch()
         # ── Pre-create contexts for all configured models ──────────
         self._pre_create_model_contexts()
 
@@ -137,12 +137,24 @@ class ModelArkestra:
         if not backend_id:
             return  # no default backend set — skip validation
 
+        # Default points at a backend that isn't defined — fall back instead
+        # of letting every model resolution fail on the unknown ID.
+        if backend_id not in backends:
+            fallback, reason = (self.device_detection.get("recommendation") or ("cpu", ""))
+            self._cm._effective_default_backend = fallback
+            logger.warning(
+                f"Default backend '{backend_id}' is not defined — "
+                f"using '{fallback}' ({reason})."
+            )
+            return
+
         runtime_checks = {
             "vulkan-radv": has_vulkan,
-            "rocm": has_rocm,
             "cuda": has_nvidia,
         }
         checker = runtime_checks.get(backend_id)
+        if not checker and str(backend_id).startswith("rocm"):
+            checker = has_rocm
         if checker and not checker():
             fallback, reason = (self.device_detection.get("recommendation") or ("cpu", ""))
             self._cm._effective_default_backend = fallback
@@ -151,7 +163,44 @@ class ModelArkestra:
                 f"falling back to '{fallback}' ({reason})."
             )
 
+    # ── binary slot verification (arkestra bin) ───────────────────
+    def _verify_backend_binaries(self) -> None:
+        """Verify binary slots locally — never fetch (see `arkestra bin`)."""
+        from model_arkestra import bin_tool
+        bad = bin_tool.ensure(fetch=False)
+        if bad:
+            logger.warning(
+                "%d backend binary slot(s) missing — see [bin] warnings above",
+                bad,
+            )
 
+    def _warn_gfx_mismatch(self) -> None:
+        """Warn when a remote rocm-gfx<target> backend doesn't match this GPU."""
+        gfx = (self.device_detection or {}).get("gfx_family") or ""
+        if not gfx:
+            return
+        be = self._cm.get("backends", {}) or {}
+        ids: set = set()
+        if isinstance(be, dict) and be.get("default"):
+            ids.add(str(be["default"]))
+        for section in ("checkpoints", "models"):
+            for entry in (self._cm.get(section, {}) or {}).values():
+                if isinstance(entry, dict) and entry.get("backend"):
+                    ids.add(str(entry["backend"]))
+        for bid in sorted(ids):
+            if not bid.startswith("rocm-"):
+                continue
+            be_def = be.get(bid) if isinstance(be, dict) else None
+            src = (be_def or {}).get("source") or {}
+            if not isinstance(src, dict) or src.get("type") != "remote":
+                continue  # local/unspecified sources are never checked
+            target = bid[len("rocm-"):]
+            if "+" in target or target == gfx:
+                continue
+            logger.warning(
+                "Backend '%s' targets %s but this GPU is %s",
+                bid, target, gfx,
+            )
 
     # ── device profile resolution (single init-time query) ───────
     def _get_device_profile(self) -> Dict[str, Any]:

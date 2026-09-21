@@ -9,6 +9,7 @@ backends:
     runner: process
     description: "Vulkan with RADV driver — works on AMD, NVIDIA, and Intel GPUs"
     source_ref: official-vulkan-radv
+    binary_dir: /home/marc/.local/arkestra/bin/vulkan-radv
     args:
       ngl: 999
       hf: ${CHECKPOINT}
@@ -18,6 +19,12 @@ backends:
     runner: process
     description: "ROCm — best for AMD iGPU and discrete GPUs"
     source_ref: rocm-gfx1151
+    binary_dir: /home/marc/.local/arkestra/bin/rocm-gfx1151
+    # Self-contained ROCm runtime (RUNPATH $ORIGIN); prepend so the slot's
+    # libs win over any host /opt/rocm. Do NOT set GGML_CUDA_ENABLE_UNIFIED_MEMORY
+    # (garbage output with qwen4exp on Strix Halo).
+    env_container:
+      LD_LIBRARY_PATH: /home/marc/.local/arkestra/bin/rocm-gfx1151
     args:
       ngl: 999
       hf: ${CHECKPOINT}

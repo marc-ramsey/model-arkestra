@@ -208,8 +208,29 @@ class TestParamsFromArgs:
 
 # ── init ───────────────────────────────────────────────────────────────────
 
+@pytest.fixture
+def bin_sandbox(tmp_path, monkeypatch):
+    """Keep init's auto-fetch offline and away from the real ~/.local state."""
+    import tarfile
+    monkeypatch.setenv("ARKESTRA_BIN_STATE", str(tmp_path / "bin-state"))
+    monkeypatch.setenv("ARKESTRA_BIN_DIR", str(tmp_path / "bin"))
+
+    def fake_download(url, dest):
+        # Minimal tarball: nested dir + fake llama-server (exercises flatten).
+        nested = tmp_path / "fake-src"
+        nested.mkdir(exist_ok=True)
+        (nested / "llama-server").write_text("#!/bin/sh\n")
+        with tarfile.open(dest, "w:gz") as tf:
+            tf.add(nested / "llama-server", arcname="llama-x/llama-server")
+        return "0" * 64
+
+    monkeypatch.setattr("model_arkestra.bin_tool.latest_tag",
+                        lambda repo, tpl: "test-tag")
+    monkeypatch.setattr("model_arkestra.bin_tool.download", fake_download)
+
+
 class TestInit:
-    def test_scaffolds_config(self, tmp_path, monkeypatch):
+    def test_scaffolds_config(self, tmp_path, monkeypatch, bin_sandbox):
         from model_arkestra.cli import cmd_init
         monkeypatch.setenv("ARKESTRA_CONFIG", str(tmp_path / "config.yaml"))
         with patch("model_arkestra.gpu_detect.detect_all",
@@ -219,14 +240,14 @@ class TestInit:
         text = (tmp_path / "config.yaml").read_text()
         assert "default: cpu" in text
 
-    def test_refuses_overwrite_without_force(self, tmp_path, monkeypatch):
+    def test_refuses_overwrite_without_force(self, tmp_path, monkeypatch, bin_sandbox):
         from model_arkestra.cli import cmd_init
         monkeypatch.setenv("ARKESTRA_CONFIG", str(tmp_path / "config.yaml"))
         (tmp_path / "config.yaml").write_text("existing")
         with pytest.raises(SystemExit):
             cmd_init(_args())
 
-    def test_force_overwrites(self, tmp_path, monkeypatch):
+    def test_force_overwrites(self, tmp_path, monkeypatch, bin_sandbox):
         from model_arkestra.cli import cmd_init
         monkeypatch.setenv("ARKESTRA_CONFIG", str(tmp_path / "config.yaml"))
         (tmp_path / "config.yaml").write_text("existing")
@@ -234,7 +255,7 @@ class TestInit:
             cmd_init(_args(force=True))
         assert "existing" not in (tmp_path / "config.yaml").read_text()
 
-    def test_no_detection_still_scaffolds(self, tmp_path, monkeypatch):
+    def test_no_detection_still_scaffolds(self, tmp_path, monkeypatch, bin_sandbox):
         from model_arkestra.cli import cmd_init
         monkeypatch.setenv("ARKESTRA_CONFIG", str(tmp_path / "config.yaml"))
         with patch("model_arkestra.gpu_detect.detect_all",

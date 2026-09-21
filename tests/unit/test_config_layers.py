@@ -35,10 +35,13 @@ class TestShippedBase:
         assert "vulkan-radv" in backends
         assert backends["vulkan-radv"]["runner"] == "process"
 
-    def test_sources_and_defaults_from_package(self, config_dir):
+    def test_backend_source_specs_from_package(self, config_dir):
         ma = ModelArkestra(str(config_dir / "config.yaml"), ready_timeout=2)
-        assert "official-vulkan-radv" in ma.cm.data.get("sources", {})
-        assert ma.cm.data.get("defaults", {}).get("verify_checksum") is True
+        be = ma.cm.data.get("backends", {})
+        # Provisioning specs ship with the package, no user binaries.yaml.
+        assert be["vulkan-radv"]["source"]["type"] == "remote"
+        assert be["rocm-gfx1151"]["source"]["repo"] == "lemonade-sdk/llamacpp-rocm"
+        assert "sources" not in ma.cm.data
 
 
 class TestOverlay:
@@ -53,7 +56,7 @@ class TestOverlay:
         assert be["args"]["ngl"] == 7
         # ...base keys survive the deep merge.
         assert be["runner"] == "process"
-        assert "source_ref" in be
+        assert be["source"]["type"] == "remote"
 
     def test_custom_backend_declared_in_config(self, config_dir):
         cfg = yaml.safe_load((config_dir / "config.yaml").read_text())

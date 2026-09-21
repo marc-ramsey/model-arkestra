@@ -5,7 +5,7 @@ ModelArkestra uses **one user file and one shipped file**:
 | File | Purpose | Editability |
 |------|---------|-------------|
 | `~/.config/arkestra/config.yaml` | Models, checkpoints, defaults, backend selection + overrides | Full — the only user-managed file |
-| `<package>/data/backends.yaml` | Stock backend definitions, download sources | Read-only — ships with the package; update via package upgrade |
+| `<package>/data/backends.yaml` | Stock backend definitions (run config + binary source) | Read-only — ships with the package; update via package upgrade |
 
 `arkestra init` scaffolds `config.yaml`. Backend definitions and engine arg
 schemas (`<package>/data/schemas.yaml`) are loaded from package data at startup
@@ -16,7 +16,7 @@ and deep-merged **under** config.yaml: any key you set in config.yaml wins.
 └── config.yaml        ← everything user-owned
 
 <package>/data/       ← read-only, version-matched to the code
-├── backends.yaml      ← stock backend definitions + download sources
+├── backends.yaml      ← stock backend definitions (run config + binary source)
 └── schemas.yaml       ← engine arg schemas (admin UI field types)
 ```
 
@@ -36,9 +36,9 @@ arkestra start                 # validates backends, starts server
 | `arkestra init [--force]` | Scaffold config.yaml; sets default backend from detection |
 | `arkestra detect` | Read-only hardware report — no file changes |
 | `arkestra list-backends` | Table of backends: type, description, cached binary status |
-| `arkestra add-backend -l /path/to/binary [-n name] [-d desc]` | Add a custom local llama-server binary (writes to config.yaml) |
-| `arkestra download-backend <name> [--version TAG]` | Download a pre-built binary for a backend |
-| `arkestra download-all` | Auto-detect + download primary + fallback backends |
+| `arkestra-bin list` | Binary slots: backend, tag, pin, sha256 |
+| `arkestra-bin fetch [backend ...]` | Download + install latest (or pinned) release into a slot |
+| `arkestra-bin pin <backend> <tag>` / `unpin <backend>` | Pin a remote backend to a release tag / follow latest again |
 
 ---
 
@@ -227,35 +227,61 @@ models:
 
 ## Backend Definitions & Overrides
 
-Stock backend definitions ship read-only in `<package>/data/backends.yaml`
-(plus download `sources:` and global download `defaults:`). They are merged
-**under** your config.yaml at startup — you never edit the shipped file.
+Backend definitions ship read-only in `<package>/data/backends.yaml`. They are
+merged **under** your config.yaml at startup — you never edit the shipped file.
 
-Two things you can do from config.yaml:
+A backend answers two questions:
 
-**1. Select the default backend** (a name from the shipped definitions):
+- **how to run** — `runner`, `args`, `env`, `engine`
+- **how to provision the binary** — the `source:` entry (see below)
+
+The binary slot path is *derived*, never written:
+
+| `source.type` | Slot path |
+|---|---|
+| `remote` | `~/.local/arkestra/bin/<backend-id>/` |
+| `local` | `source.path` itself — your build dir, verified, never fetched |
+
+### Shipped backends
+
+| Backend | Source | Notes |
+|---|---|---|
+| `vulkan-radv` | ggml-org/llama.cpp (vulkan) | Generic fallback — AMD, NVIDIA, Intel |
+| `rocm-gfx1151` | lemonade-sdk/llamacpp-rocm | Strix Halo / gfx1151 |
+| `rocm-gfx120x`, `rocm-gfx1150`, `rocm-gfx110x`, `rocm-gfx90a`, `rocm-gfx103x` | lemonade-sdk/llamacpp-rocm | One per gfx target |
+| `cuda` | ggml-org/llama.cpp (cuda) | NVIDIA discrete GPUs |
+| `cpu` | ggml-org/llama.cpp (static) | CPU-only, all cores |
+| `onnx` | — (in-process) | ONNX runner; no binary, no slot |
+
+**Naming convention:** shipped ROCm backends are named `rocm-gfx<target>`, one
+per single-target artifact. The ID is otherwise an opaque label — a local or
+multi-target build gets whatever name you give it (e.g. `rocm-custom`).
+
+### Two things you can do from config.yaml
+
+**1. Select the default backend** (a shipped or declared name):
 
 ```yaml
 backends:
-  default: rocm
+  default: rocm-gfx1151
 ```
 
-**2. Override any key of a stock backend, or declare a custom one.**
+**2. Declare a custom backend, or override any key of a stock backend.**
 Overrides deep-merge over the shipped definition; your value wins per key.
 Unlisted keys keep their shipped values. A full sub-dict declares a new backend.
 
 ```yaml
 backends:
-  default: vulkan-radv-custom
+  default: rocm-custom
   # sparse override — only ngl changes, everything else ships as-is
-  rocm:
+  rocm-gfx1151:
     args:
       ngl: 512
-  # custom backend — full definition, lives here because it's yours
-  vulkan-radv-custom:
-    description: "Custom local build"
+  # custom backend backed by your own build
+  rocm-custom:
+    description: "Local ROCm build (Strix Halo)"
+    source: {type: local, path: /home/me/local/rocm-bin/gfx1151}
     runner: process
-    binary_dir: /home/me/local/vulkan-bin/radv
     engine: llama-cpp
     args:
       ngl: 999
@@ -265,80 +291,42 @@ backends:
 Declaring a full backend sub-dict in config.yaml logs a one-line warning at
 startup reminding you it is treated as an override of the shipped layer.
 
-```yaml
-backends:
+### `source:` entry keys
 
-  vulkan-radv:
-    description: "Vulkan with RADV driver — works on AMD, NVIDIA, Intel"
-    runner: process
-    source_ref: official-vulkan-radv
-    args:
-      ngl: 999
-      ctx-size: ${default/ctx-size}
+| Key | Type | Description |
+|---|---|---|
+| `type` | str | `"remote"` (GitHub release, fetched by arkestra-bin) or `"local"` (your build dir — verified at init, never fetched). |
+| `repo` | str | (remote) Owner/repo on GitHub, e.g. `"ggml-org/llama.cpp"`. |
+| `asset` | str | (remote) Asset filename template; `{tag}` is substituted with the resolved release tag. |
+| `path` | str | (local) Absolute path to the build directory containing `llama-server`. |
 
-  rocm:
-    description: "ROCm — best for AMD iGPU and discrete GPUs"
-    runner: process
-    source_ref: lemonade-rocm-nightly
-    args:
-      ngl: 999
-      ctx-size: ${default/ctx-size}
+### arkestra-bin — binary installation
 
-  cuda:
-    description: "NVIDIA CUDA — for NVIDIA discrete GPUs"
-    runner: process
-    source_ref: official-cuda
-    args:
-      ngl: 999
-      ctx-size: ${default/ctx-size}
+`arkestra-bin` (console command, on PATH) installs prebuilt llama.cpp binaries
+into stable slots and manages pins:
 
-  cpu:
-    description: "CPU-only mode — uses all available cores"
-    runner: process
-    source_ref: ggml-org-cpu
-    args:
-      threads: ${NPROC}
-      no-mmap: true
-
-
-# ── Download sources (referenced by backends above) ───────────────
-
-sources:
-
-  official-vulkan-radv:
-    type: github-release
-    repo: ggml-org/llama.cpp
-    release_type: latest
-    asset_pattern: "llama-server-*-bin-*-vulkan*"
-    sha256_asset: "*.sha256"
-
-  lemonade-rocm-nightly:
-    type: github-release
-    repo: lemonade-sdk/llamacpp-rocm
-    release_type: latest
-    asset_pattern: "*-linux-x86_64.tar.gz"
-    sha256_asset: "*.sha256"
-
-  official-cuda:
-    type: github-release
-    repo: ggml-org/llama.cpp
-    release_type: latest
-    asset_pattern: "llama-server-*-bin-*-cuda*"
-    sha256_asset: "*.sha256"
-
-  ggml-org-cpu:
-    type: github-release
-    repo: ggml-org/llama.cpp
-    release_type: latest
-    asset_pattern: "llama-server-*-bin-*-static*"
-    sha256_asset: ""
-
-
-defaults:
-  release_type: latest
-  verify_checksum: true
-  cache_ttl_hours: 24
+```bash
+arkestra-bin list                  # slots: backend, tag, pin, sha256
+arkestra-bin fetch [backend ...]   # download + install latest (or pinned) tag
+arkestra-bin pin <backend> <tag>   # pin a backend to a release tag
+arkestra-bin unpin <backend>       # follow latest again
 ```
+
+- Swaps are atomic: extract to `.new`, `mv` over the live slot. A running
+  `llama-server` keeps its open inode; the next launch picks up the new build.
+- State (installed tag, sha256, pin) lives in
+  `~/.local/arkestra/bin-state/state.json`, keyed by backend ID.
+- For `local` sources, `fetch` only verifies `path` exists and records the sha.
+
+**At server init**, arkestra checks every slot referenced by a configured
+backend and auto-fetches missing `remote` slots (default on). Upgrading an
+installed slot to a newer release is explicit: `arkestra-bin fetch <backend>`. A model whose slot is still missing fails to start with the exact
+`arkestra-bin fetch <backend>` command.
+
+**Gfx guard:** if a `rocm-gfx<target>` backend's single target differs from the
+gfx target `rocm-smi` reports, init logs a WARNING. Multi-target IDs pass if
+the detected target is any member of the set. `local` and other non-matching
+IDs are never checked.
 
 ### Backend Entry Keys
 
@@ -348,53 +336,18 @@ defaults:
 | `runner` | str | Runner type: ``"process"``, ``"podman"``, ``"docker"``, or ``"remote"``. Use ``"container"`` to defer to the top-level ``container-type:`` config value. |
 | `base_url` | str | (Legacy `runner: remote` only) URL of the target arkestra worker. Prefer the `clusters:` top-level key instead. |
 | `admin_key` | str | (Remote optional) API key forwarded as `x-admin-key` header to workers requiring authentication. If the target worker also proxies, forward its `admin_key` value here.
-| `source_ref` | str | Name of a source entry from the `sources:` section below. |
+| `source` | dict | Binary provisioning entry — keys in the `source:` table above. Remote backends fetch into `~/.local/arkestra/bin/<backend-id>/`; local backends use `path` directly. |
 | `args` | dict | Default CLI arguments merged into model args during startup. |
 | `hf_flag` | str | (Optional) Override for the HuggingFace flag format — e.g., `"--hf"` instead of default `"-hf"`. Used when container images or binaries use a different flag convention. |
 | `entrypoint` | str | (Container only) Override the container's ENTRYPOINT — e.g., `/llama.cpp/llama-server`. Prevents image defaults (like `tini`) from intercepting CLI args. |
-| `binary_dir` | str | (Written at runtime) Absolute directory containing the downloaded binary, populated by `download-backend`. |
-| `binary` | str | (Written at runtime) Binary filename, populated by `download-backend`. |
 
-### Source Entry Keys
+### Custom Backends (Local Builds)
 
-| Key | Type | Description |
-|---|---|---|
-| `type` | str | Source type: `"github-release"`, `"oci-image"`, or `"local-file"`. |
-| `repo` | str | (For github-release) Owner/repo on GitHub (e.g., `"ggml-org/llama.cpp"`). |
-| `release_type` | str | `"latest"` for newest tag via API, or a pinned version like `"v2.95"`. |
-| `asset_pattern` | str | Glob pattern to match the desired download asset. |
-| `sha256_asset` | str | Pattern for checksum sidecar file; empty string skips verification. |
-| `registry` | str | (For oci-image) Container registry hostname. |
-| `tag` | str | (For oci-image) Image tag to pull. |
-| `path` | str | (For local-file) Absolute path to a pre-built binary. |
-
-### Custom Backend Entries (User-Added)
-
-Add custom backends via the CLI:
-
-```bash
-arkestra add-backend --local /opt/my-builds/llama-server \
-                           --name my-avx512 \
-                           --description "Custom AVX512 build"
-```
-
-This appends to the `backends:` section of config.yaml (your file):
-
-```yaml
-my-avx512:
-  description: "Custom AVX512 build"
-  runner: process
-  args:
-    ngl: 999
-    ctx-size: ${default/ctx-size}
-```
-
-Then select it in config.yaml:
-
-```yaml
-backends:
-  default: my-avx512
-```
+Declare them directly in the `backends:` section of config.yaml (your file) —
+full example in [Two things you can do from config.yaml](#two-things-you-can-do-from-configyaml).
+`source: {type: local, path: ...}` points at your build directory; arkestra
+verifies it at init and records the binary sha, but never touches the files.
+Select the backend with `backends.default:` or a per-model `backend:` override.
 
 ### Federated Clusters
 
@@ -466,6 +419,12 @@ tokens. Infrastructure flags (``--port``, ``--model``) are injected by the engin
 
 The runner→class mapping is fixed in code; the config carries only the short
 runner id, not a class name.
+
+### Binary Resolution:
+
+1. Backend's ``source:`` → slot path (``~/.local/arkestra/bin/<backend-id>/`` for remote, ``path`` for local)
+2. `arkestra init`: one-time fetch of missing referenced slots (opt-out: `default/auto-fetch-binaries: false`)
+3. Server start: local verify only; slot missing → hard error naming the exact ``arkestra bin fetch <backend>`` command
 
 ---
 

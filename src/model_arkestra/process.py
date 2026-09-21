@@ -6,6 +6,7 @@ import signal
 from typing import Any, Dict, List
 
 from model_arkestra.base import BaseRunner
+from model_arkestra.bin_tool import slot_path
 from model_arkestra.common import build_model_args
 from model_arkestra.llama_cpp import LlamaCppEngine
 from model_arkestra.types import _Model
@@ -38,8 +39,17 @@ class ProcessRunner(BaseRunner):
         binary_name = (backend or {}).get("binary", "llama-server") or "llama-server"
         binary_path = os.path.join(binary_dir, binary_name)
         if not os.path.isfile(binary_path):
+            # Derived slot from backend.source (arkestra-bin layout).
+            src = (backend or {}).get("source")
+            if isinstance(src, dict) and src:
+                candidate = f"{slot_path(be_id, src)}/{binary_name}"
+                if os.path.isfile(candidate):
+                    binary_path = candidate
+        if not os.path.isfile(binary_path):
+            src = (backend or {}).get("source") or {}
+            hint = " — install with: arkestra bin fetch " + str(be_id) if src.get("type") == "remote" else ""
             raise RuntimeError(
-                f"Binary '{binary_path}' not found for backend '{be_id}'"
+                f"Binary '{binary_path}' not found for backend '{be_id}'{hint}"
             )
 
         # Build merged args using the model name (config key), not ctx.name.

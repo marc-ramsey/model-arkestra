@@ -255,7 +255,7 @@ def _build_e2e_config(combo_id: str, backend_name: str, model_key: int = 0) -> s
         runtime = combo_id.rsplit("-", 1)[0]
         be = {
             "runner": runtime,
-            "source_ref": f"{runtime}-gpu",
+            "image": "docker.io/kyuz0/amd-strix-halo-toolboxes:rocm-7.14",
             "entrypoint": "/usr/local/bin/llama-server",
             "devices": ["/dev/kfd", "/dev/dri"],
             "args": {"ngl": 999},
@@ -285,17 +285,6 @@ def _build_e2e_config(combo_id: str, backend_name: str, model_key: int = 0) -> s
     lines.append("backends:")
     lines.append(f"  {backend_name}:")
     lines.extend(_serialize(be, 2))
-
-    src = be.get("source_ref")
-    if isinstance(src, str):
-        runtime = combo_id.rsplit("-", 1)[0]
-        if runtime:
-            lines.append("")
-            lines.append("sources:")
-            lines.append(f"  {src}:")
-            lines.append("    type: oci-image")
-            lines.append("    repo: docker.io/kyuz0/amd-strix-halo-toolboxes")
-            lines.append("    release_type: rocm-7.14")
 
     lines.append("")
     lines.append("models:")
