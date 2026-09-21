@@ -185,6 +185,14 @@ class TestEngineCLIConversion:
         assert "--port" in cli
         assert "18000" in cli
 
+    def test_load_mode_emitted_with_value(self):
+        from model_arkestra.llama_cpp import LlamaCppEngine
+        merged = {"load-mode": "none"}
+        cli = LlamaCppEngine.build_cli_args(merged, port=18000)
+
+        assert "--load-mode" in cli
+        assert cli[cli.index("--load-mode") + 1] == "none"
+
     def test_hf_model_emitted(self):
         from model_arkestra.llama_cpp import LlamaCppEngine
         merged = {"model": "unsloth/gemma-4-E2B-it-GGUF:Q4_K_XL", "repo": "hf", "temp": 0.7}

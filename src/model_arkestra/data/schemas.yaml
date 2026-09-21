@@ -52,6 +52,9 @@ model-args:
       options: [on, off, auto]
     no-mmap:
       type: boolean
+    load-mode:
+      type: string
+      options: [auto, none, mmap, mlock, mmap+mlock, dio]
     cache-type-k:
       type: string
       options: [f16, q8_0, q4_0]

@@ -12,7 +12,7 @@ backends:
       ctx-size: ${default/ctx-size}
       flash-attn: 'on'
       parallel: 1
-      no-mmap: true
+      load-mode: none
       cache-type-k: q8_0
       cache-type-v: q8_0
   # One backend per gfx target — the ID names the hardware it was built for.
@@ -29,7 +29,7 @@ backends:
       ctx-size: ${default/ctx-size}
       flash-attn: 'on'
       parallel: 1
-      no-mmap: true
+      load-mode: none
       cache-type-k: q8_0
       cache-type-v: q8_0
   rocm-gfx120x:
@@ -45,7 +45,7 @@ backends:
       ctx-size: ${default/ctx-size}
       flash-attn: 'on'
       parallel: 1
-      no-mmap: true
+      load-mode: none
       cache-type-k: q8_0
       cache-type-v: q8_0
   rocm-gfx1150:
@@ -61,7 +61,7 @@ backends:
       ctx-size: ${default/ctx-size}
       flash-attn: 'on'
       parallel: 1
-      no-mmap: true
+      load-mode: none
       cache-type-k: q8_0
       cache-type-v: q8_0
   rocm-gfx110x:
@@ -77,7 +77,7 @@ backends:
       ctx-size: ${default/ctx-size}
       flash-attn: 'on'
       parallel: 1
-      no-mmap: true
+      load-mode: none
       cache-type-k: q8_0
       cache-type-v: q8_0
   rocm-gfx90a:
@@ -93,7 +93,7 @@ backends:
       ctx-size: ${default/ctx-size}
       flash-attn: 'on'
       parallel: 1
-      no-mmap: true
+      load-mode: none
       cache-type-k: q8_0
       cache-type-v: q8_0
   rocm-gfx103x:
@@ -109,7 +109,7 @@ backends:
       ctx-size: ${default/ctx-size}
       flash-attn: 'on'
       parallel: 1
-      no-mmap: true
+      load-mode: none
       cache-type-k: q8_0
       cache-type-v: q8_0
   rocm-container:
@@ -129,7 +129,7 @@ backends:
       ctx-size: ${default/ctx-size}
       flash-attn: 'on'
       parallel: 1
-      no-mmap: true
+      load-mode: none
       cache-type-k: q8_0
       cache-type-v: q8_0
   cuda:
@@ -145,7 +145,7 @@ backends:
       ctx-size: ${default/ctx-size}
       flash-attn: 'on'
       parallel: 1
-      no-mmap: true
+      load-mode: none
       cache-type-k: q8_0
       cache-type-v: q8_0
   cpu:
@@ -159,7 +159,7 @@ backends:
     args:
       threads: ${NPROC}
       ctx-size: ${default/ctx-size}
-      no-mmap: true
+      load-mode: none
   onnx:
     description: "ONNX in-memory runner — loads models directly, no subprocess"
     runner: onnx
