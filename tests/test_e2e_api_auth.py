@@ -11,6 +11,7 @@ Run: pytest tests/test_e2e_api_auth.py -v --timeout=120
 from __future__ import annotations
 
 import os
+import socket
 import sys
 import tempfile
 import threading
@@ -26,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 
 API_AUTH_PORT = 18004
+ADMIN_KEY = "super-admin-key"
 
 
 # ── Config with both api-key and admin-key set via default-env ───────────────
@@ -94,16 +96,39 @@ def _start_api_server(port: int) -> Tuple[Any, httpx.Client]:
         raise
 
 
-def _stop_server(proxy: Any, client: httpx.Client, port: int) -> None:
-    try:
-        client.post(f"http://127.0.0.1:{port}/admin/shutdown", timeout=10)
-    except Exception:
-        pass
-    time.sleep(1)
+def _wait_port_free(port: int, timeout: float = 15.0) -> None:
+    """Block until nothing accepts connections on *port*.
+
+    Guards against the next fixture hitting EADDRINUSE if the serve-thread
+    (daemon) or a keep-alive connection outlives the shutdown round-trip.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            if probe.connect_ex(("127.0.0.1", port)) != 0:
+                return  # connection refused — port is free
+        finally:
+            probe.close()
+        time.sleep(0.2)
+    raise RuntimeError(f"port {port} still bound after {timeout}s")
+
+
+def _stop_server(proxy: Any, client: httpx.Client, port: int,
+                 admin_key: str | None = None) -> None:
+    headers = {"Authorization": f"Bearer {admin_key}"} if admin_key else {}
+    r = client.post(f"http://127.0.0.1:{port}/admin/shutdown", timeout=10,
+                    headers=headers)
+    # A 401 here means the server kept running — fail loudly instead of
+    # leaking the port to the next fixture.
+    assert r.status_code == 200, f"shutdown rejected: {r.status_code} {r.text}"
+    # Close our own connections first — a keep-alive client connection is an
+    # in-process holder of the port and would defeat the free-port wait.
     try:
         client.close()
     except Exception:
         pass
+    _wait_port_free(port)
 
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
@@ -114,7 +139,7 @@ def api_server():
     proxy, client = _start_api_server(API_AUTH_PORT)
     yield {"server": proxy, "client": client,
            "base_url": f"http://127.0.0.1:{API_AUTH_PORT}"}
-    _stop_server(proxy, client, API_AUTH_PORT)
+    _stop_server(proxy, client, API_AUTH_PORT, admin_key=ADMIN_KEY)
 
 
 @pytest.fixture(scope="class")
@@ -153,12 +178,7 @@ def no_key_server():
     client = httpx.Client(timeout=30)
     yield {"server": proxy, "client": client,
            "base_url": f"http://127.0.0.1:{port}"}
-    try:
-        client.post(f"http://127.0.0.1:{port}/admin/shutdown", timeout=10)
-    except Exception:
-        pass
-    time.sleep(1)
-    client.close()
+    _stop_server(proxy, client, port)
 
 
 # ── Tests ───────────────────────────────────────────────────────────────────
