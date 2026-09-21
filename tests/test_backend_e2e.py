@@ -185,22 +185,46 @@ def _wait_model_ports_free(timeout: float = 40.0) -> None:
         time.sleep(0.3)
 
 
+def _admin_headers(admin_key: str | None) -> dict:
+    """Bearer header for /admin/* calls; empty key → auth is disabled."""
+    return {"Authorization": f"Bearer {admin_key}"} if admin_key else {}
+
+
 def _wait_admin_port_free(port: int, timeout: float = 30.0) -> None:
-    """Block until the server admin port is free."""
+    """Block until the server admin port is free.
+
+    Never SIGKILL our own PID: in-process servers (uvicorn in a thread)
+    hold the port inside this pytest process — killing it aborts the run.
+    A self-held port means shutdown was rejected or never ran; fail loudly.
+    """
     deadline = time.time() + timeout
     while time.time() < deadline:
         if not _port_in_use(port):
             return
         time.sleep(0.3)
-    subprocess.run(["fuser", "-k", "-9", f"{port}/tcp"], capture_output=True, timeout=5)
+    result = subprocess.run(
+        ["lsof", f"-ti:{port}"], capture_output=True, text=True)
+    pids = [int(p) for p in result.stdout.strip().split() if p.isdigit()]
+    self_pid = os.getpid()
+    if pids and all(p == self_pid for p in pids):
+        pytest.fail(f"admin port {port} still held in-process after "
+                   f"{timeout}s — shutdown was rejected or never ran")
+    for pid in pids:
+        if pid != self_pid:
+            try:
+                os.kill(pid, 9)
+            except OSError:
+                pass
 
 
-def _stop_all_and_wait(client: httpx.Client, base_url: str, timeout: float = 60.0) -> None:
+def _stop_all_and_wait(client: httpx.Client, base_url: str, timeout: float = 60.0,
+                       admin_key: str | None = None) -> None:
     """Call POST /admin/stop-all and wait until model ports are free."""
-    try:
-        resp = client.post(f"{base_url}/admin/stop-all", timeout=timeout)
-    except Exception:
-        pass
+    resp = client.post(f"{base_url}/admin/stop-all", timeout=timeout,
+                       headers=_admin_headers(admin_key))
+    # A rejected stop-all (e.g. 401) would leak model ports to the next test.
+    assert resp.status_code == 200, \
+        f"/admin/stop-all rejected: {resp.status_code} {resp.text[:200]}"
     _wait_model_ports_free(timeout=timeout - 2)
 
 
@@ -333,18 +357,21 @@ def _start_server(port: int, config_yaml: str, combo_id: str = "") -> Tuple[Any,
         else:
             raise RuntimeError(f"Server on port {port} did not become ready")
 
-        return proxy, httpx.Client(timeout=None, headers={"X-Admin-Key": "test-e2e-key"})
+        return proxy, httpx.Client(timeout=None)
     except Exception:
         os.unlink(config_path)
         raise
 
 
-def _stop_server(proxy: Any, client: httpx.Client, port: int) -> None:
+def _stop_server(proxy: Any, client: httpx.Client, port: int,
+                 admin_key: str | None = None) -> None:
     """Shutdown server, kill stray containers."""
-    try:
-        client.post(f"http://127.0.0.1:{port}/admin/shutdown", timeout=120)
-    except Exception:
-        pass
+    resp = client.post(f"http://127.0.0.1:{port}/admin/shutdown", timeout=120,
+                       headers=_admin_headers(admin_key))
+    # A rejected shutdown (e.g. 401) leaves the server running and the port
+    # bound — fail loudly instead of leaking it to the next test.
+    assert resp.status_code == 200, \
+        f"/admin/shutdown rejected: {resp.status_code} {resp.text[:200]}"
 
     for runtime in ("podman", "docker"):
         try:
@@ -365,7 +392,6 @@ def _stop_server(proxy: Any, client: httpx.Client, port: int) -> None:
         client.close()
     except Exception:
         pass
-
 
 def _start_model(client: httpx.Client, base_url: str, model_name: str,
                  timeout: float = 180.0) -> bool:
@@ -660,9 +686,11 @@ class TestPortExhaustion:
 
             _stop_all_and_wait(client, base_url)
         finally:
-            # GUARANTEED cleanup regardless of test pass/fail/exception
-            client.post(f"{base_url}/admin/stop-all", timeout=30)
+            # GUARANTEED cleanup regardless of test pass/fail/exception.
+            # stop-all is best-effort (server may already be down) but must
+            # never prevent _stop_server from running.
             try:
-                _stop_server(proxy, client, ADMIN_PORT)
+                client.post(f"{base_url}/admin/stop-all", timeout=30)
             except Exception:
                 pass
+            _stop_server(proxy, client, ADMIN_PORT)
