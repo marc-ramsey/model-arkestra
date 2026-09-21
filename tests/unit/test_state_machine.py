@@ -68,6 +68,34 @@ class TestModelSetState:
             ctx.set_state("load")
 
 
+class TestCrashLimitFromLoading:
+    """Model that never becomes ready: crash loop ends while still LOADING.
+
+    base.py:_handle_restart must be able to set the terminal ERROR state
+    from LOADING, otherwise the watcher dies on IllegalTransition and the
+    model is stuck in LOADING forever with no recovery path.
+    """
+
+    def test_crash_limit_from_loading_reaches_error(self):
+        assert can(RunnerState.LOADING, "crash_limit")
+        assert transition(RunnerState.LOADING, "crash_limit") is RunnerState.ERROR
+
+    def test_crash_limit_from_running_still_legal(self):
+        assert transition(RunnerState.RUNNING, "crash_limit") is RunnerState.ERROR
+
+    def test_set_state_crash_limit_from_loading(self):
+        ctx = _Model("m", 18000)
+        ctx._state = RunnerState.LOADING
+        ctx.set_state("crash_limit")
+        assert ctx.state is RunnerState.ERROR
+
+    def test_crash_limit_rejected_from_stopped(self):
+        """Table stays strict for unrelated states."""
+        assert not can(RunnerState.STOPPED, "crash_limit")
+        with pytest.raises(IllegalTransition):
+            transition(RunnerState.STOPPED, "crash_limit")
+
+
 class TestCrashRestartSequence:
     """Full sequence from the log: crash -> restart -> request during LOADING."""
 

@@ -60,7 +60,10 @@ _TRANSITIONS: dict[str, dict[RunnerState, RunnerState]] = {
         RunnerState.ERROR: RunnerState.UNCACHED,
         RunnerState.UNCACHED: RunnerState.UNCACHED,  # no cache to delete — stay
     },
-    "crash_limit": {RunnerState.RUNNING: RunnerState.ERROR},
+    "crash_limit": {
+        RunnerState.RUNNING: RunnerState.ERROR,
+        RunnerState.LOADING: RunnerState.ERROR,  # crash loop before ever becoming ready
+    },
     "health_loading": {RunnerState.RUNNING: RunnerState.LOADING},
     "health_error": {RunnerState.RUNNING: RunnerState.ERROR},
 }
