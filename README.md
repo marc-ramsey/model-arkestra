@@ -264,7 +264,6 @@ from model_arkestra import ModelNotStarted, MaxRestartsExceeded, ModelShutdown
 - [API Reference — Runners](./docs/api/runners.md)
 - [LangChain Integration](./docs/langchain.md)
 - [Error Hierarchy](./docs/errors.md)
-- [HTTP Client](./docs/http-client.md)
 - [ONNX Server](./docs/onnx-server.md) — auxiliary workloads (embeddings, TTS, STT)
 - [Contributing & Tests](./docs/contributing.md)
 

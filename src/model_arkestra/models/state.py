@@ -69,21 +69,12 @@ _TRANSITIONS: dict[str, dict[RunnerState, RunnerState]] = {
 }
 
 
-def can(state: RunnerState, event: str) -> bool:
-    return state in _TRANSITIONS.get(event, {})
+def transition(state: RunnerState, event: str) -> RunnerState:
+    """Validate and return the next state (pure — caller assigns).
 
-
-def target(state: RunnerState, event: str) -> RunnerState:
-    """Return the destination state for ``event`` from ``state``.
-
-    Raises IllegalTransition if the pair is not in the table.
+    Raises IllegalTransition if the (state, event) pair is not in the table.
     """
     try:
         return _TRANSITIONS[event][state]
     except KeyError as exc:
         raise IllegalTransition(f"{event!r} not allowed from {state.name}") from exc
-
-
-def transition(state: RunnerState, event: str) -> RunnerState:
-    """Validate and return the next state (pure — caller assigns)."""
-    return target(state, event)

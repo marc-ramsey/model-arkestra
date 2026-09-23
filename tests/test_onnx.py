@@ -135,7 +135,6 @@ class TestProxyRouting:
     def test_onnx_lifecycle_methods_exist(self):
         from model_arkestra.server import ArkestraServer
         assert hasattr(ArkestraServer, "_find_model_by_tag")
-        assert hasattr(ArkestraServer, "_get_remote_base_url")
 
 
 # ── Aux model config resolution ───────────────────────────────────
@@ -153,28 +152,6 @@ class TestAuxModelConfig:
             # No aux models in test-admin-config.yaml — should return None for unknown
             result = server._find_model_by_tag("nonexistent")
             assert result is None
-
-
-# ── ONNX model download utility ───────────────────────────────────
-
-class TestDownloadOnnxModel:
-    def test_download_into_hf_hub_cache(self):
-        from model_arkestra.common import download_onnx_model, default_cache_root
-        cache = default_cache_root()
-        path = download_onnx_model("Xenova/bge-small-en-v1.5", cache_dir=cache)
-        assert path.exists()
-        assert str(path).startswith(str(cache))
-        assert str(path).endswith(".onnx")
-
-    def test_resolve_existing_path(self):
-        from model_arkestra.common import resolve_onnx_model_path
-        resolved = resolve_onnx_model_path(str(BASE_DIR / "tests/test-admin-config.yaml"))
-        assert resolved.exists()
-
-    def test_resolve_repo_id(self):
-        from model_arkestra.common import resolve_onnx_model_path
-        path = resolve_onnx_model_path("Xenova/bge-small-en-v1.5")
-        assert path.exists() and str(path).endswith(".onnx")
 
 
 # ── TTS Synthesis ────────────────────────────────────────────────

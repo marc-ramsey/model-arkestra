@@ -21,19 +21,5 @@ class PodmanRunner(ContainerRunner):
     def _container_cmd(self) -> str:
         return "podman"
 
-    async def _remove_containers(self, cids: list) -> None:
-        for cid in cids:
-            if cid:
-                try:
-                    proc = await asyncio.create_subprocess_exec(
-                        "podman", "rm", "-f", cid,
-                        stdout=asyncio.subprocess.DEVNULL,
-                        stderr=asyncio.subprocess.DEVNULL,
-                        env=SUBPROCESS_ENV,
-                    )
-                    await proc.wait()
-                except Exception:
-                    pass
-
     def _extra_run_args(self) -> List[str]:
         return ["--replace", "--group-add", "keep-groups"]

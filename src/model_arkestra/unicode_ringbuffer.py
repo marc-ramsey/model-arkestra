@@ -94,34 +94,19 @@ class UnicodeRingBuffer:
         self._count += n
         return n
 
-    def read_lines(self) -> list[str]:
-        """Decode all *complete* lines currently in the buffer.
+    def write_force(self, seq: int, text: str) -> bool:
+        """Write *text*; on BufferFullError drop one oldest entry and retry.
 
-        Incomplete trailing fragments are kept until a newline arrives on a
-        subsequent write + read call.  Returns [] when nothing complete
-        is available yet."""
-        if self._count == 0:
-            return []
-
-        data = self._read_bytes()
-        lines: list[str] = []
-        pos = 0
-        while True:
-            nl = data.find(b'\n', pos)
-            if nl == -1:
-                break
-            raw_line = data[pos : nl]
+        Up to 20 attempts. Returns False only if the buffer is unusable."""
+        for _ in range(20):
             try:
-                decoded = raw_line.decode('utf-8')
-            except UnicodeDecodeError as exc:
-                raise RuntimeError(
-                    f"corrupted buffer at positions {pos}..{nl}: {exc}"
-                ) from exc
-            lines.append(decoded)
-            pos = nl + 1
-
-        self._consume(pos)
-        return lines
+                self.write(seq, text)
+                return True
+            except self.BufferFullError:
+                if not self:
+                    return False
+                self.read_entries(max_lines=1)
+        return False
 
     def read_entries(self, max_lines: int = 1, next_line: int | None = None) -> list[tuple[int, str]]:
         """Read up to *max_lines* most-recent entries from the ring.
@@ -150,24 +135,6 @@ class UnicodeRingBuffer:
 
         self._consume(pos)
         return all_entries[-max_lines:]
-
-    def peek(self) -> str | None:
-        """Return all buffered content as a string, or None if empty."""
-        raw = self._read_bytes()
-        return raw.decode('utf-8', errors='replace') if raw else None
-
-    def flush_lines(self) -> list[str]:
-        """Read everything including the incomplete trailing fragment.
-        Use at end-of-stream when no more data is expected."""
-        lines = self.read_lines()
-        remainder = self._read_bytes()
-        if remainder:
-            try:
-                lines.append(remainder.decode('utf-8'))
-            except UnicodeDecodeError:
-                lines.append(remainder.decode('utf-8', errors='replace'))
-            self._count = 0
-        return lines
 
     def __len__(self) -> int:
         return self.used_space

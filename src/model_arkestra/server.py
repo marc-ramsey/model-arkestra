@@ -43,7 +43,7 @@ except ImportError:
     )
 
 from model_arkestra.base import BaseRunner  # noqa: E402
-from model_arkestra.common import resolve_config_path, DEFAULT_CONFIG_DIR, default_cache_root
+from model_arkestra.common import resolve_config_path, default_cache_root
 from model_arkestra.config_manager import ConfigManager
 from model_arkestra.conn import add_common_args, add_server_args, resolve_conn
 from model_arkestra.types import ModelNotStarted, ModelShutdown, RunnerState
@@ -269,14 +269,6 @@ class ArkestraServer:
             if tag in (cfg.get("tags") or []):
                 return name
         return None
-
-    def _get_remote_base_url(self, model_name: str) -> Optional[str]:
-        """Return the base-url for a remote cluster proxy, or None."""
-        try:
-            cluster_name, base_url, _local_id = self._arkestra.resolve_model_cluster_addr(model_name)
-        except ValueError:
-            return None
-        return str(base_url).rstrip("/") if base_url else None
 
     # ── Shared request helpers ────────────────────────────────────
 
@@ -544,7 +536,11 @@ class ArkestraServer:
 
             # Remote cluster models resolve directly; local names get
             # tag/legacy fallbacks before inference (autostart included).
-            if not self._get_remote_base_url(model_name):
+            try:
+                _c, base_url, _l = self._arkestra.resolve_model_cluster_addr(model_name)
+            except ValueError:
+                base_url = None
+            if not base_url:
                 model_name = self._resolve_tagged_model(
                     model_name, "embed",
                     "No embedding model available. Configure a model with tags: [embed]",

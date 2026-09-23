@@ -71,10 +71,6 @@ class BaseRunner(ABC):
         except OSError:
             pass
 
-    async def _release_port(self, port: int) -> None:
-        """Subclasses may override to wait for the listener to drain."""
-        pass
-
     # ── context access ──────────────────────────────────────────
     @property
     def ctx(self) -> Optional[_Model]:

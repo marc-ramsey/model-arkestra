@@ -28,12 +28,10 @@ class _Model:
         self.backend_id: Optional[str] = None
         self.runner_type: Optional[str] = None   # process|podman|docker|onnx|remote
         self.cluster: str = "local"
-        self.device: Optional[Any] = None        # resolved device spec (slice 3)
 
         # ── lifecycle handles (owned by this model, not a runner) ──
         self.process: Optional[asyncio.subprocess.Process] = None
         self.container_id: Optional[str] = None
-        self._backend: Optional[Any] = None      # Backend strategy instance
         self._provider: Optional[Any] = None     # Provider (inference) instance
 
         # ── capability derivation inputs (set by the registry/factory) ──
@@ -116,14 +114,7 @@ class _Model:
         self._log_seq += 1
         if not line.endswith("\n"):
             line = line + "\n"
-        for _ in range(20):
-            try:
-                self._log_ring.write(self._log_seq, line)
-                break
-            except UnicodeRingBuffer.BufferFullError:
-                if not self._log_ring:
-                    return self._log_seq
-                self._log_ring.read_entries(max_lines=1)
+        self._log_ring.write_force(self._log_seq, line)
         return self._log_seq
 
     def _get_lines_since(self, since: int, max_lines: int):

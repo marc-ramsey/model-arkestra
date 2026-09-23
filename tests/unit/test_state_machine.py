@@ -10,7 +10,6 @@ import pytest
 from model_arkestra.models.state import (
     RunnerState,
     IllegalTransition,
-    can,
     transition,
 )
 from model_arkestra.types import _Model
@@ -27,18 +26,15 @@ class TestLoadTransitions:
         RunnerState.STOPPING,
     ])
     def test_load_from_allowed_states(self, src):
-        assert can(src, "load")
         assert transition(src, "load") is RunnerState.LOADING
 
     def test_load_idempotent_from_loading(self):
         """Crash-restart race: the watcher sets LOADING via _before_restart,
         then an in-flight request calls start() which issues 'load' again.
         Must be a legal no-op transition, not an IllegalTransition."""
-        assert can(RunnerState.LOADING, "load")
         assert transition(RunnerState.LOADING, "load") is RunnerState.LOADING
 
     def test_load_rejected_from_downloading(self):
-        assert not can(RunnerState.DOWNLOADING, "load")
         with pytest.raises(IllegalTransition):
             transition(RunnerState.DOWNLOADING, "load")
 
@@ -77,7 +73,6 @@ class TestCrashLimitFromLoading:
     """
 
     def test_crash_limit_from_loading_reaches_error(self):
-        assert can(RunnerState.LOADING, "crash_limit")
         assert transition(RunnerState.LOADING, "crash_limit") is RunnerState.ERROR
 
     def test_crash_limit_from_running_still_legal(self):
@@ -91,7 +86,6 @@ class TestCrashLimitFromLoading:
 
     def test_crash_limit_rejected_from_stopped(self):
         """Table stays strict for unrelated states."""
-        assert not can(RunnerState.STOPPED, "crash_limit")
         with pytest.raises(IllegalTransition):
             transition(RunnerState.STOPPED, "crash_limit")
 

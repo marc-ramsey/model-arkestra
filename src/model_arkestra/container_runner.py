@@ -191,23 +191,6 @@ class ContainerRunner(BaseRunner, ABC):
             return []
         return interleaved
 
-    async def _release_port(self, port: int) -> None:
-        """Wait up to ``port_drain_timeout`` seconds for a stopped container's
-        listener to release the port.  Uses non-blocking subprocess calls so the
-        event loop can be cancelled if shutdown proceeds.
-        """
-        loop = asyncio.get_event_loop()
-        deadline = loop.time() + self.port_drain_timeout
-        while loop.time() < deadline:
-            proc = await asyncio.create_subprocess_exec(
-                "lsof", f"-ti:{port}",
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-            )
-            stdout, _ = await proc.communicate()
-            if not stdout.strip():
-                return
-            await asyncio.sleep(0.2)
-
     async def _before_restart(self, ctx: _Model, new_size=None) -> bool:
         """Cancel active log capture and clear stale container reference."""
         self._cancel_log_task(ctx)
@@ -240,9 +223,21 @@ class ContainerRunner(BaseRunner, ABC):
         """Extra CLI args to insert into the run command. Override per-runtime."""
         return []
 
-    @abstractmethod
     async def _remove_containers(self, cids: list) -> None:
         """Force-remove a list of stale container IDs."""
+        for cid in cids:
+            if not cid:
+                continue
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    self._container_cmd(), "rm", "-f", cid,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                    env=SUBPROCESS_ENV,
+                )
+                await proc.wait()
+            except Exception:
+                pass
 
     async def _ensure_image(self, image: str, ctx: _Model) -> None:
         """Pull *image* if absent, streaming progress to the model log ring.

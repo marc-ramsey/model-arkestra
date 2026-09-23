@@ -102,14 +102,7 @@ class ModelArkestra:
         self._global_log_seq += 1
         if not text.endswith("\n"):
             text = text + "\n"
-        for _ in range(20):
-            try:
-                self._global_log_buf.write(self._global_log_seq, text)
-                break
-            except UnicodeRingBuffer.BufferFullError:
-                if not self._global_log_buf:
-                    return
-                self._global_log_buf.read_entries(max_lines=1)
+        self._global_log_buf.write_force(self._global_log_seq, text)
 
     # ── port allocation (global) ───────────────────────────────────────
     def worker_port(self, model_name: str) -> int:
@@ -203,16 +196,12 @@ class ModelArkestra:
             )
 
     # ── device profile resolution (single init-time query) ───────
-    def _get_device_profile(self) -> Dict[str, Any]:
-        """Lazy-cached GPU detection. Called once on first access."""
-        if self._device_profile is None:
-            self._device_profile = _resolve_device_profile(self.cm)
-        return self._device_profile
-
     @property
     def device_profile(self) -> Dict[str, str]:
         """GPU device-profile env vars (empty dict if no GPU matched)."""
-        return self._get_device_profile().get("env", {})
+        if self._device_profile is None:
+            self._device_profile = _resolve_device_profile(self.cm)
+        return self._device_profile.get("env", {})
 
     @property
     def models(self) -> Dict[str, Any]:
@@ -237,16 +226,6 @@ class ModelArkestra:
             self._hardware_detection = _detect_all()
         return self._hardware_detection
 
-    # ── hardware detection (public API) ────────────────────────
-    @property
-    def hardware(self) -> Dict[str, Any]:
-        """Full GPU/CPU detection result — cached once at first access.
-
-        Returns:
-            Dict with keys: gpus, primary_gpu, primary_backend, gfx_family,
-            multi_gpu_warn, cpu, has_runtime, recommendation, warnings.
-        """
-        return self.device_detection
 
     def _pre_create_model_contexts(self) -> None:
         """Create a _Model for every configured model.
@@ -493,15 +472,6 @@ class ModelArkestra:
         model = self.get_model(model_name) or {}
         return _resolve_backend(self._cm, model, model_name, None)
 
-    def _get_runner(self, model_name: str, env_vars: Dict[str, Any], backend: Optional[str] = None) -> BaseRunner:
-        # Find the runner that owns this context
-        local_name = self.local_model_name(model_name)
-        ctx = self.model_obj(local_name)
-        if ctx is not None and getattr(ctx, '_runner', None) is not None:
-            return ctx._runner
-        runner_type = self.resolve_runner_type(model_name, env_vars, backend)
-        return self.get_runner_instance(runner_type, model_name)
-
     def resolve_runner_type(self, model_name: str, env_vars: Dict[str, Any], override_backend: Optional[str] = None) -> str:
         """Resolve runner type: model → backend.runner → default.container-type → runners.default → process."""
         model_cfg = self._cm.get("models", {}).get(model_name, {})
@@ -528,14 +498,16 @@ class ModelArkestra:
 
     # ── env resolution (computed at init, never persisted) ───────
 
-    def _build_env(self) -> Dict[str, str]:
-        """Merge default-env YAML with actual os.environ into _env.
+    def _ensure_env(self) -> Dict[str, str]:
+        """Merge default-env YAML with actual os.environ into _env (lazily, once).
 
         precedence: explicit constructor args > os.environ > default-env defaults.
         The _env dict is computed once at startup and never written to disk.
         Keys are normalized to kebab-case regardless of YAML convention used.
         Env var lookup uppercases the key and replaces '-' with '_'.
         """
+        if getattr(self, "_env", None) is not None:
+            return self._env
         defaults = self._cm.get("default-env", {}) or {}
         result: Dict[str, str] = {}
         for raw_key in defaults:
@@ -549,13 +521,8 @@ class ModelArkestra:
                 val = defaults[raw_key]
                 if val is not None:
                     result[norm_key] = str(val) if not isinstance(val, str) else val
+        self._env = result
         return result
-
-    def _ensure_env(self) -> Dict[str, str]:
-        """Return the computed _env dict (computed lazily at first access)."""
-        if not hasattr(self, "_env") or self._env is None:
-            self._env = self._build_env()
-        return self._env
 
     def resolve_config(self, key: str, explicit: Optional[str] = None) -> Optional[str]:
         """Resolve a config value with unified precedence.
@@ -636,9 +603,16 @@ class ModelArkestra:
         """
         cluster_name, base_url, local_name = self.resolve_model_cluster_addr(model_name)
 
+        # Separate infra keys from inference kwargs (shared by remote + local)
+        infra_keys = {"port", "backend", "runner"}
+        port = overrides.get("port")
+        backend = overrides.get("backend")
+        runner_type_override = overrides.get("runner")
+        inference_kwargs = {k: v for k, v in overrides.items() if k not in infra_keys}
+
         # ── remote-cluster model: proxy everything through the worker ──
         if base_url is not None:
-            return await self._start_remote_model(local_name, overrides, cluster_name, base_url)
+            return await self._start_remote_model(local_name, inference_kwargs, cluster_name, base_url)
 
         # ── local-cluster model ──────────────────────────────────────
         model = self.get_model(local_name)
@@ -654,13 +628,6 @@ class ModelArkestra:
 
         backends_cfg = self._cm.get("backends", {})
         runners_cfg = self._cm.get("runners", {})
-
-        # Separate infra keys from inference kwargs
-        infra_keys = {"port", "backend", "runner"}
-        port = overrides.get("port")
-        backend = overrides.get("backend")
-        runner_type_override = overrides.get("runner")
-        inference_kwargs = {k: v for k, v in overrides.items() if k not in infra_keys}
 
         # Validate explicit backend
         if backend and backend not in backends_cfg:
@@ -703,11 +670,6 @@ class ModelArkestra:
             self.log(f"[action=start model={model_name} port={port}]")
             return
 
-        # Resolve backend + runner type from config
-        be_id = self.resolve_backend_id(local_name, {}, backend)
-        be_cfg = backends_cfg.get(be_id, {})
-        resolved_runner = self._normalize_container(str(be_cfg.get("runner", "process")))
-
         if resolved_runner not in runners_cfg and resolved_runner not in ("process", "podman", "docker", "onnx", "remote"):
             raise ValueError(
                 f"Backend '{be_id}' resolves to unknown runner type '{resolved_runner}'. "
@@ -728,17 +690,6 @@ class ModelArkestra:
             ctx._remote_base_url = str(be_cfg.get("base_url", "")).rstrip("/")
             ctx._admin_key = be_cfg.get("admin_key") or be_cfg.get("admin-key") or ""
         self.log(f"[action=start model={model_name} port={port}]")
-
-    async def execute(self, model_name: str, capability: str, **kwargs) -> Any:
-        """Dispatch any capability to the appropriate runner handler."""
-        runner = self._get_runner(model_name, {}, None)
-        handler = getattr(runner, capability, None)
-        if not handler:
-            raise RuntimeError(
-                f"Runner for '{model_name}' does not implement capability '{capability}'. "
-                f"Available: {', '.join(m for m in dir(runner) if not m.startswith('_') and callable(getattr(runner, m)))}"
-            )
-        return await handler(model_name, **kwargs)
 
     async def _start_onnx_model(
         self, model_name: str, inference_kwargs: Dict[str, Any],
@@ -788,15 +739,13 @@ class ModelArkestra:
         logger.info("ONNX model '%s' loaded into memory", model_name)
 
     async def _start_remote_model(
-        self, local_name: str, overrides: Dict[str, Any], cluster_name: str, base_url: str,
+        self, local_name: str, inference_kwargs: Dict[str, Any], cluster_name: str, base_url: str,
     ) -> None:
         """Start a remote-cluster model — proxy all traffic to the target arkestra worker.
 
         No local port is allocated.  All HTTP calls (start, stop, chat, embed)
         are forwarded to ``base_url`` from the cluster configuration.
         """
-        inference_kwargs = {k: v for k, v in overrides.items() if k not in {"port", "backend", "runner"}}
-
         # Find or create the remote runner (shared per model instance)
         cluster_cfg = self.clusters.get(cluster_name) or {}
         ctx = self.model_obj(local_name)
@@ -1022,19 +971,6 @@ class ModelArkestra:
 
         return result
 
-
-    async def restart(
-        self,
-        model_name: str,
-        **overrides: Any,
-    ) -> None:
-        """Stop a model and start a new instance on the same port.
-
-        Optional kwargs override backend, runner, or pass inference params.
-        All overrides are transient — they disappear on restart.
-        """
-        await self.stop(model_name)
-        await self.start(model_name, **overrides)
 
     async def stop_all(self) -> None:
         """Stop all model processes across every runner, keeping entries alive."""

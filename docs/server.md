@@ -352,4 +352,3 @@ Both scripts accept an optional first argument to select the container runtime (
 - [Admin API](./admin.md) — admin panel that extends the same FastAPI app
 - [Usage Guide](./usage.md) — Python API for starting/controlling models
 - [Configuration Format](./config.md) — how config drives model behavior
-- [HTTP Client](./http-client.md) — standalone client utility for external integrations (see `http_proxy.py`)

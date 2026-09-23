@@ -9,7 +9,7 @@ from __future__ import annotations
 
 # ── state machine (single source of truth: models/state.py) ────────────
 from model_arkestra.models.state import (  # noqa: F401
-    RunnerState, IllegalTransition, can, target, transition,
+    RunnerState, IllegalTransition, transition,
 )
 
 # ── per-model object (models/model.py) ─────────────────────────────────
@@ -24,7 +24,7 @@ class ModelShutdown(RunnerError): """Request made after the model was stopped.""
 
 
 __all__ = [
-    "RunnerState", "IllegalTransition", "can", "target", "transition",
+    "RunnerState", "IllegalTransition", "transition",
     "_Model",
     "RunnerError", "ServerReadyTimeout", "ModelNotStarted",
     "MaxRestartsExceeded", "ModelShutdown",

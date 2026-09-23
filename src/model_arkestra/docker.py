@@ -24,19 +24,5 @@ class DockerRunner(ContainerRunner):
     def _pre_start_cleanup(self, ctx) -> List[str]:
         return ["docker", "rm", "-f", safe_container_name(ctx.name, ctx.port)]
 
-    async def _remove_containers(self, cids: list) -> None:
-        for cid in cids:
-            if cid:
-                try:
-                    proc = await asyncio.create_subprocess_exec(
-                        "docker", "rm", "-f", cid,
-                        stdout=asyncio.subprocess.DEVNULL,
-                        stderr=asyncio.subprocess.DEVNULL,
-                        env=SUBPROCESS_ENV,
-                    )
-                    await proc.wait()
-                except Exception:
-                    pass
-
     def _extra_run_args(self) -> List[str]:
         return []

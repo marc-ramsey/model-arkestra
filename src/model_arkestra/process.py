@@ -14,13 +14,6 @@ from model_arkestra.types import _Model
 
 class ProcessRunner(BaseRunner):
 
-    async def get_logs(self, ctx: _Model, lines: int = 100) -> List[str]:
-        """Return the last N log lines from the context's ring buffer."""
-        if not ctx:
-            return []
-        result, _oldest = ctx._get_lines_since(0, lines)
-        return [t for _, t in result]
-
     async def _start_model_process(
         self, ctx: _Model, model_data: Dict[str, Any], model_name: str
     ) -> None:

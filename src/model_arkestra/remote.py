@@ -94,7 +94,6 @@ class RemoteRunner(BaseRunner):
                         # Worker doesn't have admin routes — likely raw llama-server.
                         if self.arkestra:
                             self.arkestra.log(f"[start] model={ctx.name} remote={ctx._remote_base_url} passthrough")
-                        ctx._remote_start_ack = True  # assume model will be loaded externally
                         return
                     if resp.status != 200:
                         detail = await resp.text()
@@ -112,17 +111,14 @@ class RemoteRunner(BaseRunner):
                                 if status in ("ok", "loaded"):
                                     if self.arkestra:
                                         self.arkestra.log(f"[start] model={ctx.name} remote={ctx._remote_base_url}")
-                                    ctx._remote_start_ack = True
                                     return
                     except (aiohttp.ClientError, asyncio.TimeoutError):
                         pass
                     await asyncio.sleep(0.5)
 
             # Timeout — don't fail, let the caller discover via inference proxy
-            ctx._remote_start_ack = False
         except Exception as e:
             logger.warning(f"Remote start proxy failed for {ctx.name}: {e}")
-            ctx._remote_start_ack = False
 
     async def _stop_model_process(self, ctx: _Model) -> None:
         """Proxy model stop to the remote worker."""
