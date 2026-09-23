@@ -13,6 +13,7 @@ from model_arkestra.gpu_detect import has_rocm, has_vulkan, has_nvidia, detect_a
 from model_arkestra.base import BaseRunner
 from model_arkestra.common import (
     _resolve_backend, _resolve_device_profile, default_cache_root,
+    ModelRef,
     resolve_config_path, image_and_runner_for_backend, resolve_model_ref,
     resolve_tags as _resolve_model_tags,
 )
@@ -21,6 +22,7 @@ from model_arkestra.onnx_runner import OnnxRunner
 from model_arkestra.podman import PodmanRunner
 from model_arkestra.process import ProcessRunner
 from model_arkestra.remote import RemoteRunner
+from model_arkestra.hf_models import derived_name, scaffold_entry, split_repo_tag
 from model_arkestra.types import RunnerState, _Model
 from model_arkestra.unicode_ringbuffer import UnicodeRingBuffer
 from model_arkestra.http_proxy import model_status_for_ctx
@@ -553,6 +555,7 @@ class ModelArkestra:
         """Return the cache directory path for a given HuggingFace repo string."""
         return self._cache_root() / f"models--{repo.replace('/', '--')}"
 
+
     def _cleanup_partial_cache(self, cache_path: Optional[str]) -> None:
         """Remove partial download artifacts from a cancelled pull."""
         if not cache_path:
@@ -803,73 +806,138 @@ class ModelArkestra:
             except Exception:
                 pass
 
-    async def pull(self, model_name: str) -> Dict[str, Any]:
+    async def pull(self, model_name: str, entry_name: str | None = None) -> Dict[str, Any]:
         """Begin pulling a model's checkpoint (non-blocking).
+
+        ``model_name`` is either a configured model or a raw HF ref
+        (``owner/repo[:tag]``). Raw pulls validate the format first and
+        scaffold a config entry named ``entry_name`` (default
+        ``owner-basename``) so the model is startable once pulled.
 
         Transitions the context to DOWNLOADING and spawns the download as a
         background task. Returns immediately; callers poll status for progress.
         Never blocks the event loop.
         """
-        _, _, local_name = self.resolve_model_cluster_addr(model_name)
-        if not self.get_model(local_name):
-            raise ValueError(f"Unknown model '{local_name}'")
+        from model_arkestra.hf_models import build_plan, derived_name, split_repo_tag
+        from huggingface_hub import HfApi
 
-        ctx = self.model_obj(local_name)
+        is_raw = "/" in model_name and self.get_model(model_name) is None
+        if not is_raw:
+            if entry_name:
+                raise ValueError("entry name is only valid for raw pulls (owner/repo)")
+            _, _, local_name = self.resolve_model_cluster_addr(model_name)
+            if not self.get_model(local_name):
+                raise ValueError(f"Unknown model '{local_name}'")
+
+            ctx = self.model_obj(local_name)
+            if ctx is None:
+                # Create a context so the download has somewhere to report state.
+                from model_arkestra.types import _Model as _M
+                ctx = _M(local_name, 0)
+                self._registry.register(local_name, ctx, [local_name])
+
+            if ctx.state == RunnerState.RUNNING:
+                return {"ok": True, "model": local_name, "already_loaded": True}
+            if ctx.state == RunnerState.DOWNLOADING and ctx.download_task and not ctx.download_task.done():
+                return {"ok": True, "model": local_name, "already_downloading": True}
+
+            ctx.set_state("pull")
+            task = asyncio.create_task(self.pull_model(ctx, local_name))
+            ctx.download_task = task
+            self.log(f"[action=pull model={local_name}]")
+            return {"ok": True, "model": local_name}
+
+        # ── raw pull: owner/repo[:tag] ──────────────────────────────────
+        repo, _tag = split_repo_tag(model_name)
+        if not repo:
+            raise ValueError(f"Malformed model ref: {model_name}")
+        if entry_name and self.get_model(entry_name):
+            raise ValueError(f"Model '{entry_name}' already exists — refusing to overwrite")
+        name = entry_name or derived_name(repo)
+
+        # Plan up front: validates the format and names the files before
+        # any bytes move. Unrecognized types (snapshot) are refused.
+        def _plan() -> tuple:
+            files = HfApi().list_repo_files(repo)
+            return files, build_plan(model_name, files)
+
+        files, plan = await asyncio.to_thread(_plan)
+        if plan.format == "snapshot" or not plan.files:
+            raise ValueError(
+                f"Unrecognized model type in '{repo}' — pull supports gguf and onnx")
+
+        ctx = self.model_obj(model_name)
         if ctx is None:
-            # Create a context so the download has somewhere to report state.
-            from model_arkestra.types import _Model as _M
-            ctx = _M(local_name, 0)
-            self._registry.register(local_name, ctx, [local_name])
+            ctx = _Model(model_name, 0)
+            self._registry.register(model_name, ctx, [model_name])
 
         if ctx.state == RunnerState.RUNNING:
-            return {"ok": True, "model": local_name, "already_loaded": True}
+            return {"ok": True, "model": model_name, "already_loaded": True, "name": name}
         if ctx.state == RunnerState.DOWNLOADING and ctx.download_task and not ctx.download_task.done():
-            return {"ok": True, "model": local_name, "already_downloading": True}
+            return {"ok": True, "model": model_name, "already_downloading": True, "name": name}
 
         ctx.set_state("pull")
-        task = asyncio.create_task(self.pull_model(ctx, local_name))
+        task = asyncio.create_task(self.pull_model(
+            ctx, model_name, raw_ref=model_name, entry_name=name, files=files, plan=plan))
         ctx.download_task = task
-        self.log(f"[action=pull model={local_name}]")
-        return {"ok": True, "model": local_name}
+        self.log(f"[action=pull model={model_name} name={name}]")
+        return {"ok": True, "model": model_name, "name": name}
 
-    async def pull_model(self, ctx: _Model, model_name: str | None = None) -> None:
-        """Background task: download the checkpoint's exact file set.
+    async def pull_model(self, ctx: _Model, model_name: str | None = None,
+                         raw_ref: str | None = None,
+                         entry_name: str | None = None,
+                         files: list[str] | None = None,
+                         plan=None) -> None:
+        """Background task: download the exact file set for a model ref.
 
-        Resolves ``repo:quant`` to the specific GGUF files (primary + any
-        mmproj/mtp sidecars) via :mod:`model_arkestra.hf_gguf` and fetches only
-        those into the HF cache. Runs in a worker thread; never blocks the
-        event loop.
+        Configured pulls read the model's ``model:`` field; raw pulls
+        (``raw_ref``) plan the given ``owner/repo[:tag]`` directly (the
+        pre-fetched ``files``/``plan`` are reused when available). The
+        format-aware planner (:mod:`model_arkestra.hf_models`) fetches only
+        what the model will load — GGUF set or ONNX set.
+        Runs in a worker thread; never blocks the event loop.
 
-        ``model_name`` is the *model* name (not the checkpoint id) — required
-        for grouped checkpoints where ``ctx.name`` is the shared checkpoint id
-        and does not resolve via :meth:`get_model`.
+        After a raw pull, a model entry (``entry_name``) is written to
+        config so the model is startable immediately.
         """
         model_name = model_name or ctx.name
+        cache_path: str | None = None
         try:
-            model_data = self.get_model(model_name) or {}
-            raw = model_data.get("model", "")
-            resolved = resolve_model_ref(
-                raw,
-                default_section=(self._cm.data.get("default") or {}),
-                model_repos=self._cm.data.get("model-repos"),
-            )
-            if not resolved.cache_path:
-                raise ValueError(f"No cacheable model ref: {raw}")
+            resolved: ModelRef | None = None
+            if raw_ref is None:
+                model_data = self.get_model(model_name) or {}
+                raw = model_data.get("model", "")
+                resolved = resolve_model_ref(
+                    raw,
+                    default_section=(self._cm.data.get("default") or {}),
+                    model_repos=self._cm.data.get("model-repos"),
+                )
+                if not resolved.cache_path:
+                    raise ValueError(f"No cacheable model ref: {raw}")
+                pull_ref = resolved.ref
+            else:
+                pull_ref = raw_ref
 
-            from model_arkestra.hf_gguf import resolve_plan, download_plan, split_repo_tag
+            from model_arkestra.hf_models import build_plan, download_plan, split_repo_tag
             from huggingface_hub import HfApi
 
-            repo, _tag = split_repo_tag(resolved.ref)
+            repo, _tag = split_repo_tag(pull_ref)
             if not repo:
-                raise ValueError(f"Cannot pull non-HF ref: {resolved.ref}")
-
-            def log_progress(line: str) -> None:
-                ctx._append_log_line(f"[pull] {model_name}: {line}")
+                raise ValueError(f"Cannot pull non-HF ref: {pull_ref}")
+            if resolved is None:
+                # Raw refs always cache under models--<owner>--<repo>
+                resolved = ModelRef(ref=pull_ref, repo="hf",
+                                    cache_path=self._hf_cache_dir(repo).name)
+            cache_path = resolved.cache_path
+            if files is None:
+                files = HfApi().list_repo_files(repo)
+            if plan is None:
+                plan = build_plan(pull_ref, files)
 
             def _do_download() -> list[str]:
-                files = HfApi().list_repo_files(repo)
-                plan = resolve_plan(resolved.ref, files)
                 total = len(plan.files)
+                if not total:
+                    raise ValueError(f"No downloadable files matched: {pull_ref}")
 
                 def _prog(filename: str, i: int) -> None:
                     ctx._append_log_line(f"[pull] {model_name}: ({i}/{total}) {filename}")
@@ -877,26 +945,68 @@ class ModelArkestra:
                     if total:
                         ctx.download_pct = round(100.0 * (i - 1) / total, 1)
 
-                log_progress(f"fetching {total} file(s): "
-                             f"{', '.join(plan.files)}")
+                ctx._append_log_line(
+                    f"[pull] {model_name}: fetching {total} file(s) "
+                    f"({plan.format}): {', '.join(plan.files)}")
                 return download_plan(plan, cache_dir=str(self._cache_root()),
                                      token=self._cm.get("default/hf-token", None),
                                      progress_cb=_prog)
 
             await asyncio.to_thread(_do_download)
 
+            if raw_ref is not None:
+                self._write_pulled_entry(ctx, repo, pull_ref, entry_name, plan)
+
             ctx.set_state("download_ok")
             self.log(f"[pull] model={model_name} complete")
         except asyncio.CancelledError:
-            self._cleanup_partial_cache(resolved.cache_path)
+            self._cleanup_partial_cache(cache_path)
             ctx.set_state("download_cancel")
             self.log(f"[pull] model={model_name} cancelled")
             raise
         except Exception as e:
-            self._cleanup_partial_cache(resolved.cache_path)
+            self._cleanup_partial_cache(cache_path)
             ctx.set_state("download_fail")
             ctx.last_error = str(e)
             self.log(f"[pull] model={model_name} FAILED: {e}", level="ERROR")
+
+    def _write_pulled_entry(self, ctx: _Model, repo: str, ref: str,
+                            entry_name: str | None, plan) -> None:
+        """Make a raw-pulled model startable: write/refresh its config entry.
+
+        ``entry_name`` (default ``owner-basename``) is the config key. A
+        pre-existing entry at that key (reachable when ``entry_name``
+        differs from the derived name) keeps every user field; only
+        ``model`` is aligned to what was fetched.
+        """
+        name = entry_name or derived_name(repo)
+        entry = scaffold_entry(repo, plan, backend=self.cm.effective_default_backend())
+        if entry is None:
+            # Unrecognized format — pull() refuses these, so this is only
+            # reachable if the plan is stale. Log and leave config alone.
+            self.log(f"[pull] {name}: no known runner for {repo} — entry not written",
+                     level="WARNING")
+            return
+
+        cfg = self._cm.data.setdefault("models", {})
+        existing = cfg.get(name)
+        if isinstance(existing, dict):
+            # Same model re-pulled: keep every user field, align the ref.
+            if existing.get("model") != entry["model"]:
+                existing["model"] = entry["model"]
+                ctx._append_log_line(f"[pull] {name}: ref updated to {entry['model']}")
+            else:
+                ctx._append_log_line(f"[pull] {name}: entry intact")
+        else:
+            cfg[name] = entry
+            ctx._append_log_line(
+                f"[pull] {name}: model entry created — arkestra start {name}")
+        self._cm.export(self._cm.config_path)
+
+        # Keep the live context aligned with the (possibly new) config.
+        self._registry.register(name, ctx, [name])
+        if entry.get("backend"):
+            ctx.backend_id = entry["backend"]
 
     def can_start(self, model_name: str) -> bool:
         """Check if model is eligible for a fresh start."""

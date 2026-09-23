@@ -772,16 +772,25 @@ class ArkestraAdmin:
 
     def _add_pull_route(self) -> None:
         @self._app.post("/admin/pull/{model:path}")
-        async def admin_pull(model: str):
+        async def admin_pull(model: str, body: Dict[str, Any] = None):
             """Start pulling a model's checkpoint (non-blocking).
 
+            ``model`` is either a configured model name or a raw HF ref
+            (``owner/repo[:tag]``) — raw refs of a recognized type also
+            create/refresh a model entry (``name`` overrides the derived
+            key). Unknown formats are refused.
             Spawns the download as a background task and returns immediately.
             The CLI blocks by polling /admin/pull-status until it completes.
             Never blocks the server event loop.
             """
+            b = body or {}
             try:
-                result = await self.server._arkestra.pull(model)
+                result = await self.server._arkestra.pull(
+                    model, entry_name=b.get("name"))
                 return result
+            except ValueError as exc:
+                # Unknown model name / malformed ref → client error, not a 503
+                raise HTTPException(status_code=404, detail=str(exc))
             except Exception as exc:
                 raise HTTPException(status_code=503, detail=f"Pull failed: {exc}")
 
@@ -789,10 +798,9 @@ class ArkestraAdmin:
         @self._app.get("/admin/pull-status/{model:path}")
         async def admin_pull_status(model: str):
             """Lightweight pull progress for the CLI poll loop (no HF calls)."""
-            cfg = self._models_cfg
-            if model not in cfg:
-                raise HTTPException(status_code=404, detail=f"Model '{model}' not in config")
             ctx = self.server._arkestra.model_obj(model)
+            if ctx is None and model not in self._models_cfg:
+                raise HTTPException(status_code=404, detail=f"Model '{model}' not in config")
             return {
                 "state": ctx.state.name.lower() if ctx else "unknown",
                 "pct": getattr(ctx, "download_pct", None),
@@ -805,11 +813,9 @@ class ArkestraAdmin:
         @self._app.post("/admin/cancel-pull/{model:path}")
         async def admin_pull_stop(model: str):
             """Cancel an in-progress model pull."""
-            cfg = self._models_cfg
-            if model not in cfg:
-                raise HTTPException(status_code=404, detail=f"Model '{model}' not in config")
-
             ctx = self.server._arkestra.model_obj(model)
+            if ctx is None:
+                raise HTTPException(status_code=404, detail=f"No active download for '{model}'")
             if ctx.state != RunnerState.DOWNLOADING:
                 raise HTTPException(
                     status_code=404,
@@ -826,11 +832,18 @@ class ArkestraAdmin:
 
             ctx.download_task = None
             # Clean up partial cache and return to UNCACHED
-            model_cfg = cfg.get(model, {})
-            raw = model_cfg.get("model", "")
-            resolved = self._resolve_ref(raw)
-            if resolved.cache_path:
-                self.server._arkestra._cleanup_partial_cache(resolved.cache_path)
+            if model in cfg:
+                raw = (cfg.get(model) or {}).get("model", "")
+                cache_path = self._resolve_ref(raw).cache_path
+            elif "/" in model:
+                # Raw ref in-flight — same cache dir rule as pull_model.
+                from model_arkestra.hf_models import split_repo_tag
+                repo, _tag = split_repo_tag(model)
+                cache_path = repo.replace("/", "--")
+            else:
+                cache_path = ""
+            if cache_path:
+                self.server._arkestra._cleanup_partial_cache(cache_path)
             ctx.set_state("download_cancel")
             return {"ok": True, "model": model}
 

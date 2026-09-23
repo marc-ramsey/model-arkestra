@@ -366,7 +366,11 @@ async def cmd_pull(args: argparse.Namespace) -> None:
     The server never blocks; this client polls /admin/pull-status until the
     download finishes (state leaves 'downloading').
     """
-    result = await _request("POST", args.conn, f"/admin/pull/{args.name}", api_key=args.api_key)
+    body = {}
+    if getattr(args, "entry_name", None):
+        body["name"] = args.entry_name
+    result = await _request("POST", args.conn, f"/admin/pull/{args.name}",
+                            api_key=args.api_key, json_body=body)
     if getattr(args, "json", False):
         _print_json(result)
         return
@@ -384,6 +388,9 @@ async def cmd_pull(args: argparse.Namespace) -> None:
         state = st.get("state", "")
         if state == "stopped":  # download_ok -> STOPPED
             print(f"\n'{args.name}' downloaded.")
+            entry_name = result.get("name")
+            if entry_name and entry_name != args.name:
+                await _print_pulled_entry(args.conn, entry_name, args.api_key)
             return
         if state in ("error",):
             print(f"\nPull failed: {st.get('error')}", file=sys.stderr)
@@ -438,6 +445,24 @@ async def cmd_cancel_pull(args: argparse.Namespace) -> None:
         print(f"Pull cancelled for '{args.name}'")
     else:
         print(result.get("detail", "Failed to cancel pull"), file=sys.stderr)
+
+
+async def _print_pulled_entry(conn, entry_name: str, api_key: str | None) -> None:
+    """Print the model entry a raw pull created/refreshed (existing config GET)."""
+    import yaml
+    try:
+        data = await _request("GET", conn, f"/admin/config/{entry_name}", api_key=api_key)
+    except Exception:
+        return
+    cfg = data.get("config")
+    if not isinstance(cfg, dict):
+        return
+    text = yaml.safe_dump({entry_name: cfg},
+                          default_flow_style=False, sort_keys=False).rstrip()
+    print(f"\nModel '{entry_name}' configured:")
+    for line in text.splitlines():
+        print(f"  {line}")
+    print(f"\nStart with: arkestra-admin start {entry_name}")
 
 
 async def cmd_clusters(args: argparse.Namespace) -> None:
@@ -611,7 +636,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # ── pull ──
     p = sub.add_parser("pull", help="Download model checkpoint from HuggingFace")
-    p.add_argument("name")
+    p.add_argument("name", help="Model name, or owner/repo[:tag] for a raw pull")
+    p.add_argument("--name", dest="entry_name", default=None,
+                   help="Raw pull: model key to create (default: owner-basename)")
 
     # ── restart ──
     p = sub.add_parser("restart", help="Restart a model (with optional backend/runner overrides)")
