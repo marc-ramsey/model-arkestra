@@ -517,12 +517,18 @@ class ArkestraServer:
                 "models_loaded": loaded,
             }
 
-        # Stub for OWUI's live-log WebSocket — closes immediately.
+        # Stub for OWUI's live-log WebSocket — holds the connection open.
+        # Closing immediately makes the client reconnect in a tight loop.
         @app.websocket("/logs/stream")
         async def logs_stream_stub(websocket: WebSocket):
             await websocket.accept()
             await websocket.send_text(json.dumps({"error": "log streaming not supported"}))
-            await websocket.close()
+            try:
+                while True:
+                    # Drain client messages until it disconnects.
+                    await websocket.receive_text()
+            except WebSocketDisconnect:
+                pass
 
         # ── Route: POST /v1/embeddings (tag-based routing) ───────
 
