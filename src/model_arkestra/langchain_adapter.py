@@ -104,10 +104,7 @@ class LangChainModelAdapter:
         """Blocking invocation — returns full response as an AIMessageChunk."""
         messages = _normalize_messages(input)
 
-        # Build kwargs for the underlying request (stop, temperature, etc.)
-        req_kwargs = self._build_request_kwargs(stop, kwargs)
-
-        # Pass full message list to backend (with stop/other params as extra kwargs)
+        # Pass full message list to backend
         result_text = await self._arkestra.ainvoke(
             self._model_name,
             prompt=messages[-1]["content"] if messages else "",
@@ -133,7 +130,6 @@ class LangChainModelAdapter:
         payload.update(req_kwargs)
 
         buffer: List[str] = []
-        total_tokens = 0
 
         async for event in self._arkestra.astream(
             self._model_name, payload=payload
@@ -177,7 +173,7 @@ class LangChainModelAdapter:
         )
 
         buffer: List[str] = []
-        total_tokens = 0
+        usage: Dict[str, Any] = {}
 
         async for event in self._arkestra.astream(
             self._model_name, payload=payload
@@ -189,11 +185,17 @@ class LangChainModelAdapter:
                     name=self._model_name,
                     data={"chunk": AIMessageChunk(content=event["token"])},
                 )
+            elif "usage" in event:
+                usage = event["usage"]
 
         full_text = "".join(buffer)
-        response_metadata: Dict[str, Any] = {}
+        response_metadata: Dict[str, Any] = {
+            "model": usage.get("model"),
+            "prompt_tokens": usage.get("prompt_tokens", 0),
+            "completion_tokens": usage.get("completion_tokens", 0),
+            "total_tokens": usage.get("total_tokens", 0),
+        } if usage else {}
 
-        # Collect usage from the last event if it had one
         # Re-emit with final content
         yield StandardStreamEvent(
             event="on_chat_model_stream",
