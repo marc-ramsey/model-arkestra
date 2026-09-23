@@ -26,18 +26,21 @@ LLAMA_FIELDS = frozenset({
     "max_tokens", "min_tokens", "logit_bias",
     # OpenAI-style function calling — forwarded verbatim to llama-server.
     "tools", "tool_choice",
+    # Ask llama-server to emit a final usage chunk (required for real
+    # token counts; without it clients fall back to word estimates).
+    "stream_options",
 })
 
 _RETRIES = 12
 _RETRY_SLEEP = 2.5
-# Per-request timeout for chat/stream calls. aiohttp's default total is 5 min,
-# which made a backend stuck in prefill surface as "Stream error" only after
-# ~5 minutes of silence. Socket timeout bounds gaps between chunks; the total
-# covers slow prefills on long contexts (10 min).
-# Large-model prefills (27B+ on consumer GPUs) can exceed 30s before the first
-# token, so sock_read defaults to 120s and is overridable via config
+# Per-request timeout for chat/stream calls. sock_read bounds the gap between
+# chunks — it is the only liveness guard. total is unbounded: a healthy stream
+# never goes silent, while long-context prefills and slow per-token rates on
+# 27B-class models legitimately exceed any fixed total and used to be
+# aborted mid-stream (surfacing as client "Connection error" + hang).
+# sock_read defaults to 120s (27B+ prefills on consumer GPUs can exceed 30s
+# before the first token) and is overridable via config
 # ``default/stream-sock-timeout``.
-_DEFAULT_STREAM_TOTAL = 600.0
 _DEFAULT_STREAM_SOCK_READ = 120.0
 
 
@@ -45,7 +48,7 @@ def stream_timeout(sock_read: Optional[float] = None) -> aiohttp.ClientTimeout:
     """Build the stream ClientTimeout, honoring a config override for sock_read."""
     if sock_read is None:
         sock_read = _DEFAULT_STREAM_SOCK_READ
-    return aiohttp.ClientTimeout(total=_DEFAULT_STREAM_TOTAL, sock_read=sock_read)
+    return aiohttp.ClientTimeout(total=None, sock_read=sock_read)
 
 
 class LlamaProvider(Provider):

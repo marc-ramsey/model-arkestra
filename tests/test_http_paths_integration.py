@@ -244,3 +244,38 @@ class TestRequest:
         runner, handler, app, _server = server
         result = await _provider(runner).request("/custom/path", action="ping")
         assert result["echo"] == "ping"
+
+
+# ── Regression: stream_options + total-timeout contract ───────────────────
+
+class TestStreamForwarding:
+    async def test_stream_options_forwarded_to_backend(self, stream_server):
+        """stream_options must reach llama-server verbatim — without it the
+        backend never emits a usage chunk, so client context accounting
+        (e.g. pi-agent) falls back to word-count guesses."""
+        runner, handler, app, _server = stream_server
+        chunks = []
+        async for chunk in _provider(runner).stream(
+            {"prompt": "hi", "stream_options": {"include_usage": True}}
+        ):
+            chunks.append(chunk)
+
+        sent = handler.calls[-1]["body"]
+        assert sent.get("stream_options") == {"include_usage": True}
+
+    async def test_stream_total_is_unbounded_by_default(self):
+        """total must be None: sock_read bounds inter-chunk silence, and a
+        healthy stream must never be killed by a wall-clock cap (long
+        contexts with slow tok/s hit the old 600s total mid-stream)."""
+        from aiohttp import ClientTimeout
+        from model_arkestra.providers.llama import stream_timeout
+
+        to = stream_timeout()
+        assert to.total is None
+        assert to.sock_read == 120.0
+
+    async def test_stream_sock_read_still_configurable(self):
+        from model_arkestra.providers.llama import stream_timeout
+        to = stream_timeout(30.0)
+        assert to.sock_read == 30.0
+        assert to.total is None
