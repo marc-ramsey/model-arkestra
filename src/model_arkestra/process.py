@@ -107,7 +107,12 @@ class ProcessRunner(BaseRunner):
             self._log_tasks.append(asyncio.create_task(_read_stream(ctx.process.stderr)))
 
     async def _stop_model_process(self, ctx: _Model) -> None:
-        """Kill model process group: SIGHUP → wait 20s → SIGKILL."""
+        """Kill model process group: SIGHUP → wait 20s → SIGKILL.
+
+        The SIGKILL escalation runs in a finally-block-style guarantee: it
+        fires on timeout, on cancel (e.g. server shutdown racing the grace
+        wait), and on any other error. A SIGHUP'd llama-server under load
+        must never survive as a zombie."""
         # Cancel log capture tasks.
         for t in getattr(self, '_log_tasks', []):
             t.cancel()
@@ -117,23 +122,39 @@ class ProcessRunner(BaseRunner):
                 pass
         self._log_tasks = []
 
-        if ctx.process and ctx.process.returncode is None:
-            pid = ctx.process.pid
+        proc = ctx.process
+        if not proc or proc.returncode is not None:
+            return
+        pid = proc.pid
+
+        try:
             if self.arkestra:
                 self.arkestra.log(f"[stop] model={ctx.name} pid={pid} SIGHUP")
-            try:
-                os.killpg(ctx.process.pid, signal.SIGHUP)
-                await asyncio.wait_for(ctx.process.wait(), timeout=20.0)
-                return
-            except (asyncio.TimeoutError, ProcessLookupError):
-                pass
-            if self.arkestra:
-                self.arkestra.log(f"[kill] model={ctx.name} pid={pid} SIGKILL", level="WARNING")
-            try:
-                os.killpg(ctx.process.pid, signal.SIGKILL)
-                await ctx.process.wait()
-            except Exception:
-                pass
+            os.killpg(pid, signal.SIGHUP)
+            await asyncio.wait_for(proc.wait(), timeout=20.0)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            self._kill_group(pid)
+        except ProcessLookupError:
+            pass
+        else:
+            return
+
+        # Escalation path: SIGKILL the group, then reap.
+        self._kill_group(pid)
+        try:
+            await proc.wait()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
+
+    @staticmethod
+    def _kill_group(pid: int) -> None:
+        """SIGKILL the process group; ignore if already gone."""
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
 
     async def _before_restart(self, ctx: _Model, new_size=None) -> bool:
         """Reset process reference so the next start creates a fresh one."""
