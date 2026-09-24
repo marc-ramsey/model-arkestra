@@ -14,7 +14,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from model_arkestra.conn import Conn, add_common_args, resolve_conn
 
@@ -138,7 +138,7 @@ async def cmd_status(args: argparse.Namespace) -> None:
     print(f"  Hardware  → {line}")
 
     # Cache path from config / env / default
-    from model_arkestra.common import default_cache_root, resolve_config_path
+    from model_arkestra.common import default_cache_root
     data = _load_config(args.config)
     hf_cache = None
     hc = (data.get("default-env") or {}).get("hf-hub-cache") or os.environ.get("HF_HUB_CACHE")
@@ -345,7 +345,6 @@ async def cmd_logs(args: argparse.Namespace) -> None:
 
     lines = data.get("lines", [])
     missed = data.get("missed_lines", 0)
-    seq = data.get("seq", 0)
 
     if missed > 0:
         print(f"[skipped {missed} entries]\n")
@@ -551,7 +550,6 @@ async def cmd_images_rm(args: argparse.Namespace) -> None:
 
 async def cmd_shutdown(args: argparse.Namespace) -> None:
     # Don't exit with error if server is shutting down (returns 503 or drops connection)
-    import signal
     headers = {"Accept": "application/json"}
     api_key = args.api_key
     if api_key:

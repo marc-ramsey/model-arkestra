@@ -492,6 +492,8 @@ class ArkestraServer:
             s = self._last_request_stats
             if not s:
                 return {"status": "ok", "stats": None}
+            # Ollama-shaped fields (durations in ns) — OWUI divides these to
+            # render separate prompt t/s and output t/s lines.
             return {
                 "status": "ok",
                 "stats": {
@@ -501,6 +503,11 @@ class ArkestraServer:
                     "prompt_tokens": s["prompt_tokens"],
                     "completion_tokens": s["completion_tokens"],
                     "latency_ms": s["latency_ms"],
+                    "prompt_eval_count": s["prompt_tokens"],
+                    "prompt_eval_duration": s.get("prompt_ms", 0) * 1_000_000,
+                    "eval_count": s["completion_tokens"],
+                    "eval_duration": s.get("eval_ms", 0) * 1_000_000,
+                    "total_duration": s["latency_ms"] * 1_000_000,
                 },
             }
 
@@ -744,7 +751,8 @@ class ArkestraServer:
         )
         latency_ms = round((time.monotonic() - t0) * 1000)
         self._arkestra.log(f"[action=req model={model_name} method=POST path=/v1/chat/completions status=200 latency_ms={latency_ms} tokens={completion_tokens}]")
-        # Record for /api/v1/stats (Open WebUI shows these in the chat UI)
+        # Record for /api/v1/stats (Open WebUI shows these in the chat UI).
+        # Non-streaming: no phase split — attribute it all to eval.
         self._last_request_stats = {
             "model": model_name,
             "timestamp": time.time(),
@@ -752,6 +760,8 @@ class ArkestraServer:
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "total_tokens": prompt_tokens + completion_tokens,
+            "prompt_ms": 0,
+            "eval_ms": latency_ms,
         }
 
         return Response(
@@ -782,15 +792,21 @@ class ArkestraServer:
         tokens_seen = 0
         first_chunk_sent = False
         finish_reason = "stop"  # real reason from backend, or default
+        # Phase timings — set in the usage branch, but the error/no-usage
+        # paths below also record stats, so default them up front.
+        prompt_ms = 0
+        eval_ms = 0
 
         try:
-            async for event in self._arkestra.astream(
-                model_name,
-                payload={
-                    "messages": [m.model_dump() for m in req.messages],
-                    **self._inference_params(req),
-                },
-            ):
+            stream_payload = {
+                "messages": [m.model_dump() for m in req.messages],
+                **self._inference_params(req),
+            }
+            # Always ask the backend for real token counts — clients like
+            # OWUI don't send stream_options themselves, and without it
+            # llama-server omits usage (we'd fall back to word estimates).
+            stream_payload.setdefault("stream_options", {"include_usage": True})
+            async for event in self._arkestra.astream(model_name, payload=stream_payload):
                 if "token" in event:
                     if not first_chunk_sent:
                         first_token_time = time.monotonic()
@@ -845,16 +861,17 @@ class ArkestraServer:
                             finish_reason=finish_reason,
                         )],
                     ).model_dump()
-                    chunk["usage"] = {
-                        "prompt_tokens": usage.get("prompt_tokens", 0),
-                        "completion_tokens": usage.get("completion_tokens", 0),
-                        "total_tokens": usage.get("total_tokens", 0),
-                    }
+                    # Forward verbatim — keeps extra fields (e.g.
+                    # completion_tokens_details.reasoning_tokens) that OWUI renders.
+                    chunk["usage"] = usage
                     yield _sse_format(chunk)
                     # Send [DONE] marker
                     latency_ms = round((time.monotonic() - t0) * 1000)
                     self._arkestra.log(f"[action=stream_end model={model_name} duration_ms={latency_ms} tokens={tokens_seen}] status=ok")
-                    # Record for /api/v1/stats (Open WebUI shows these in the chat UI)
+                    # Record for /api/v1/stats (Open WebUI shows these in the chat UI).
+                    # Phase split: prefill = t0→first token, eval = first→end.
+                    prompt_ms = round((first_token_time - t0) * 1000) if first_token_time else 0
+                    eval_ms = latency_ms - prompt_ms
                     prompt_tokens = usage.get("prompt_tokens", 0) or max(
                         1, sum(len(str(m.content).split()) for m in req.messages) // 4
                     )
@@ -866,6 +883,8 @@ class ArkestraServer:
                         "prompt_tokens": prompt_tokens,
                         "completion_tokens": completion_tokens,
                         "total_tokens": usage.get("total_tokens", 0) or (prompt_tokens + completion_tokens),
+                        "prompt_ms": prompt_ms,
+                        "eval_ms": eval_ms,
                     }
                     yield "data: [DONE]\n\n"
                     return
@@ -881,6 +900,8 @@ class ArkestraServer:
                 "prompt_tokens": 0,
                 "completion_tokens": tokens_seen,
                 "total_tokens": tokens_seen,
+                "prompt_ms": prompt_ms,
+                "eval_ms": eval_ms,
             }
             # Never raise from inside a StreamingResponse generator — headers may already be flushed
             yield _sse_format({"error": str(e), "model": model_name})
@@ -898,6 +919,8 @@ class ArkestraServer:
                 "prompt_tokens": 0,
                 "completion_tokens": 0,
                 "total_tokens": 0,
+                "prompt_ms": prompt_ms,
+                "eval_ms": eval_ms,
             }
             # No tokens produced — send an empty final chunk. Covers streams
             # that end on a finish_reason event with no usage (e.g. llama.cpp
@@ -934,7 +957,7 @@ class ArkestraServer:
 
     async def shutdown(self) -> None:
         """Stop the proxy server and shut down all models."""
-        self._arkestra.log(f"[action=shutdown server]")
+        self._arkestra.log("[action=shutdown server]")
         if self._server:
             await self._server.shutdown()
         await self._arkestra.shutdown()
@@ -1131,7 +1154,7 @@ def main(argv: list[str] | None = None) -> None:
         for k, v in aliases.items():
             print(f"  Alias     {k:20s} → {v}")
     if args.api_key:
-        print(f"  Auth      ● API key required")
+        print("  Auth      ● API key required")
     print()
 
     # ── Launch uvicorn ────────────────────────────────────────────────

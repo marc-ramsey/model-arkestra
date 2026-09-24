@@ -4,12 +4,11 @@ import os
 import re
 import subprocess as _subprocess
 import time
-import tqdm
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from model_arkestra.gpu_detect import detect_all
 from pathlib import Path
 import yaml
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 INFRA_KEYS = frozenset({
     'backend', 'runner', 'max_log_lines',
 })
@@ -227,104 +226,6 @@ def default_cache_root() -> Path:
     # Standard user cache directory fallback
     home = Path.home()
     return home / ".cache" / "huggingface" / "hub"
-
-
-class _DownloadProgressTqdm(tqdm.tqdm):
-    """tqdm subclass that captures progress via a callback.
-
-    Inherits from ``tqdm.tqdm`` so HF hub's internal attribute access
-    (e.g. ``.total``) works correctly, while suppressing UI output
-    via ``file=/dev/null`` and setting ``mininterval=0`` for real-time
-    progress callbacks.
-    """
-
-    def __init__(self, *args, callback=None, **kwargs):
-        kwargs.setdefault("disable", False)
-        kwargs.setdefault("file", open(os.devnull, "w"))
-        kwargs.setdefault("mininterval", 0)
-        kwargs.setdefault("miniters", 1)
-        # HF hub injects `name` which vanilla tqdm rejects
-        kwargs.pop("name", None)
-        super().__init__(*args, **kwargs)
-        self._callback = callback
-
-    def update(self, n=1):
-        super().update(n)
-        if self._callback:
-            try:
-                elapsed = self._time() - self.start_t
-            except (AttributeError, TypeError):
-                elapsed = 0
-            speed = self.n / elapsed if elapsed > 0 else 0
-            total = self.total if self.total else 0
-            pct = round(self.n / total * 100, 1) if total else 0
-            self._callback({
-                "event": "progress",
-                "n": self.n,
-                "total": total,
-                "pct": pct,
-                "speed": speed,
-            })
-
-    def set_postfix_str(self, postfix="", refresh=False):
-        pass
-
-    def close(self):
-        super().close()
-
-
-def download_hf_model(
-    repo_id: str,
-    cache_dir: Path,
-    log_fn: Callable[[str], None],
-    allow_patterns: Optional[List[str]] = None,
-    progress_callback: Optional[Callable[[str, dict], None]] = None,
-) -> str:
-    """Download a model checkpoint from HuggingFace with progress callbacks.
-
-    Uses ``huggingface_hub.snapshot_download`` with a custom tqdm class
-    to capture progress events and translate them into log-friendly messages.
-
-    Args:
-        repo_id:      HuggingFace repo ID (e.g. "unsloth/Qwen3-4B-GGUF:Q4_K_M").
-        cache_dir:    Cache directory (e.g. ``~/.cache/huggingface/hub``).
-        log_fn:       Callback for progress messages. Receives formatted strings
-                      like ``"qwen3-4b: 25% (3.55/14.2GB, 180MB/s)"``.
-        allow_patterns: Optional glob patterns to filter which files to download.
-
-    Returns:
-        Path to the downloaded snapshot folder.
-
-    Raises:
-        Exception from huggingface_hub on download failure (repo not found,
-        authentication error, network failure, etc.).
-    """
-    def progress_cb(evt):
-        if evt["event"] == "total":
-            total_gb = evt["total_bytes"] / 1e9
-            log_fn(f"{repo_id}: {evt['desc']} ({total_gb:.1f}GB total)")
-            if progress_callback:
-                progress_callback("total", evt)
-        elif evt["event"] == "progress":
-            pct = evt["pct"]
-            downloaded_gb = evt["n"] / 1e9
-            total_gb = evt["total"] / 1e9 if evt["total"] else 0
-            speed_mbs = evt["speed"] / 1e6
-            if total_gb > 0:
-                log_fn(f"{repo_id}: {pct}% ({downloaded_gb:.2f}/{total_gb:.1f}GB, {speed_mbs:.0f}MB/s)")
-            else:
-                log_fn(f"{repo_id}: {downloaded_gb:.2f}GB, {speed_mbs:.0f}MB/s")
-            if progress_callback:
-                progress_callback("progress", evt)
-
-    from huggingface_hub import snapshot_download
-
-    return snapshot_download(
-        repo_id,
-        cache_dir=str(cache_dir),
-        allow_patterns=allow_patterns,
-        tqdm_class=_DownloadProgressTqdm,  # custom progress capture
-    )
 
 
 INSPECT_RE = re.compile(r"^(exited|dead|paused|removing)\s*$", re.IGNORECASE)

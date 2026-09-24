@@ -11,7 +11,7 @@ from typing import Any, AsyncIterator, Dict
 
 import aiohttp
 
-from model_arkestra.providers.base import Provider, NotSupported
+from model_arkestra.providers.base import Provider
 from model_arkestra.providers.llama import LLAMA_FIELDS
 from model_arkestra.http_proxy import sse_events, parse_completion
 

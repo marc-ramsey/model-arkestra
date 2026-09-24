@@ -23,9 +23,8 @@ import io
 import json
 import logging
 import os
-import struct
 import wave
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 from aiohttp import web
@@ -191,8 +190,6 @@ def _greedy_decode(
     Returns:
         Decoded transcription string.
     """
-    import onnxruntime as ort
-
     # Find the decoder model — try multiple paths
     base = os.path.dirname(str(model_path))
     candidates = [base]
@@ -368,7 +365,6 @@ def _decode_with_cache(
             inp_key = f"past_key_values.{i}.decoder.key"
             inp_val = f"past_key_values.{i}.decoder.value"
             out_key = f"present.{i}.decoder.key"
-            out_val = f"present.{i}.decoder.value"
             if inp_key in inp_names and out_key in outputs_names:
                 inputs[inp_key] = past_cache[i]
                 inputs[inp_val] = past_cache[i]
@@ -511,9 +507,8 @@ class OnnxServer:
             except Exception:
                 pass
 
-        # Fallback: build from OpenAI's Whisper tokenizer bytes
+        # Fallback: use the pre-loaded transformers tokenizer (if any)
         try:
-            from transformers import AutoTokenizer
             if self._tokenizer:
                 tokenizer = self._tokenizer
                 vocab = tokenizer.get_vocab()
@@ -526,18 +521,13 @@ class OnnxServer:
         except Exception:
             pass
 
-        # Ultimate fallback: OpenAI whisper tokenizer bytes (embedded)
-        import base64
-        # This is the compressed vocabulary from whisper.tokenizer.DATA
+        # Ultimate fallback: GPT-2 token map via tiktoken
         try:
             import tiktoken
             enc = tiktoken.get_encoding("gpt2")
             self.WHISPER_TOKEN_MAP = {
                 i: enc.decode([i]) for i in range(enc.n_vocab)
             }
-            # Filter to Whisper-specific token ranges
-            whisper_tokens = {k: v for k, v in self.WHISPER_TOKEN_MAP.items()
-                            if not (k >= 50257 and k < 51864) or k == 50257}  # keep task/lang tokens
         except ImportError:
             # Minimal fallback: return empty dict — decoding will produce garbage but won't crash
             self.WHISPER_TOKEN_MAP = {}
@@ -559,7 +549,7 @@ class OnnxServer:
         for tid in token_ids:
             if skip_special and tid in special_ids:
                 continue
-            text = token_map.get(tid, f"\uFFFD")  # U+FFFD = replacement char
+            text = token_map.get(tid, "\uFFFD")  # U+FFFD = replacement char
             chars.append(text)
 
         return "".join(chars).strip()
@@ -598,8 +588,6 @@ class OnnxServer:
         dec_output_names = [out.name for out in self._decoder_session.get_outputs()]
 
         # Find input/output names (whisper decoder convention)
-        hidden_name = "past_key_values.0.key" if any(
-            "past_key" in n for n in dec_input_names) else None
         token_name = None
         encoder_out_name = None
         for n in dec_input_names:

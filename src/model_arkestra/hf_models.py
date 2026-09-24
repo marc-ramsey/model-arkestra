@@ -200,7 +200,6 @@ def download_plan(plan: HfPlan, *, cache_dir: str | None = None,
     """
     from huggingface_hub import hf_hub_download
 
-    total = len(plan.files)
     paths = []
     for i, filename in enumerate(plan.files, start=1):
         if progress_cb:

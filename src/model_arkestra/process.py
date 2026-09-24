@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from model_arkestra.base import BaseRunner
 from model_arkestra.bin_tool import slot_path

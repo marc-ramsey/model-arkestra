@@ -102,9 +102,8 @@ def detect_cuda_compute_cap() -> str | None:
         for line in result.stdout.strip().splitlines()[:1]:  # only primary GPU
             parts = [p.strip() for p in line.split(",")]
             if len(parts) >= 4:
-                major, minor = int(parts[2]), int(parts[3])
                 # Map to ai-dock CUDA version they ship (12.8)
-                return f"cuda-12.8"
+                return "cuda-12.8"
     except (FileNotFoundError, OSError, ValueError, IndexError):
         pass
     return None
@@ -417,13 +416,13 @@ def detect_all() -> dict[str, Any]:
             if runtimes["vulkan"]:
                 recommendation = ("vulkan-radv", f"{_VENDOR_NAMES.get(primary_gpu['vendor'], primary_gpu['vendor'].title())} GPU detected (ROCm unavailable, using Vulkan)")
             else:
-                recommendation = ("cpu", f"GPU detected but no GPU runtime available")
+                recommendation = ("cpu", "GPU detected but no GPU runtime available")
         elif backend == "cuda" and not runtimes["nvidia"]:
             # NVIDIA GPU but no CUDA — try vulkan as fallback
             if runtimes["vulkan"]:
                 recommendation = ("vulkan-radv", "NVIDIA GPU detected (CUDA unavailable, using Vulkan)")
             else:
-                recommendation = ("cpu", f"GPU detected but no runtime available")
+                recommendation = ("cpu", "GPU detected but no runtime available")
         elif backend == "vulkan-radv" and not runtimes["vulkan"]:
             recommendation = ("cpu", f"{_VENDOR_NAMES.get(primary_gpu['vendor'], primary_gpu['vendor'].title())} GPU detected but no Vulkan runtime")
     else:

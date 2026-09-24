@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
-from typing import Any, AsyncIterator, Dict, List, Optional, Sequence, Union
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from langchain_core.messages import AIMessageChunk
-from langchain_core.outputs import ChatGenerationChunk
 from langchain_core.prompt_values import PromptValue
 from langchain_core.runnables import RunnableConfig
 from langchain_core.language_models import LanguageModelInput

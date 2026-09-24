@@ -243,35 +243,6 @@ class TestStartValidation:
         assert "Port 12000 is already in use" in (ctx.last_error or "")
 
 
-# ── Tests: back-compat shim properties ────────────────────────────────────
-
-class TestBackCompatShims:
-    def test_process_runner_property(self):
-        """.process_runner creates and caches a process runner."""
-        arkestra = _make_cm(runner_cfg={"default": "process"})
-        pr = arkestra.process_runner
-        assert pr is not None
-        # Same instance on second access
-        pr2 = arkestra.process_runner
-        assert pr is pr2
-
-    def test_podman_runner_property(self):
-        """.podman_runner creates and caches a podman runner."""
-        arkestra = _make_cm(runner_cfg={"default": "process"})
-        pdm = arkestra.podman_runner
-        assert pdm is not None
-        pdm2 = arkestra.podman_runner
-        assert pdm is pdm2
-
-    def test_docker_runner_property(self):
-        """.docker_runner creates and caches a docker runner."""
-        arkestra = _make_cm(runner_cfg={"default": "process"})
-        dkr = arkestra.docker_runner
-        assert dkr is not None
-        dkr2 = arkestra.docker_runner
-        assert dkr is dkr2
-
-
 # ── Tests: running_models aggregation ────────────────────────────────────
 
 class TestRunningModelsProperty:

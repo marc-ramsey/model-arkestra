@@ -105,24 +105,6 @@ def cfg_rocm_docker() -> str:
     """))
 
 
-# ── 1. Runner type resolution from config ───────────────────────────────────
-
-class TestRunnerTypeFromConfig:
-    """backends.<id>.runner determines which runner class is used."""
-
-    def test_rocm_process_resolves_to_process(self):
-        mr = ModelArkestra(cfg_rocm_process())
-        assert mr.resolve_runner_type("test-rocm-process", {}, None) == "process"
-
-    def test_rocm_podman_resolves_to_podman(self):
-        mr = ModelArkestra(cfg_rocm_podman())
-        assert mr.resolve_runner_type("test-rocm-podman", {}, None) == "podman"
-
-    def test_rocm_docker_resolves_to_docker(self):
-        mr = ModelArkestra(cfg_rocm_docker())
-        assert mr.resolve_runner_type("test-rocm-docker", {}, None) == "docker"
-
-
 # ── 2. Runner class registry ───────────────────────────────────────────────
 
 class TestRunnerClassRegistry:
@@ -206,66 +188,6 @@ class TestContainerConfigKeys:
     def test_rocm_docker_has_image(self):
         be = ModelArkestra(cfg_rocm_docker()).cm.get_backend("rocm")
         assert be["image"] == "test-rocm-docker:v1"
-
-
-# ── 7. Multiple backends with different runners in one config ─────────
-
-class TestMixedBackendsInConfig:
-    """A single config can host backends mapped to process, podman, docker."""
-
-    def test_mixed_process_and_podman(self):
-        cfg = _write_config(textwrap.dedent("""\
-            models-start-port: 18000
-            backends:
-              vulkan:
-                runner: process
-              rocm-podman:
-                runner: podman
-                image: rocm:v1
-            models:
-              fast-model:
-                repo: hugging-face
-                model: test/fast:Q4
-                backend: vulkan
-              gpu-model:
-                repo: hugging-face
-                model: test/gpu:Q4
-                backend: rocm-podman
-        """))
-        mr = ModelArkestra(cfg)
-        assert mr.resolve_runner_type("fast-model", {}, None) == "process"
-        assert mr.resolve_runner_type("gpu-model", {}, None) == "podman"
-
-    def test_all_three_runners_in_one_config(self):
-        cfg = _write_config(textwrap.dedent("""\
-            models-start-port: 18000
-            backends:
-              fast:
-                runner: process
-              gpu-podman:
-                runner: podman
-                image: rocm:v1
-              gpu-docker:
-                runner: docker
-                image: rocm-v2:1
-            models:
-              m-proc:
-                repo: hugging-face
-                model: test/m1:Q4
-                backend: fast
-              m-pod:
-                repo: hugging-face
-                model: test/m2:Q4
-                backend: gpu-podman
-              m-docker:
-                repo: hugging-face
-                model: test/m3:Q4
-                backend: gpu-docker
-        """))
-        mr = ModelArkestra(cfg)
-        assert mr.resolve_runner_type("m-proc", {}, None) == "process"
-        assert mr.resolve_runner_type("m-pod", {}, None) == "podman"
-        assert mr.resolve_runner_type("m-docker", {}, None) == "docker"
 
 
 # ── 8. Env vars from config are dicts (not _Environ) ─────────────────

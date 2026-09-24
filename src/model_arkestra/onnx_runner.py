@@ -28,12 +28,12 @@ Config example (config.yaml)::
 from __future__ import annotations
 
 import asyncio
-import io
 import logging
 import os
-import wave
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+from model_arkestra.types import _Model
 
 from model_arkestra.base import BaseRunner
 from model_arkestra.common import default_cache_root, resolve_model_ref
@@ -70,7 +70,7 @@ class OnnxRunner(BaseRunner):
     # ── Abstract lifecycle hooks (override base class defaults) ─────
 
     async def _start_model_process(
-        self, ctx: "model_arkestra.types._Model", model_data: Dict[str, Any], model_name: str = ""
+        self, ctx: _Model, model_data: Dict[str, Any], model_name: str = ""
     ) -> None:
         """Load ONNX InferenceSession into context — no subprocess needed."""
         import onnxruntime as ort
@@ -180,7 +180,7 @@ class OnnxRunner(BaseRunner):
                 except Exception as e:
                     logger.warning("Could not load tokenizer for '%s': %s", ctx.name, e)
 
-    async def _stop_model_process(self, ctx: "model_arkestra.types._Model") -> None:
+    async def _stop_model_process(self, ctx: _Model) -> None:
         """Unload ONNX session from memory."""
         if self.arkestra:
             self.arkestra.log(f"[stop] model={ctx.name} unloaded")
@@ -228,7 +228,6 @@ class OnnxRunner(BaseRunner):
                 model_repos=self.cm.data.get("model-repos"),
             )
 
-            from model_arkestra.types import _Model
             ctx = _Model(model_name, eff_port, max_log_lines=log_size)
             ctx.backend_id = backend or model_data.get("backend")
 
@@ -257,7 +256,7 @@ class OnnxRunner(BaseRunner):
         ctx.set_state("ready")
 
     # ── Internal helpers ───────────────────────────────────────────
-    def _resolve_model_path(self, model_path: str, ctx: "model_arkestra.types._Model",
+    def _resolve_model_path(self, model_path: str, ctx: _Model,
                             file_pattern: str = "*.onnx") -> Path:
         """Resolve a model path — accept absolute paths or resolve from HF cache."""
         p = Path(model_path)
@@ -266,7 +265,6 @@ class OnnxRunner(BaseRunner):
 
         cache_dir = getattr(ctx, '_cache_dir', None)
         if cache_dir is None:
-            from model_arkestra.common import default_cache_root
             cache_dir = default_cache_root()
 
         search_paths = [

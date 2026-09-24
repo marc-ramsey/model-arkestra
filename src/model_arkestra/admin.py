@@ -23,7 +23,6 @@ from model_arkestra.common import (
     _load_schema_registry,
     _resolve_backend,
     _runtime_binary,
-    default_cache_root,
     hf_model_info,
     image_and_runner_for_backend,
     image_exists as _image_exists,
@@ -33,7 +32,7 @@ from model_arkestra.common import (
     resolve_tags as _resolve_tags,
 )
 from model_arkestra.http_proxy import model_status_for_ctx
-from model_arkestra.types import RunnerState, _Model
+from model_arkestra.types import RunnerState
 
 # ── Model config field definitions (single source of truth) ─────────────
 MODEL_CONFIG_FIELDS = frozenset({"backend", "runner", "tags", "max_log_lines"})
@@ -303,7 +302,6 @@ class ArkestraAdmin:
         @self._app.get("/admin/models")
         async def admin_models():
             try:
-                cfg = self._models_cfg
                 contexts_by_name = self.server._arkestra.models
 
                 data = []
@@ -503,7 +501,6 @@ class ArkestraAdmin:
             # Resolve available capabilities for this model
             global_cfg = self.server._arkestra.cm.data or {}
             bid = cfg[model].get("backend")
-            bcfg = (global_cfg.get("backends") or {}).get(str(bid) if bid else "")
             available_caps = _resolve_tags(
                 cfg[model], global_cfg,
                 backend_id=str(bid) if bid else None,

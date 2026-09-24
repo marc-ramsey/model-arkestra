@@ -12,7 +12,7 @@ from typing import Any, AsyncIterator, Dict, Optional
 
 import aiohttp
 
-from model_arkestra.providers.base import Provider, NotSupported
+from model_arkestra.providers.base import Provider
 from model_arkestra.http_proxy import sse_events, parse_completion
 from model_arkestra.types import RunnerError
 

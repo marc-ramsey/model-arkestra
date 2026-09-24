@@ -1,11 +1,9 @@
 from __future__ import annotations
-import asyncio
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, List
 
 from model_arkestra.container_runner import ContainerRunner
-from model_arkestra.common import SUBPROCESS_ENV, safe_container_name
-from model_arkestra.types import _Model
+from model_arkestra.common import safe_container_name
 
 
 class DockerRunner(ContainerRunner):

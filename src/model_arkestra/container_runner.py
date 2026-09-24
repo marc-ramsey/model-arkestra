@@ -21,7 +21,7 @@ from model_arkestra.common import (
     resolve_binary_from_backend, safe_container_name,
 )
 from model_arkestra.llama_cpp import LlamaCppEngine
-from model_arkestra.types import RunnerState, _Model
+from model_arkestra.types import _Model
 
 
 def _resolve_backend(

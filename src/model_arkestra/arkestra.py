@@ -22,7 +22,7 @@ from model_arkestra.onnx_runner import OnnxRunner
 from model_arkestra.podman import PodmanRunner
 from model_arkestra.process import ProcessRunner
 from model_arkestra.remote import RemoteRunner
-from model_arkestra.hf_models import derived_name, scaffold_entry, split_repo_tag
+from model_arkestra.hf_models import derived_name, scaffold_entry
 from model_arkestra.types import RunnerState, _Model
 from model_arkestra.unicode_ringbuffer import UnicodeRingBuffer
 from model_arkestra.http_proxy import model_status_for_ctx
@@ -67,7 +67,6 @@ class ModelArkestra:
                     "config.yaml defines backends.%s — treated as override of shipped backends.yaml",
                     bid,
                 )
-        default_section = self._cm.get("default", {})
 
         # ── Registry: name→Model ownership, cluster routing, port pool ──
         from model_arkestra.models import Registry
@@ -294,7 +293,6 @@ class ModelArkestra:
 
             # Create the shared context — named by checkpoint id (or model name
             # for standalone). Port assigned at first start only.
-            from model_arkestra.types import _Model
             ctx = _Model(ctx_name, None, max_log_lines=500)
             ctx.backend_id = backend_id
             ctx.runner_type = runner_type
@@ -445,26 +443,6 @@ class ModelArkestra:
             self._runners[key] = cls(self._cm, arkestra=self, **self._runner_kwargs)
         return self._runners[key]
 
-    # ── backward-compat shims (delegate to unified lazy factory) ─────────
-
-    @property
-    def process_runner(self) -> ProcessRunner:
-        if "process" not in self._runners:
-            self.get_runner_instance("process")
-        return self._runners["process"]  # type: ignore[return-value]
-
-    @property
-    def podman_runner(self) -> PodmanRunner:
-        if "podman" not in self._runners:
-            self.get_runner_instance("podman")
-        return self._runners["podman"]  # type: ignore[return-value]
-
-    @property
-    def docker_runner(self) -> DockerRunner:
-        if "docker" not in self._runners:
-            self.get_runner_instance("docker")
-        return self._runners["docker"]  # type: ignore[return-value]
-
     # ── backend resolution ─────────────────────────────────────────────
     def resolve_backend_id(self, model_name: str, env_vars: Dict[str, Any], override: Optional[str] = None) -> str:
         if override:
@@ -475,24 +453,6 @@ class ModelArkestra:
             return ctx_backend
         model = self.get_model(model_name) or {}
         return _resolve_backend(self._cm, model, model_name, None)
-
-    def resolve_runner_type(self, model_name: str, env_vars: Dict[str, Any], override_backend: Optional[str] = None) -> str:
-        """Resolve runner type: model → backend.runner → default.container-type → runners.default → process."""
-        model_cfg = self._cm.get("models", {}).get(model_name, {})
-        cm = self._cm.data
-
-        if runner := model_cfg.get("runner"):
-            return self._normalize_container(runner)
-
-        backend_id = self.resolve_backend_id(model_name, env_vars, override_backend)
-        be = cm.get("backends", {}).get(backend_id, {}) or {}
-        if runner := be.get("runner"):
-            return self._normalize_container(runner)
-
-        # Global container-type is a fallback, not an override of backend settings
-        default_type = self._cm.get("default/container-type", None) or (
-            cm.get("runners", {}) or {}).get("default", "process")
-        return self._normalize_container(default_type)
 
     def _normalize_container(self, runner_type: str) -> str:
         """Normalize 'container' sentinel → default.container-type."""
@@ -1024,14 +984,6 @@ class ModelArkestra:
         return ctx.state in (RunnerState.STOPPED, RunnerState.ERROR,
                              RunnerState.LOADING, RunnerState.RUNNING)
 
-    def can_stop(self, model_name: str) -> bool:
-        """Check if model is in a state that can be stopped."""
-        ctx = self.model_obj(model_name)
-        if not ctx:
-            return False
-        return ctx.state in (RunnerState.LOADING, RunnerState.RUNNING,
-                             RunnerState.STOPPING, RunnerState.DOWNLOADING)
-
     async def eject(self, model_name: str) -> Dict[str, Any]:
         """Stop a model's checkpoint and delete its cached weight files.
 
@@ -1067,7 +1019,6 @@ class ModelArkestra:
             # No cache to clear — context stays for visibility
             return result
 
-        cache_root = self._cache_root()
         cache_dir = self._cache_dir_for_checkpoint(cache_path)
 
         # Get the (shared) context for this model.
@@ -1091,7 +1042,7 @@ class ModelArkestra:
 
     async def shutdown(self) -> None:
         """Full teardown — stop models, clear runners, reset port allocator."""
-        self.log(f"[action=shutdown]")
+        self.log("[action=shutdown]")
         # Cancel any active pull tasks
         for ctx in self._registry.all_contexts:
             if ctx.download_task and not ctx.download_task.done():
