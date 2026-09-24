@@ -832,8 +832,9 @@ class ArkestraAdmin:
 
             ctx.download_task = None
             # Clean up partial cache and return to UNCACHED
-            if model in cfg:
-                raw = (cfg.get(model) or {}).get("model", "")
+            models_cfg = self._models_cfg
+            if model in models_cfg:
+                raw = (models_cfg.get(model) or {}).get("model", "")
                 cache_path = self._resolve_ref(raw).cache_path
             elif "/" in model:
                 # Raw ref in-flight — same cache dir rule as pull_model.

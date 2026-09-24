@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import logging
 import os
 import wave
 from pathlib import Path
@@ -36,6 +37,8 @@ from typing import Any, Dict, Optional
 
 from model_arkestra.base import BaseRunner
 from model_arkestra.common import default_cache_root, resolve_model_ref
+
+logger = logging.getLogger(__name__)
 
 
 class OnnxRunner(BaseRunner):
@@ -175,8 +178,7 @@ class OnnxRunner(BaseRunner):
                     ctx.onnx_tokenizer = AutoTokenizer.from_pretrained(
                         tokenizer_path, trust_remote_code=True)
                 except Exception as e:
-                    if hasattr(self, 'cm'):
-                        logger.warning("Could not load tokenizer for '%s': %s", ctx.name, e)  # noqa: F821
+                    logger.warning("Could not load tokenizer for '%s': %s", ctx.name, e)
 
     async def _stop_model_process(self, ctx: "model_arkestra.types._Model") -> None:
         """Unload ONNX session from memory."""
@@ -255,8 +257,6 @@ class OnnxRunner(BaseRunner):
         ctx.set_state("ready")
 
     # ── Internal helpers ───────────────────────────────────────────
-    # NOTE: logger is set at import time by arkestra.py after importing OnnxRunner.
-
     def _resolve_model_path(self, model_path: str, ctx: "model_arkestra.types._Model",
                             file_pattern: str = "*.onnx") -> Path:
         """Resolve a model path — accept absolute paths or resolve from HF cache."""
@@ -284,6 +284,3 @@ class OnnxRunner(BaseRunner):
             f"Verify the path exists or is a valid HF repo ID."
         )
 
-
-# ── Logging setup (imported from arkestra.py) ──────────────────────
-# logger is set at import time when arkestra imports this module.

@@ -74,6 +74,20 @@ class TestCheckpointGrouping:
         ctx = ma.model_obj("qwen3.8-27b-think")
         assert ctx.name == "qwen3.8-27b"
 
+    def test_v1_models_status_for_alias(self):
+        # Aliased model names (name != checkpoint id) must resolve to their
+        # shared context in /v1/models — not report as uncached.
+        ma = _make(SHARED_CFG)
+        # Drive both shared contexts to LOADING (not the default UNCACHED)
+        # so a broken lookup would be visible as the fallback "uncached".
+        ma.model_obj("qwen3.8-27b-instruct").set_state("load")
+        ma.model_obj("gemma-4b").set_state("load")
+        data = {e["name"]: e for e in ma.get_v1_models()["data"]}
+        for name in ("qwen3.8-27b-instruct", "qwen3.8-27b-think", "gemma-4b"):
+            assert data[name]["status"]["value"] == "loading", name
+        # Sanity: all alias names report the same (shared) status.
+        assert data["qwen3.8-27b-instruct"]["status"] == data["qwen3.8-27b-think"]["status"]
+
     def test_merged_config_flows_parallel(self):
         # The shared checkpoint's parallel: 2 reaches the merged model config,
         # so the single process launches with --parallel 2 (KV-shared slots).

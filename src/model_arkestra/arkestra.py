@@ -6,7 +6,7 @@ import os
 import shutil
 import yaml
 from pathlib import Path
-from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple
+from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple, Union
 
 from model_arkestra.config_manager import ModelConfigManager
 from model_arkestra.gpu_detect import has_rocm, has_vulkan, has_nvidia, detect_all as _detect_all
@@ -342,7 +342,7 @@ class ModelArkestra:
 
     # ── ConfigManager delegation ───────────────────────────────────────
     @property
-    def cm(self) -> ConfigManager:
+    def cm(self) -> ModelConfigManager:
         return self._cm
 
     def get_model(self, model_name: str, env_vars: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
@@ -378,7 +378,9 @@ class ModelArkestra:
         """OpenAI-compatible ``/v1/models`` response with WebUI status fields."""
         from time import time
 
-        contexts_by_name = {ctx.name: ctx for ctx in self.models.values()}
+        # Keyed by model name: aliases of a shared checkpoint all map to the
+        # same context, so looking up by name (not ctx.name) finds them all.
+        contexts_by_name = dict(self.models)
         data = []
         for model_name in self.get_models():
             # Skip remote-cluster models (not tracked locally)
