@@ -15,11 +15,11 @@ from model_arkestra.common import (
     _resolve_backend, _resolve_device_profile, default_cache_root,
     ModelRef,
     resolve_config_path, image_and_runner_for_backend, resolve_model_ref,
+    resolve_model_path_str,
     resolve_tags as _resolve_model_tags,
 )
-from model_arkestra.docker import DockerRunner
+from model_arkestra.container_runner import DockerRunner, PodmanRunner
 from model_arkestra.onnx_runner import OnnxRunner
-from model_arkestra.podman import PodmanRunner
 from model_arkestra.process import ProcessRunner
 from model_arkestra.remote import RemoteRunner
 from model_arkestra.hf_models import derived_name, scaffold_entry
@@ -673,20 +673,11 @@ class ModelArkestra:
             eff_port = inference_kwargs.get("port") or 0  # dummy port for context compatibility
             log_size = inference_kwargs.get("max_log_lines", self._cm.get("default/log-buffer-size", 2000))
             model_data = self.get_model(model_name, env_vars={})
-            model_path_str = str((model_data or {}).get("model_path", ""))
-            if not model_path_str:
-                default_section = self._cm.get("default", {})
-                resolved = resolve_model_ref(
-                    raw=(model_data or {}).get("model"),
-                    default_section=default_section,
-                    model_repos=self._cm.get("default/model-repos"),
-                )
-                if resolved.repo == "hf":
-                    model_path_str = f"hf:{resolved.ref}"
-                elif resolved.repo == "lcl":
-                    model_path_str = resolved.ref.removeprefix("lcl:")
-
-            from model_arkestra.types import _Model
+            model_path_str = resolve_model_path_str(
+                model_data or {},
+                default_section=self._cm.get("default", {}),
+                model_repos=self._cm.data.get("model-repos"),
+            )
             ctx = _Model(model_name, eff_port, max_log_lines=log_size)
             ctx.backend_id = "onnx"
             ctx._model_path = model_path_str  # store for runner to use

@@ -36,7 +36,7 @@ from typing import Any, Dict, Optional
 from model_arkestra.types import _Model
 
 from model_arkestra.base import BaseRunner
-from model_arkestra.common import default_cache_root, resolve_model_ref
+from model_arkestra.common import default_cache_root, resolve_model_path_str, resolve_model_ref
 
 logger = logging.getLogger(__name__)
 
@@ -76,18 +76,11 @@ class OnnxRunner(BaseRunner):
         import onnxruntime as ort
 
         # Resolve model path from config or context
-        model_path = getattr(ctx, '_model_path', None)
-        if not model_path:
-            default_section = (self.cm.data.get("default") or {})
-            resolved = resolve_model_ref(
-                raw=model_data.get("model"),
-                default_section=default_section,
-                model_repos=self.cm.data.get("model-repos"),
-            )
-            if resolved.repo == "hf":
-                model_path = f"hf:{resolved.ref}"
-            elif resolved.repo == "lcl":
-                model_path = resolved.ref.removeprefix("lcl:")
+        model_path = getattr(ctx, '_model_path', None) or resolve_model_path_str(
+            model_data,
+            default_section=(self.cm.data.get("default") or {}),
+            model_repos=self.cm.data.get("model-repos"),
+        )
         if not model_path:
             raise RuntimeError(
                 f"Model '{ctx.name}' missing 'model' field or '_model_path'"

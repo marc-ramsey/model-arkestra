@@ -144,6 +144,10 @@ class ContainerRunner(BaseRunner, ABC):
 
     def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
+        self._image_cache_dir = Path(
+            kwargs.get("image_cache_dir", "~/.local/share/model-arkestra/bin-cache")
+        ).expanduser()
+        self._image_cache_dir.mkdir(parents=True, exist_ok=True)
 
     async def get_logs(self, ctx: _Model, lines: int = 100) -> List[str]:
         """Return the last N log lines for a model via container runtime.
@@ -439,3 +443,38 @@ class ContainerRunner(BaseRunner, ABC):
         except Exception:
             pass
         ctx.container_id = None
+
+
+class _RuntimeRunner(ContainerRunner):
+    """Shared impl for the concrete runtimes; each sets CMD and its
+    stale-container handling (docker needs an explicit rm, podman uses --replace)."""
+
+    CMD: str = ""
+    #: Format for the stale-container removal suffix (e.g. "rm -f {name}");
+    #: None when the runtime replaces containers itself.
+    CLEANUP: Optional[str] = None
+    #: Args inserted after `run` (podman --replace etc.).
+    EXTRA_ARGS: List[str] = []
+    INSIDE_PORT = 8080
+
+    def _container_cmd(self) -> str:
+        return self.CMD
+
+    def _pre_start_cleanup(self, ctx: _Model) -> List[str]:
+        if not self.CLEANUP:
+            return []
+        name = safe_container_name(ctx.name, ctx.port)
+        return [self.CMD, *shlex.split(self.CLEANUP.format(name=name))]
+
+    def _extra_run_args(self) -> List[str]:
+        return list(self.EXTRA_ARGS)
+
+
+class DockerRunner(_RuntimeRunner):
+    CMD = "docker"
+    CLEANUP = "rm -f {name}"
+
+
+class PodmanRunner(_RuntimeRunner):
+    CMD = "podman"
+    EXTRA_ARGS = ["--replace", "--group-add", "keep-groups"]

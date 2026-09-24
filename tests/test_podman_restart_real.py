@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from model_arkestra.podman import PodmanRunner
+from model_arkestra.container_runner import PodmanRunner
 from model_arkestra.types import RunnerState, _Model
 
 
@@ -231,9 +231,13 @@ class TestFullLifecycle:
                       data={'log-buffer-size': 500}),
             restart_delay=0.5,
         )
+        # Lifecycle contract: the context must exist before start()
+        # (ModelArkestra normally creates it; the other tests here do too).
+        ctx = _Model("test-model", port)
+        runner._ctx = ctx
 
         # Patch _start_model_process to launch nginx with JSON /health endpoint
-        async def patched_start(self_inner, ctx_inner, model_data):
+        async def patched_start(self_inner, ctx_inner, model_data, model_name=""):
             conf = (
                 'server { listen 80; location /health '
                 '{ default_type application/json; return 200 '

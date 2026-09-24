@@ -185,6 +185,32 @@ def config_dir() -> Path:
     return resolve_config_path().parent
 
 
+def resolve_model_path_str(
+    model_data: Dict[str, Any],
+    default_section: Dict[str, Any],
+    model_repos: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return the weight path string for a model's runner.
+
+    Honors an explicit ``model_path``; otherwise resolves the ``model``
+    ref: ``hf:`` refs are passed through prefixed, local refs lose the
+    ``lcl:`` prefix. Returns ``""`` when nothing resolves.
+    """
+    p = model_data.get("model_path", "")
+    if p:
+        return str(p)
+    resolved = resolve_model_ref(
+        raw=model_data.get("model"),
+        default_section=default_section,
+        model_repos=model_repos,
+    )
+    if resolved.repo == "hf":
+        return f"hf:{resolved.ref}"
+    if resolved.repo == "lcl":
+        return resolved.ref.removeprefix("lcl:")
+    return ""
+
+
 def resolve_config_path(config_path: Optional[str] = None) -> Path:
     """Resolve the config.yaml path.
 
