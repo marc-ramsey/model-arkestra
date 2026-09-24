@@ -927,7 +927,7 @@ class ModelArkestra:
             if resolved is None:
                 # Raw refs always cache under models--<owner>--<repo>
                 resolved = ModelRef(ref=pull_ref, repo="hf",
-                                    cache_path=self._hf_cache_dir(repo).name)
+                                    cache_path=self._cache_dir_for_checkpoint(repo).name)
             cache_path = resolved.cache_path
             if files is None:
                 files = HfApi().list_repo_files(repo)
