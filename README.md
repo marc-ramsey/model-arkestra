@@ -243,9 +243,8 @@ from llm_config_manager.config_manager import ConfigManager    # data layer
 from model_arkestra.arkestra import ModelArkestra              # orchestration (recommended)
 from model_arkestra.base import BaseRunner                # abstract base class
 from model_arkestra.process import ProcessRunner          # process runner
-from model_arkestra.podman import PodmanRunner            # podman runner
-from model_arkestra.docker import DockerRunner            # docker runner
 from model_arkestra.container_runner import ContainerRunner  # container base class
+from model_arkestra.container_runner import PodmanRunner, DockerRunner  # container runners
 from model_arkestra.unicode_ringbuffer import UnicodeRingBuffer  # log buffer internals
 from model_arkestra.langchain_adapter import LangChainModelAdapter  # LangChain LCEL wrapper
 from model_arkestra.server import ArkestraServer             # OpenAI v1-compatible API server

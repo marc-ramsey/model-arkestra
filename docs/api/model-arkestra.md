@@ -10,10 +10,6 @@ The `ModelArkestra` class is the centralized entry point for orchestrating multi
 | `start_port` | `int` | `18000` | Fallback starting port — only used when ``model-start-port`` is absent from config. Port allocation reads the actual values from config at init time. |
 | `**runner_kwargs` | — | — | Passed through to each runner instance (e.g. `ready_timeout`, `warmup_delay`). |
 
-### Backward-compat shims
-
-The properties `.process_runner`, `.podman_runner`, and `.docker_runner` still exist for backward compatibility. Each delegates to the unified lazy factory (`get_runner_instance`) so they behave identically to the config-driven path.
-
 ## Methods
 
 ### `async start(model_name: str, **overrides) -> None`
