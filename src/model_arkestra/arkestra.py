@@ -87,7 +87,7 @@ class ModelArkestra:
         # ── Pre-create contexts for all configured models ──────────
         self._pre_create_model_contexts()
 
-    # ── port allocation (global) ───────────────────────────────────────
+    # ── logging ─────────────────────────────────────────────────────
     def log(self, text: str, level: str = "INFO") -> None:
         """Log a line — prints to terminal with ANSI colors (uvicorn style), writes plain text to ring buffer."""
         _COLORS = {"INFO": "36", "WARNING": "33", "ERROR": "31", "DEBUG": "90"}
@@ -707,8 +707,7 @@ class ModelArkestra:
         ctx = self.model_obj(local_name)
         if ctx is None:
             log_size = inference_kwargs.get("max_log_lines", self._cm.get("default/log-buffer-size", 2000))
-            from model_arkestra.types import _Model as MC
-            ctx = MC(local_name, 0, max_log_lines=log_size)  # port=0 for remote models
+            ctx = _Model(local_name, 0, max_log_lines=log_size)  # port=0 for remote models
             ctx.backend_id = "remote"
             ctx.cluster = cluster_name
             ctx._remote_base_url = base_url
@@ -785,8 +784,7 @@ class ModelArkestra:
             ctx = self.model_obj(local_name)
             if ctx is None:
                 # Create a context so the download has somewhere to report state.
-                from model_arkestra.types import _Model as _M
-                ctx = _M(local_name, 0)
+                ctx = _Model(local_name, 0)
                 self._registry.register(local_name, ctx, [local_name])
 
             if ctx.state == RunnerState.RUNNING:
