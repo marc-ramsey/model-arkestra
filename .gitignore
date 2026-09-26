@@ -7,5 +7,6 @@ src/*.egg-info/
 src/**/*.egg-info/
 src/**/__pycache__/
 tests/__pycache__/
+tests/unit/fixtures/arkestra_test_config.yaml
 venv/
 .env
