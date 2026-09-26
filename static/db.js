@@ -1,72 +1,64 @@
-/* db.js — IndexedDB wrapper for ModelArkestra client settings */
+/* db.js — IndexedDB persistence for chat conversations.
+
+Record: { id, model, name, params, history[], updated }
+Key: numeric id (globally unique — id is minted per open tab,
+and reopen reuses the stored id).
+*/
 
 const DB_NAME = 'arkestra';
 const DB_VERSION = 1;
+const STORE = 'conversations';
 
 let _dbPromise = null;
 
-function open() {
-    if (_dbPromise) return _dbPromise;
-    _dbPromise = new Promise((resolve, reject) => {
-        const req = indexedDB.open(DB_NAME, DB_VERSION);
-        req.onupgradeneeded = (e) => {
-            const db = e.target.result;
-            if (!db.objectStoreNames.contains('settings')) {
-                db.createObjectStore('settings', { keyPath: 'modelId' });
-            }
-            if (!db.objectStoreNames.contains('layout_state')) {
-                db.createObjectStore('layout_state', { keyPath: 'id' });
-            }
-        };
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
-    });
+function _open() {
+    if (!_dbPromise) {
+        _dbPromise = new Promise((resolve, reject) => {
+            const req = indexedDB.open(DB_NAME, DB_VERSION);
+            req.onupgradeneeded = () => {
+                const db = req.result;
+                if (!db.objectStoreNames.contains(STORE)) {
+                    const os = db.createObjectStore(STORE, { keyPath: 'id' });
+                    os.createIndex('by_updated', 'updated');
+                }
+            };
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+        });
+    }
     return _dbPromise;
 }
 
-async function get(store, key) {
-    const db = await open();
+async function _tx(mode, fn) {
+    const db = await _open();
     return new Promise((resolve, reject) => {
-        const tx = db.transaction(store, 'readonly');
-        const os = tx.objectStore(store);
-        const req = os.get(key);
-        req.onsuccess = () => resolve(req.result || null);
-        req.onerror = () => reject(req.error);
-    });
-}
-
-async function put(store, obj) {
-    const db = await open();
-    return new Promise((resolve, reject) => {
-        const tx = db.transaction(store, 'readwrite');
-        const os = tx.objectStore(store);
-        const req = os.put(obj);
+        const tx = db.transaction(STORE, mode);
+        const os = tx.objectStore(STORE);
+        const req = fn(os);
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error);
     });
 }
 
-async function del(store, key) {
-    const db = await open();
-    return new Promise((resolve, reject) => {
-        const tx = db.transaction(store, 'readwrite');
-        const os = tx.objectStore(store);
-        const req = os.delete(key);
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
-    });
-}
+const db = {
+    /* All conversations, newest-updated first. */
+    async list() {
+        const all = await _tx('readonly', os => os.getAll());
+        return all.sort((a, b) => (b.updated || 0) - (a.updated || 0));
+    },
 
-async function getSettings(modelId) {
-    return get('settings', modelId);
-}
+    async get(id) {
+        return (await _tx('readonly', os => os.get(id))) || null;
+    },
 
-async function saveSettings(modelId, data) {
-    return put('settings', { modelId, ...data });
-}
+    async put(rec) {
+        await _tx('readwrite', os => os.put({ ...rec, updated: Date.now() }));
+        return rec;
+    },
 
-async function clearSettings(modelId) {
-    return del('settings', modelId);
-}
+    async del(id) {
+        await _tx('readwrite', os => os.delete(id));
+    },
+};
 
-window.arkestraDB = { getSettings, saveSettings, clearSettings };
+window.db = db;

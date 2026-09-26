@@ -3,24 +3,38 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ArkestraAdmin</title>
-    <meta name="arkestra-admin-key" content="{{ADMIN_KEY}}">
+    <title>Arkestra</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <header class="header-bar">
-        <div class="title">ArkestraAdmin</div>
-        <button id="btn-collapse-all" title="Collapse all">v</button>
+    <header class="topbar">
+        <div class="title">Arkestra</div>
+        <nav id="tab-strip" class="tab-strip"></nav>
+        <button id="btn-new" title="New context">+</button>
+        <button id="btn-reopen" title="Saved contexts">&#x22EF;</button>
     </header>
-    <div class="layout" id="app-root"></div>
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="/static/widget.js?v=17"></script>
-    <script src="/static/widget-audio.js?v=11"></script>
-    <script>
-        window.BASE_URL = "{{BASE_URL}}";
-    </script>
-    <script src="/static/app.js?v=17"></script>
 
-    <div id="toast-msg" class="toast hidden"></div>
+    <main class="pane">
+        <div id="banner" class="banner hidden"></div>
+        <div class="pane-toolbar">
+            <label>model</label>
+            <select id="model-select"></select>
+            <span id="params" class="params"></span>
+        </div>
+        <div id="pane-empty" class="pane-empty hidden">No context open. Click <b>+</b> to start one, or <b>⋯</b> to reopen a saved one.</div>
+        <div id="chat-body" class="chat-body"></div>
+        <div id="input-bar" class="input-bar"></div>
+    </main>
+
+    <div id="saved-wrap"></div>
+    <div id="toast" class="toast hidden"></div>
+
+    <script>window.BASE_URL = "{{BASE_URL}}"; window.API_KEY = "{{API_KEY}}";</script>
+    <script src="/static/vendor/marked.min.js"></script>
+    <script src="/static/db.js"></script>
+    <script src="/static/api.js"></script>
+    <script src="/static/store.js"></script>
+    <script src="/static/context.js"></script>
+    <script src="/static/app.js"></script>
 </body>
 </html>

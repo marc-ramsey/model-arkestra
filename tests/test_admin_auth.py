@@ -49,8 +49,9 @@ class TestNoAdminKey:
         client, _ = _make_client(admin_key=None)
         r = client.get("/")
         assert r.status_code == 200
-        # Key substitution happens — empty string if no key set
-        assert "{{ADMIN_KEY}}" not in r.text
+        # Non-admin page — template vars must be substituted, none leaked
+        assert "{{API_KEY}}" not in r.text
+        assert "{{BASE_URL}}" not in r.text
 
     def test_index_html_accessible_no_key(self):
         client, _ = _make_client(admin_key="")
@@ -114,8 +115,9 @@ class TestAdminKeyEnforced:
         client = self._client_with_key()
         r = client.get("/")
         assert r.status_code == 200
-        # Key should be embedded in the HTML template
-        assert "secret123" in r.text
+        # The page is non-admin: the admin key must NOT leak into public HTML.
+        # Bearer auth on /admin/* and /api/* is still enforced (see above).
+        assert "secret123" not in r.text
 
     def test_index_html_accessible_without_auth(self):
         client = self._client_with_key()

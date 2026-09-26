@@ -236,7 +236,7 @@ class ArkestraAdmin:
     def _add_root_route(self) -> None:
         html = Path(__file__).parent.parent.parent / "static" / "index.html"
         content = (html.read_text()
-                   .replace("{{ADMIN_KEY}}", self.admin_key or "")
+                   .replace("{{API_KEY}}", self.api_key or "")
                    .replace("{{BASE_URL}}", self.base_url or ""))
 
         @self._app.get("/")
