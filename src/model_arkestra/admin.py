@@ -234,7 +234,7 @@ class ArkestraAdmin:
             return {"ok": True, "cluster": name}
 
     def _add_root_route(self) -> None:
-        html = Path(__file__).parent.parent.parent / "static" / "index.html"
+        html = Path(__file__).parent / "static" / "index.html"
         content = (html.read_text()
                    .replace("{{API_KEY}}", self.api_key or "")
                    .replace("{{BASE_URL}}", self.base_url or ""))
@@ -250,7 +250,7 @@ class ArkestraAdmin:
                                 headers={"Cache-Control": "no-store"})
 
     def _add_static_route(self) -> None:
-        static_dir = Path(__file__).parent.parent.parent / "static"
+        static_dir = Path(__file__).parent / "static"
 
         @self._app.get("/static/{path:path}")
         async def serve_static(path: str):

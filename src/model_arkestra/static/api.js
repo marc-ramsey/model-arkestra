@@ -27,7 +27,11 @@ const api = {
 
     async request(method, path, body) {
         let resp = await this._fetch(method, path, body);
-        if (resp.status === 401 && !this.key) {
+        if (resp.status === 401) {
+            // First 401 with no key: prompt. Repeated 401 (wrong key stored):
+            // clear it and prompt again — don't lock the user out.
+            this.key = '';
+            localStorage.removeItem(API_KEY_LS);
             this._promptKey();
             resp = await this._fetch(method, path, body);
         }

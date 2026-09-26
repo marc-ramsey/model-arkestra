@@ -36,4 +36,4 @@ langchain = ["langchain-core>=0.3"]
 test = ["httpx", "pytest-asyncio", "requests", "huggingface-hub", "jinja2"]
 
 [tool.setuptools.package-data]
-model_arkestra = ["templates/*.j2", "data/*.yaml"]
+model_arkestra = ["templates/*.j2", "data/*.yaml", "static/**/*"]
