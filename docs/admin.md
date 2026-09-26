@@ -597,87 +597,50 @@ Returns:
 
 Resolves the backend this image belongs to, determines its runner type, and runs `podman rmi -f` or `docker rmi -f` accordingly. Returns `404` if the tag isn't configured in any backend. Returns `{"skipped": true}` with a reason when the runtime isn't available.
 
-## Admin Dashboard (`static/index.html`)
+## Chat UI (`/`)
 
-Model Arkestra ships a single-file, zero-dependency admin dashboard — a vanilla JavaScript application served at `/` that provides a web UI for the Admin API. It requires no build step, no frameworks, and runs entirely in the browser.
+ModelArkestra ships a context-tabbed chat UI served at `/` (HTML at the server root, assets under `/static/`). No build step, no frameworks.
 
 ### Deployment
 
-Place `static/index.html` anywhere the server serves static files. The dashboard is served automatically when the admin routes are mounted:
+Served automatically when the admin routes are mounted:
 
 ```python
 server = ArkestraServer(
     "config.yaml",
     port=8080,
-    admin_key="my-secret",   # gates /admin/* endpoints
+    api_key="my-secret",   # injected into the page; Bearer on every request
 )
 ```
 
-With `admin_key` set, visiting the server root (e.g. `http://localhost:8080/`) serves the dashboard HTML page.
+### Auth
 
-### Configuration
-
-At the very top of the script block is a single configurable constant:
-
-```js
-const ADMIN_KEY = 'whatever';   // must match admin_key in ArkestraServer
-```
-
-The dashboard automatically attaches it as the `Authorization: Bearer` header on every API call.
+- The page is rendered with the server's `api_key` (if configured) embedded
+  as `window.API_KEY`; it is attached as `Authorization: Bearer` on every
+  request.
+- If no key is configured, requests go unauthenticated.
+- On a `401`, the browser prompts for a key once and stores it in
+  `localStorage` (`arkestra-api-key`). Re-prompted on further `401`s.
 
 ### Layout
 
-The dashboard uses a **session-based vertical split layout**: cluster tree on the left (top), docked sessions on the right (bottom). API key users see only a single chat pane.
+- **Tab strip**: one tab per open *context* (conversation). `+` opens a new
+  context; `⋯` reopens previously closed ones from IndexedDB.
+- **Pane**: message history, per-context model selector, per-context sampling
+  params (temperature, top_p, top_k, max_tokens, frequency/presence penalty).
+- The server is stateless: full history is sent on every request; contexts
+  live entirely client-side (IndexedDB, `arkestra` database).
 
-#### Admin Layout (Cluster Tree + Session Dock)
+### Behavior
 
-| Section | Content |
-|---|---|
-| **Cluster Tree** (top/left) | Hierarchical accordion: Local cluster → model entries, Remote clusters (via `/admin/clusters`) → model entries. Each model row shows status dot, name, size badge, and inline action buttons (+ Chat / + Log / ▶ / ■ / ⏏). |
-| **Session Dock** (bottom/right) | Pinned chat/log sessions. Each session is an expandable card with a ChatPane or LogPane. Drag divider to resize (persisted in `localStorage`). Layout toggle button switches between vertical and horizontal split. |
-
-#### API User Layout (single pane)
-
-Non-admin users see only **one ChatPane** — no left panel, no log viewer. Logs are strictly admin-only.
-
-- Click **+** on any model row to spawn a new chat session in the dock.
-
-### Features
-
-**Cluster Tree** — Hierarchical navigation of all known clusters and their models.
-
-**Model rows** (cluster tree) — Each model entry shows:
-- Status dot (running=green, stopped=black, loading=amber pulse, error=red, uncached=gray)
-- Model name and size badge
-- **Inline action buttons**: `+` Chat, `+` Log (admin only), `▶` Start, `■` Stop, `⏏` Eject, `✕` Cancel pull
-
-**Sessions** (dock) — Pinned conversation/log workspaces:
-- Click `+` Chat on a model row to create a new chat session in the dock.
-- Click `+` Log on a model row (admin only) to create a log stream session.
-- Each session is expandable/collapsible; click header to toggle.
-- Close button (`×`) removes session from dock and aborts any active streams.
-
-**Chat pane** — Conversational inference UI per-session:
-- **Model selector dropdown**: choose which model to chat with in this session.
-- **Ephemeral params panel**: Temperature, Top P, Max Tokens, Top K — click "Params ▸" to expand. Values persist live to IndexedDB (personal defaults) but are not saved to disk unless explicitly triggered.
-- **Chat-triggered auto-start**: If a model is stopped when user sends a message, the UI shows "Starting…" status and starts the model using current chat params before streaming.
-- Full conversation history maintained in-memory across turns (OpenAI-compatible message format).
-- Token-by-token SSE streaming with animated cursor during generation.
-- Markdown rendering via `marked.js` from CDN — code blocks, bold, lists, inline code all rendered.
-
-**Log pane** (admin only) — Terminal-style log viewer per-session:
-- **Model logs**: Select a specific model from the dropdown to view its process stdout/stderr via `GET /admin/log/{model}`
-- **Server logs**: Select "Server logs" from the dropdown to view proxy traffic and lifecycle events via `GET /admin/logs`
-- Both share the same delta-polling pattern (1–2s interval) with `?since=N` cursor
-- Smart auto-scroll: scrolls to bottom during active streaming *unless* you've scrolled up to read older logs
-
-### Technical Details
-
-- **Zero dependencies**: No build step, no frameworks. Only `marked.js` loaded from CDN for markdown rendering.
-- **Layout engine**: JSON-driven (app.json → SessionLayout → ClusterTree + SessionDock via SplitPane). Resize persisted in `localStorage`.
-- **IndexedDB**: Personal chat defaults per-model stored in `arkestra` database, `settings` object store. Keyed by model ID.
-- **Session lifecycle**: Sessions created via `+ Chat` / `+ Log` buttons on model rows. Each session maintains its own state: chat history (in-memory), log polling timer, abort controller for streaming.
-- **Auth gating**: `HAS_ADMIN_KEY` derived from `<meta name="arkestra-admin-key">` content. Non-admin users get a single ChatPane only.
+- Chat-triggered auto-start: sending to a stopped model starts it via the
+  server before streaming.
+- Token-by-token SSE streaming (`POST /v1/chat/completions`, `stream: true`).
+- Markdown via bundled `marked.js` (no CDN — works offline).
+- Dead-model banner if the model 503s; pick another model to continue.
+- Auto-name: first context names itself from the first user message (~40
+  chars); rename by double-clicking the tab.
+- `New` button clears the active context's history, keeping its model.
 
 ## Related Documentation
 

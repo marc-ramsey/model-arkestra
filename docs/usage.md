@@ -46,6 +46,25 @@ During chat, type `/`-commands to adjust parameters or manage the conversation:
 | `ARKESTRA_URL` | Public address `scheme://host:port/prefix` (server + clients) |
 | `ARKESTRA_API_KEY` | Bearer token for auth |
 
+## Web Chat UI (browser)
+
+The server serves a context-tabbed chat UI at `/` when the admin routes are
+mounted (i.e. on `ArkestraServer` deployments).
+
+- Open `http://host:port/` in a browser.
+- **Auth**: if the server runs with an `api_key` (or `default-env` key in
+  config), the key is injected into the page automatically. If you reach the
+  page without it, the browser prompts once on the first `401` and stores the
+  key in `localStorage` (`arkestra-api-key`).
+- Contexts (conversations) are tabs; each has its own model selection and
+  sampling params. History is sent in full on every request — the server
+  stays stateless; conversations persist client-side in IndexedDB.
+- Sending to a stopped model auto-starts it. A model that 503s shows a
+  banner — pick another model from the per-context dropdown.
+
+Admin functions (start/stop/config/pull) are not in the web UI; use the
+`arkestra-admin` CLI (see [Admin API](./admin.md)).
+
 ## Basic Initialization
 
 ### Orchestration layer (recommended)
