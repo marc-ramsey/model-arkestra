@@ -66,11 +66,10 @@ class ModelArkestra:
         _lg.setLevel(getattr(logging, _level, logging.WARNING))
         if not _lg.handlers:
             _lg.addHandler(logging.StreamHandler())
-        # Warn only when the overlay replaces a shipped backend (drift risk).
-        # New backends not in the base are plain additions — no warning.
+        # Note overrides of shipped backends — intended behavior, debug only.
         for bid in (overlay.get("backends") or {}):
             if bid != "default" and bid in shipped_backend_ids:
-                logger.warning(
+                logger.debug(
                     "config.yaml defines backends.%s — treated as override of shipped backends.yaml",
                     bid,
                 )

@@ -289,8 +289,8 @@ backends:
       ctx-size: ${default/ctx-size}
 ```
 
-Declaring a full backend sub-dict in config.yaml logs a one-line warning at
-startup reminding you it is treated as an override of the shipped layer.
+Declaring a full backend sub-dict in config.yaml is treated as an override of
+the shipped layer. Each such id logs a one-line note at startup (debug level).
 
 ### `source:` entry keys
 
