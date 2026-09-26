@@ -16,7 +16,7 @@ from model_arkestra.types import RunnerState, _Model
 
 
 def _make_cm(backend_cfg: dict | None = None, runner_cfg: dict | None = None,
-             models_section: str = "") -> ModelArkestra:
+             models_section: str = "", default_extra: str = "") -> ModelArkestra:
     """Build a minimal ModelArkestra instance with mocked ConfigManager.
 
     The ConfigManager is constructed from an in-memory YAML file that contains only the keys
@@ -73,6 +73,7 @@ def _make_cm(backend_cfg: dict | None = None, runner_cfg: dict | None = None,
 default:
   model-start-port: 18000
   model-ports: 4
+{default_extra}
 
 macros:
   ctx-size: 16384
@@ -92,6 +93,22 @@ models:
 
 
 # ── Tests: Port allocation ────────────────────────────────────────────────
+
+
+class TestLogLevelConfig:
+    """default/log-level maps to the model_arkestra std logger (arkestra.py __init__)."""
+
+    @pytest.mark.parametrize("raw,expected", [("debug", 10), ("info", 20), ("warning", 30),
+                                              ("error", 40), ("bogus", 30)])
+    def test_level_applied(self, raw, expected):
+        import logging as _logging
+        pkg = _logging.getLogger("model_arkestra")
+        saved = (pkg.level, pkg.handlers[:])
+        try:
+            _make_cm(runner_cfg={"default": "process"}, default_extra=f"  log-level: {raw}")
+            assert pkg.level == expected
+        finally:
+            pkg.level, pkg.handlers = saved
 
 
 class TestPortAllocation:

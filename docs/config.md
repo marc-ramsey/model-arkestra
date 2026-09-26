@@ -143,6 +143,7 @@ default-env:
 | `warmup-time` (in `default:`) | `float` | `10.0` | Seconds to wait after `/health` returns OK before marking the model as `"running"`. |
 | `stream-sock-timeout` (in `default:`) | `float` | `120.0` | Max seconds of silence between stream chunks before the request is aborted. Raise for large models whose prefill exceeds the default. |
 | `app-log-lines` (in `default:`) | `int` | `2000` | Number of server-level log entries retained in the global ring buffer. |
+| `log-level` (in `default:`) | `str` | `warning` | Python logging level for `model_arkestra.*` log output: `debug`, `info`, `warning`, `error`. Uvicorn's own access/error logs are not affected. |
 | `container-type` | `str` | `"process"` | Default container runner when a backend uses `runner: container`. Valid values: `"podman"`, `"docker"`. Set to `"process"` to disable containers by default.
 
 ### `backends.default:` Key

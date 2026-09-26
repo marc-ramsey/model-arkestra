@@ -59,6 +59,13 @@ class ModelArkestra:
         self._cm = ModelConfigManager(str(self._config_path))
         self._cm.data = base
         self._cm.merge(overlay)
+        # Std logging: root is never configured (uvicorn only wires uvicorn.*),
+        # so a level alone would be inert — attach a handler too. Idempotent.
+        _level = str(self._cm.get("default/log-level", "WARNING")).upper()
+        _lg = logging.getLogger("model_arkestra")
+        _lg.setLevel(getattr(logging, _level, logging.WARNING))
+        if not _lg.handlers:
+            _lg.addHandler(logging.StreamHandler())
         # Warn only when the overlay replaces a shipped backend (drift risk).
         # New backends not in the base are plain additions — no warning.
         for bid in (overlay.get("backends") or {}):
