@@ -53,6 +53,18 @@ class TestRemote:
         assert caps == frozenset()
 
 
+class TestSdcppEngine:
+    """A sdcpp engine model advertises image-gen (not chat/embed)."""
+
+    def test_sdcpp_engine(self):
+        caps = derive_capabilities({}, {}, engine="sdcpp")
+        assert caps == frozenset({"image-gen"})
+
+    def test_llama_engine_unchanged(self):
+        caps = derive_capabilities({}, {}, engine="llama-cpp")
+        assert caps == frozenset({"chat", "embed"})
+
+
 class TestModelVisionMmprojLookup:
     """_Model resolves mmproj from model entry or backend args."""
 

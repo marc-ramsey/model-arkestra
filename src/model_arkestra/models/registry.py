@@ -57,6 +57,10 @@ class Registry:
             hp = backend_cfg.get("health_path") if isinstance(backend_cfg, dict) else None
             if isinstance(hp, str) and hp:
                 ctx._health_path = hp
+            # Engine may differ from the pre-registration default — drop any
+            # cached capability set so it re-derives with the engine.
+            if hasattr(ctx, "_capabilities"):
+                del ctx._capabilities
         except Exception:
             pass
 

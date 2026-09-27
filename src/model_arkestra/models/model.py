@@ -85,7 +85,8 @@ class _Model:
     def capabilities(self) -> FrozenSet[str]:
         if not hasattr(self, "_capabilities"):
             self._capabilities = derive_capabilities(
-                self._model_cfg, self._backend_cfg, mmproj=self._vision_mmproj())
+                self._model_cfg, self._backend_cfg,
+                mmproj=self._vision_mmproj(), engine=self.engine or "")
         return self._capabilities
 
     def _vision_mmproj(self) -> str:

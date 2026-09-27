@@ -165,7 +165,7 @@ CLI arguments flow through a two-phase pipeline:
 1. **Merge**: ``build_model_args()`` merges model-level ``args:`` with runtime inference kwargs into a flat dict.
 2. **Convert**: The engine layer (e.g. ``LlamaCppEngine.build_cli_args(merged, port)``) converts the dict to CLI tokens.
 
-Values are stored as flat YAML dicts internally and converted to CLI flags by the engine layer (e.g. ``LlamaCppEngine.build_cli_args(merged, port)``).
+Values are stored as flat YAML dicts internally and converted to CLI flags by the engine layer. Engines are classes in a registry (`ENGINES` in `model_arkestra.engines`), looked up by the backend's `engine:` key — `llama-cpp` → `LlamaCppEngine`, `sdcpp` → `SdcppEngine`. Unknown engine names raise `EngineError` at start. New engine = one module + one registry entry.
 
 ### Merge Phase
 
@@ -207,8 +207,14 @@ container.
 ```
 runner_type == "remote"    → RemoteProvider   (proxied to a cluster worker)
 runner_type == "onnx"      → OnnxProvider     (in-process ONNX session, no transport)
-anything else              → LlamaProvider    (local llama-server via its HTTP API)
+otherwise                  → PROVIDERS[engine]  (HTTP engine on the model port)
 ```
+
+The HTTP providers are keyed on the model's **engine** (`backends.<id>.engine`) via
+the `PROVIDERS` registry in `model_arkestra.providers` — `llama-cpp → LlamaProvider`,
+`sdcpp → SdcppProvider` (stable-diffusion.cpp). A container-run llama-cpp model is
+still a `LlamaProvider`: the provider follows the engine, not the runner. New
+engine = one provider module + one registry entry.
 
 The provider class is **engine/location-based**, not mechanism-based. ONNX runs
 in-process with no transport; Llama and Remote use network transports. The name
@@ -249,23 +255,21 @@ Capabilities are **derived**, not stored, from the model's config:
 | ONNX `type: whisper` / `asr` | `{asr}` |
 | ONNX `type: tts` | `{tts}` |
 | llama-cpp (default) | `{chat, embed}` |
-| llama-cpp + explicit `capabilities: [embed]` | `{embed}` (the one override) |
+| llama-cpp + `mmproj` sidecar | `{chat, embed, vision}` (image input, chat-capable models only) |
+| llama-cpp + explicit `capabilities: [embed]` | `{embed}` (the one override; never gains `vision`) |
+| engine `sdcpp` | `{image-gen}` (text-to-image via stable-diffusion.cpp) |
 | remote cluster model | mirrors the worker (empty locally until probed) |
 
 The single override exists because some llama models are embedding-only and must
-not advertise `chat`. Everything else is computed.
+not advertise `chat`. Everything else is computed. An `mmproj:` sidecar adds
+`vision` to a chat-capable llama model; the sdcpp engine is a whole separate
+modality — one backend, one provider, one method.
 
-### How image/video slot in later
+### Adding a modality
 
-- **Vision chat** (image in → text out): *no new provider.* It is a chat call
-  with an image content part; the backend just needs `mmproj`. Capability stays `chat`.
-- **Image generation** (text → image): a new `generate_image()` method on the
-  relevant provider, capability `image-gen`, likely a new backend. Derivation via
-  `type: image-gen` or a backend that advertises it.
-- **Video**: same pattern — a new method + capability `video`.
-
-Each modality = one provider method + one capability (+ optionally a backend).
-Adding video never forces a rewrite of chat/embed/asr.
+Each modality = one provider method + one capability (+ optionally a backend
+and engine). Video follows the same pattern — a new method + capability `video`
+— without rewriting chat/embed/asr/image-gen.
 
 ### Facade routing
 
@@ -277,10 +281,18 @@ arkestra.ainvoke / .astream      → LlamaProvider.invoke_full / .stream  (chat)
 arkestra.embed                   → provider.embed                       (embed)
 arkestra.transcribe              → provider.transcribe                  (asr)
 arkestra.synthesize              → provider.synthesize                  (tts)
+arkestra.generate_image          → SdcppProvider.generate_image         (image-gen)
 ```
 
 `ainvoke`/`astream` remain stable shims for the LangChain adapter. New modalities
 get a facade method + a CLI subcommand for free.
+
+Image generation: `POST /v1/images/generations` routes by the `image-gen`
+tag (or an explicit `model:` name), mirroring the chat endpoint. Request
+fields map onto the OpenAI images shape (`prompt`, `size` like `"1328x1328"`,
+`n`, `response_format`); the response is the OpenAI images envelope with
+`b64_json` data. Generation parameters travel in the request body —
+sd-server has no `--width`/`--steps` startup flags.
 
 ### CLI mapping
 

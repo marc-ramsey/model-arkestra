@@ -13,6 +13,7 @@ The `/api/*` namespace exposes read-only endpoints. When `api_key` is set in `co
 | `GET` | `/api/v1/health` | Health status — always public (Open WebUI polls this unauthenticated) |
 | `GET` | `/api/v1/stats` | Stats from the last chat request (tokens, latency) — Open WebUI compat |
 | `GET` | `/api/v1/system-stats` | Uptime, platform, loaded model count — Open WebUI compat |
+| `POST` | `/v1/images/generations` | Text-to-image — OpenAI images API. Routes to the model tagged `image-gen` (or named in `model`), auto-starts it if stopped |
 
 When `api_key` is configured, include `Authorization: Bearer <api_key>` to access these endpoints. `/api/v1/health` is exempt so Open WebUI's connection health check works without credentials.
 

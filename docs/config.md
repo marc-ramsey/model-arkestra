@@ -101,6 +101,26 @@ Models marked with `capabilities` run on a separate ONNX inference server, prese
 | `asr` | `["asr"]` | `/v1/audio/transcriptions` | Whisper ASR |
 | `tts` | `["tts"]` | `/v1/audio/speech` | Kokoro TTS |
 
+`vision` and `image-gen` are **derived** and not settable:
+
+- `vision` — a llama-cpp chat model with an `mmproj:` sidecar can take image inputs (image in → text out).
+- `image-gen` — any model on an `engine: sdcpp` backend (text in → image out via `/v1/images/generations`).
+
+### Text-to-Image Models (stable-diffusion.cpp)
+
+Diffusion models run on the separate `sd-server` binary (engine `sdcpp`), not llama-server:
+
+```yaml
+models:
+  qwen-image:
+    model: Qwen/Qwen-Image-2.1-GGUF:master
+    backend: sd-rocm        # sd-server binary, OpenAI images API
+    tags: [image-gen]       # routes POST /v1/images/generations
+```
+
+Generation parameters (`size`, `n`, `output_format`) travel in the request
+body, not the config — `sd-server` takes no `--width`/`--steps` startup flags.
+
 ONNX model keys:
 - `model_path: /path/to/model.onnx` — path to ONNX model file (required)
 - `type: embedding|whisper|tts` — inference type (required)
@@ -253,6 +273,8 @@ The binary slot path is *derived*, never written:
 | `cuda` | ggml-org/llama.cpp (cuda) | NVIDIA discrete GPUs |
 | `cpu` | ggml-org/llama.cpp (static) | CPU-only, all cores |
 | `onnx` | — (in-process) | ONNX runner; no binary, no slot |
+| `sd-rocm` | lemonade-sdk/stable-diffusion.cpp (ROCm 7.14.0) | sd-server — text-to-image, e.g. Qwen-Image-2.1 |
+| `sd-vulkan` | lemonade-sdk/stable-diffusion.cpp (vulkan) | sd-server fallback |
 
 **Naming convention:** shipped ROCm backends are named `rocm-gfx<target>`, one
 per single-target artifact. The ID is otherwise an opaque label — a local or

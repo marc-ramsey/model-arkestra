@@ -26,12 +26,17 @@ _LLAMA_VISION: FrozenSet[str] = frozenset({"chat", "embed", "vision"})
 
 
 def derive_capabilities(model_cfg: Dict[str, Any], backend_cfg: Dict[str, Any],
-                        mmproj: str = "") -> FrozenSet[str]:
+                        mmproj: str = "", engine: str = "") -> FrozenSet[str]:
     """Compute the capability set for one model from its config.
 
     ``model_cfg`` is the raw ``models.<name>`` mapping; ``backend_cfg`` the
-    resolved ``backends.<id>`` mapping (may be empty).
+    resolved ``backends.<id>`` mapping (may be empty). ``engine`` is the
+    backend's engine name (llama-cpp, sdcpp, ...).
     """
+    # Non-LLM engines advertise their own single modality.
+    if engine == "sdcpp":
+        return frozenset({"image-gen"})
+
     # ONNX auxiliary models are routed by runner/type, not backend engine.
     if _is_onnx(model_cfg):
         cap = _ONNX_TYPE_TO_CAPABILITY.get(str(model_cfg.get("type", "")))
