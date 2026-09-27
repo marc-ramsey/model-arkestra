@@ -6,7 +6,6 @@ config.yaml.
 """
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 import pytest
@@ -70,26 +69,6 @@ class TestOverlay:
         ma = ModelArkestra(str(config_dir / "config.yaml"), ready_timeout=2)
         assert ma.get_backend("my-local")["binary_dir"] == "/opt/bin"
 
-    def test_fat_override_logs_debug(self, config_dir, caplog):
-        # Overriding a shipped backend is intended — debug-level note only
-        # (738df5d demoted it from warning).
-        cfg = yaml.safe_load((config_dir / "config.yaml").read_text())
-        cfg["backends"] = {"vulkan-radv": {"runner": "process"}}
-        (config_dir / "config.yaml").write_text(yaml.safe_dump(cfg))
-
-        with caplog.at_level(logging.WARNING):
-            ModelArkestra(str(config_dir / "config.yaml"), ready_timeout=2)
-        assert not any("backends.vulkan-radv" in r.message
-                       for r in caplog.records)
-
-    def test_default_selection_no_warning(self, config_dir, caplog):
-        cfg = yaml.safe_load((config_dir / "config.yaml").read_text())
-        cfg["backends"] = {"default": "cpu"}
-        (config_dir / "config.yaml").write_text(yaml.safe_dump(cfg))
-
-        with caplog.at_level(logging.WARNING):
-            ModelArkestra(str(config_dir / "config.yaml"), ready_timeout=2)
-        assert not any("treated as override" in r.message for r in caplog.records)
 
 
 class TestSchemaRegistry:

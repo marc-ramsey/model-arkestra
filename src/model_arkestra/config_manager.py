@@ -1,20 +1,75 @@
 """Model-aware ConfigManager — extends base with model-specific accessors."""
 from __future__ import annotations
 
+import copy
+import json
 from typing import Any, Dict, Optional, Union
+
+import yaml
+from importlib.resources import files as _files
 
 from llm_config_manager import ConfigManager
 
 
 class ModelConfigManager(ConfigManager):
-    """ConfigManager extended with model and backend lookups."""
+    """ConfigManager extended with model and backend lookups.
 
-    def __init__(self, *args: Any, **kwargs: Any):
-        super().__init__(*args, **kwargs)
+    Layered config: the package-shipped backends.yaml is the read-only base;
+    the user's config.yaml overlays it (per-key, deep merge — overlay wins).
+    ``self.data`` holds the merged view (macros expanded); ``self._config``
+    holds the raw user file (placeholders intact) and is the only thing
+    :meth:`export` writes. All user state lives in config.yaml; nothing ever
+    writes backends.yaml.
+    """
+
+    def __init__(self, config_path: str, strict_expansion: Optional[bool] = None):
+        # User file — raw, no macro expansion; export() target.
+        self._config = ConfigManager(config_path, expand_macros=False)
+        super().__init__(config_path, strict_expansion=strict_expansion)
+        # Shipped base underneath the user overlay → merged view in self.data.
+        self.data = self._load_base()
+        self.merge(copy.deepcopy(self._config.get_dict()))
+        # Expand macros on the merged view only; _config keeps placeholders.
+        self._expand_macros()
         # Runtime-only effective default backend. Set at init after GPU detection
         # when the configured default's runtime is missing. Kept OUT of self.data so
         # a config save never persists the auto-detected fallback over the user's choice.
         self._effective_default_backend: Optional[str] = None
+
+    @staticmethod
+    def _load_base() -> Dict[str, Any]:
+        """Load the package-shipped backends.yaml (empty dict if unavailable)."""
+        try:
+            text = (_files("model_arkestra.data") / "backends.yaml").read_text()
+        except Exception:
+            return {}
+        return yaml.safe_load(text) or {}
+
+    # ── Mutators: apply to the merged view AND the user file ─────────
+
+    def __setitem__(self, path: str, value: Any) -> None:
+        super().__setitem__(path, value)
+        self._config[path] = value
+
+    def merge(self, update: dict) -> dict:
+        result = super().merge(update)
+        self._config.merge(update)
+        return result
+
+    def __delitem__(self, key: str) -> None:
+        super().__delitem__(key)
+        if key in self._config.data:
+            del self._config[key]
+
+    def export(self, output_path: str, fmt: str = 'yaml') -> None:
+        """Write the user config file only — never the merged view."""
+        if fmt not in ('json', 'yaml'):
+            raise ValueError(f"Unsupported format: {fmt!r}. Use 'json' or 'yaml'.")
+        with open(output_path, 'w') as f:
+            if fmt == 'json':
+                json.dump(self._config.data, f, indent=2)
+            else:
+                yaml.dump(self._config.data, f, default_flow_style=False, sort_keys=False)
 
     def effective_default_backend(self) -> Optional[str]:
         """Return the backend to use when a model has no explicit ``backend:``.

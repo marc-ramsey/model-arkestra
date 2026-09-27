@@ -4,7 +4,6 @@ import asyncio
 import logging
 import os
 import shutil
-import yaml
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple, Union
 
@@ -37,7 +36,6 @@ class ModelArkestra:
         self,
         config_path: Optional[str] = None,
         start_port: int = 18000,
-        backends_config: Optional[Dict[str, Any]] = None,
         local_url: str = "",
         **runner_kwargs: Any,
     ):
@@ -47,18 +45,7 @@ class ModelArkestra:
         # Layered config: package-shipped backends.yaml is the read-only base;
         # config.yaml overlays it (per-key, deep merge — overlay wins).
         # All user state lives in config.yaml; nothing writes backends.yaml.
-        from importlib.resources import files as _files
-        try:
-            base_text = (_files("model_arkestra.data") / "backends.yaml").read_text()
-        except Exception:
-            base_text = ""
-        base = backends_config if backends_config is not None else (yaml.safe_load(base_text) or {})
-        overlay = yaml.safe_load(Path(self._config_path).read_text()) or {}
-        # Capture shipped keys before merge — cm.merge() mutates base in place.
-        shipped_backend_ids = set(((base.get("backends") or {}) if isinstance(base, dict) else {}).keys())
         self._cm = ModelConfigManager(str(self._config_path))
-        self._cm.data = base
-        self._cm.merge(overlay)
         # Std logging: root is never configured (uvicorn only wires uvicorn.*),
         # so a level alone would be inert — attach a handler too. Idempotent.
         _level = str(self._cm.get("default/log-level", "WARNING")).upper()
@@ -66,13 +53,6 @@ class ModelArkestra:
         _lg.setLevel(getattr(logging, _level, logging.WARNING))
         if not _lg.handlers:
             _lg.addHandler(logging.StreamHandler())
-        # Note overrides of shipped backends — intended behavior, debug only.
-        for bid in (overlay.get("backends") or {}):
-            if bid != "default" and bid in shipped_backend_ids:
-                logger.debug(
-                    "config.yaml defines backends.%s — treated as override of shipped backends.yaml",
-                    bid,
-                )
 
         # ── Registry: name→Model ownership, cluster routing, port pool ──
         from model_arkestra.models import Registry

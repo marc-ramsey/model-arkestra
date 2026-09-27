@@ -83,10 +83,8 @@ def merged_config() -> Dict[str, Any]:
     if not config_path.is_file():
         return yaml.safe_load(base_text) or {}
     try:
-        cm = ModelConfigManager(str(config_path))
-        cm.data = yaml.safe_load(base_text) or {}
-        cm.merge(yaml.safe_load(config_path.read_text()) or {})
-        return cm.data or {}
+        # Construction performs the base+overlay merge.
+        return ModelConfigManager(str(config_path)).get_dict() or {}
     except Exception:
         # Malformed overlay (e.g. a placeholder config mid-init) — use the
         # shipped base alone rather than crashing the caller.
