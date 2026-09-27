@@ -8,7 +8,7 @@ from typing import Any, Dict
 from model_arkestra.base import BaseRunner
 from model_arkestra.bin_tool import slot_path
 from model_arkestra.common import build_model_args
-from model_arkestra.llama_cpp import LlamaCppEngine
+from model_arkestra.engines import build_args
 from model_arkestra.types import _Model
 
 
@@ -52,10 +52,7 @@ class ProcessRunner(BaseRunner):
             raise RuntimeError(f"Model '{model_name}' has no backend configured")
 
         engine_name = (backend or {}).get("engine", "llama-cpp")
-        if engine_name == "llama-cpp":
-            args_list = LlamaCppEngine.build_cli_args(merged, ctx.port)
-        else:
-            args_list = list(merged.values())
+        args_list = build_args(engine_name, merged, ctx.port)
 
         # Merge environment.
         env = os.environ.copy()

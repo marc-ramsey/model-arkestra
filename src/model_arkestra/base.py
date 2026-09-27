@@ -111,7 +111,8 @@ class BaseRunner(ABC):
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(
-                        f"http://127.0.0.1:{ctx.port}/health", timeout=3
+                        f"http://127.0.0.1:{ctx.port}{self._health_path(ctx)}",
+                        timeout=3,
                     ) as resp:
                         if resp.status == 200:
                             self._inference_kwargs[model_name] = inference_kwargs
@@ -187,11 +188,17 @@ class BaseRunner(ABC):
         # ── Wait for ready ───────────────────────────────────────────
         start_time = time.monotonic()
         ready = False
+        # Engines without a structured status (sd-server serves /) treat a
+        # bare 200 as ready — only /health responses carry a status body.
+        health_path = getattr(ctx, "_health_path", "/health")
         async with aiohttp.ClientSession() as session:
             while time.monotonic() - start_time < self.ready_timeout:
                 try:
-                    async with session.get(f"http://127.0.0.1:{eff_port}/health", timeout=5) as resp:
+                    async with session.get(f"http://127.0.0.1:{eff_port}{health_path}", timeout=5) as resp:
                         if resp.status == 200:
+                            if health_path != "/health":
+                                ready = True
+                                break
                             data = await resp.json()
                             status = data.get("status")
                             if status in ("ok", "loaded"):
@@ -373,7 +380,8 @@ class BaseRunner(ABC):
                 try:
                     async with aiohttp.ClientSession() as session:
                         resp = await session.get(
-                            f"http://127.0.0.1:{ctx.port}/health", timeout=3
+                            f"http://127.0.0.1:{ctx.port}{self._health_path(ctx)}",
+                            timeout=3,
                         )
                         if resp.status == 200:
                             data = await resp.json()

@@ -745,6 +745,14 @@ class ModelArkestra:
         """Generate speech from text via TTS ONNX model."""
         return await self._provider_for(model_name).synthesize(text, voice or "", speed)
 
+    async def generate_image(self, model_name: str, prompt: str,
+                             size: Optional[str] = None,
+                             n: int = 1,
+                             output_format: str = "png") -> bytes:
+        """Generate an image from text via an sd.cpp model; returns image bytes."""
+        return await self._provider_for(model_name).generate_image(
+            prompt, size=size, n=n, output_format=output_format)
+
     async def stream_asr(self, model_name: str, audio_bytes: bytes) -> Dict[str, Any]:
         """Streaming ASR with partial/final results (sherpa-ai)."""
         return await self._provider_for(model_name).stream_asr(audio_bytes)

@@ -21,9 +21,12 @@ _ONNX_TYPE_TO_CAPABILITY = {
 
 # Default capabilities for a llama-cpp model (chat + embed).
 _LLAMA_DEFAULT: FrozenSet[str] = frozenset({"chat", "embed"})
+# Vision: a chat model with an mmproj sidecar can take image inputs.
+_LLAMA_VISION: FrozenSet[str] = frozenset({"chat", "embed", "vision"})
 
 
-def derive_capabilities(model_cfg: Dict[str, Any], backend_cfg: Dict[str, Any]) -> FrozenSet[str]:
+def derive_capabilities(model_cfg: Dict[str, Any], backend_cfg: Dict[str, Any],
+                        mmproj: str = "") -> FrozenSet[str]:
     """Compute the capability set for one model from its config.
 
     ``model_cfg`` is the raw ``models.<name>`` mapping; ``backend_cfg`` the
@@ -39,10 +42,11 @@ def derive_capabilities(model_cfg: Dict[str, Any], backend_cfg: Dict[str, Any]) 
         return frozenset()
 
     # llama-cpp default, with the single embedding-only override.
+    # An mmproj sidecar (vision) only applies to chat-capable models.
     override = model_cfg.get("capabilities")
     if isinstance(override, list) and len(override) == 1 and override[0] == "embed":
         return frozenset({"embed"})
-    return _LLAMA_DEFAULT
+    return _LLAMA_VISION if mmproj else _LLAMA_DEFAULT
 
 
 def _is_onnx(model_cfg: Dict[str, Any]) -> bool:

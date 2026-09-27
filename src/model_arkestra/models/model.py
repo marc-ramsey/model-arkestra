@@ -37,8 +37,13 @@ class _Model:
         # ── capability derivation inputs (set by the registry/factory) ──
         self._model_cfg: dict = {}
         self._backend_cfg: dict = {}
+        # Inference engine (llama-cpp | sdcpp); set by the registry/factory.
+        self.engine: Optional[str] = None
         # sock_read bound for stream chunks (seconds); None → provider default
         self._stream_sock_timeout: Optional[float] = None
+        # HTTP path the runner polls for readiness (default /health; sd-server
+        # serves only /).
+        self._health_path: str = "/health"
 
         # ── state machine (mutated only via set_state) ─────────
         self._state = RunnerState.STOPPED
@@ -79,21 +84,28 @@ class _Model:
     @property
     def capabilities(self) -> FrozenSet[str]:
         if not hasattr(self, "_capabilities"):
-            self._capabilities = derive_capabilities(self._model_cfg, self._backend_cfg)
+            self._capabilities = derive_capabilities(
+                self._model_cfg, self._backend_cfg, mmproj=self._vision_mmproj())
         return self._capabilities
+
+    def _vision_mmproj(self) -> str:
+        """Resolved mmproj sidecar path (model entry), or '' if absent."""
+        mmproj = self._model_cfg.get("mmproj")
+        return mmproj if isinstance(mmproj, str) and mmproj else ""
 
     # ── inference provider (built lazily once routing is known) ───
     @property
     def provider(self) -> Any:
         """Return the model's active Provider, building it on first use.
 
-        The provider kind follows ``runner_type``: remote → RemoteProvider,
-        onnx → OnnxProvider, anything else (process/container) → LlamaProvider.
+        Runner-kind providers (remote, onnx) are keyed on ``runner_type``;
+        the HTTP inference providers are keyed on the model's *engine* via
+        the PROVIDERS registry, defaulting to llama-cpp.
         """
         if self._provider is not None:
             return self._provider
         from model_arkestra.providers import (
-            LlamaProvider, OnnxProvider, RemoteProvider,
+            LlamaProvider, OnnxProvider, RemoteProvider, PROVIDERS,
         )
         rt = self.runner_type
         if rt == "remote":
@@ -105,8 +117,9 @@ class _Model:
             prov.model._onnx_capabilities = self.capabilities
             self._provider = prov
         else:
-            # process / podman / docker — local llama-server on the model port
-            self._provider = LlamaProvider(self.name, self.port or 0)
+            # process / podman / docker — HTTP engine on the model port
+            cls = PROVIDERS.get(self.engine or "llama-cpp", LlamaProvider)
+            self._provider = cls(self.name, self.port or 0)
         return self._provider
 
     # ── log ring ────────────────────────────────────────────────

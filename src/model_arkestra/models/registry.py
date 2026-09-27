@@ -47,8 +47,16 @@ class Registry:
             cfg = self._cm.get_model(lookup_name) or {}
             ctx._model_cfg = dict(cfg)
             be_id = cfg.get("backend")
-            if be_id:
-                ctx._backend_cfg = self._cm.get_backend(be_id) or {}
+            backend_cfg = self._cm.get_backend(be_id) or {} if be_id else {}
+            ctx._backend_cfg = backend_cfg
+            # Engine + readiness path drive provider selection and health
+            # polling (sd-server serves / only, so its backend sets /").
+            engine = backend_cfg.get("engine") if isinstance(backend_cfg, dict) else None
+            if engine:
+                ctx.engine = str(engine)
+            hp = backend_cfg.get("health_path") if isinstance(backend_cfg, dict) else None
+            if isinstance(hp, str) and hp:
+                ctx._health_path = hp
         except Exception:
             pass
 

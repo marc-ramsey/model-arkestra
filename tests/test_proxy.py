@@ -190,6 +190,23 @@ def _build_app(mock_arkestra, aliases=None):
         )
         return {"text": "mock transcript"}
 
+    @app.post("/v1/images/generations")
+    async def image_generations(req_body: dict):
+        model_name = proxy._resolve_tagged_model(
+            str(req_body.get("model", "")), "image-gen",
+            "No image-gen model available. Configure a model with tags: [image-gen]",
+            legacy_key="image-model",
+        )
+        png = await proxy._run_with_autostart(
+            model_name, mock_arkestra.generate_image,
+            req_body.get("prompt", ""),
+            size=str(req_body.get("size", "")),
+            n=int(req_body.get("n", 1)),
+            output_format=str(req_body.get("output_format", "png")),
+        )
+        from fastapi.responses import Response
+        return Response(content=png, media_type="image/png")
+
     client = TestClient(app, raise_server_exceptions=False)
     return client, mock_arkestra
 
@@ -250,9 +267,13 @@ def mock_arkestra():
             "total_tokens": 15,
         },
     })
-    # Transcription routing: asr tag on qwen3-4b
+    # Transcription routing: asr tag on qwen3-4b; image-gen tag on qwen-img
     mock.cm = MagicMock()
-    mock.cm.data = {"models": {"qwen3-4b": {"tags": ["asr"]}}}
+    mock.cm.data = {"models": {
+        "qwen3-4b": {"tags": ["asr"]},
+        "qwen-img": {"tags": ["image-gen"]},
+    }}
+    mock.generate_image = AsyncMock(return_value=b"\x89PNG-mock-bytes")
     return mock
 
 

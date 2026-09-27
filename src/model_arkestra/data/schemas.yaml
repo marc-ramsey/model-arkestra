@@ -98,6 +98,36 @@ model-args:
     spec-draft-ngl:
       type: string
 
+  # sd-server: startup flags only. Generation params (size, steps, seed,
+  # sampler) are request-time — they go in the /v1/images/generations body.
+  sdcpp:
+    name:
+      type: string
+    model:
+      type: string
+    # companion files (text encoder, VAE, tokenizer)
+    llm:
+      type: string
+    vae:
+      type: string
+    tokenizer:
+      type: string
+    threads:
+      type: integer
+      minimum: 1
+    backend:
+      type: string
+    params-backend:
+      type: string
+    fa:
+      type: boolean
+    mmap:
+      type: boolean
+    offload-to-cpu:
+      type: boolean
+    listen-ip:
+      type: string
+
   onnx:
     name:
       type: string

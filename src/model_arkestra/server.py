@@ -636,6 +636,25 @@ class ArkestraServer:
                 model_name, self._arkestra.synthesize, text_input, voice=voice, speed=speed)
             return Response(content=wav_bytes, media_type="audio/wav")
 
+        # ── Route: POST /v1/images/generations (tag-based routing) ──
+
+        @app.post("/v1/images/generations")
+        async def image_generations(req_body: Dict[str, Any]) -> Any:
+            """Text-to-image endpoint — routes to model with 'image-gen' tag."""
+            model_name = self._resolve_tagged_model(
+                str(req_body.get("model", "")), "image-gen",
+                "No image-gen model available. Configure a model with tags: [image-gen]",
+                legacy_key="image-model",
+            )
+            img_bytes = await self._run_with_autostart(
+                model_name, self._arkestra.generate_image,
+                req_body.get("prompt", ""),
+                size=str(req_body.get("size", "")),
+                n=int(req_body.get("n", 1)),
+                output_format=str(req_body.get("output_format", "png")),
+            )
+            return Response(content=img_bytes, media_type=f"image/{output_format}")
+
         # ── Streaming audio WebSocket (dev endpoint — may become /v1/...) ─
         ws_path = self.base_url + "/ark/audio/stream" if self.base_url else "/ark/audio/stream"
         @app.websocket(ws_path)

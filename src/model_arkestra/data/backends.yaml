@@ -164,3 +164,28 @@ backends:
     description: "ONNX in-memory runner — loads models directly, no subprocess"
     runner: onnx
     engine: onnx
+  # ── stable-diffusion.cpp (text-to-image) ─────────────────────────────────
+  # Separate engine: sd-server binary, GGUF diffusion weights, OpenAI images API.
+  # {sha} renders as the tag's last dash-segment (master-920-2f88688 → 2f88688).
+  # No gfx-specific sd builds exist — ROCm kernels JIT per gfx at runtime, so one
+  # ROCm asset covers gfx1151 and friends. ROCm version pinned to the system one.
+  sd-rocm:
+    description: "stable-diffusion.cpp sd-server — ROCm (gfx1151 / Strix Halo)"
+    source:
+      type: remote
+      repo: lemonade-sdk/stable-diffusion.cpp
+      asset: sd-master-{sha}-bin-Linux-Ubuntu-24.04-x86_64-rocm-7.14.0.zip
+      binary: sd-server
+    runner: process
+    engine: sdcpp
+    health_path: /
+  sd-vulkan:
+    description: "stable-diffusion.cpp sd-server — Vulkan fallback"
+    source:
+      type: remote
+      repo: lemonade-sdk/stable-diffusion.cpp
+      asset: sd-master-{sha}-bin-Linux-Ubuntu-24.04-x86_64-vulkan.zip
+      binary: sd-server
+    runner: process
+    engine: sdcpp
+    health_path: /

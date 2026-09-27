@@ -48,6 +48,24 @@ def state_dir() -> Path:
 # Local sources are verified, never fetched — tag is a fixed marker.
 LOCAL_TAG = "local"
 
+# Default binary a remote slot must provide (llama.cpp); a source may name
+# another via ``binary:`` (e.g. sd-server for stable-diffusion.cpp).
+DEFAULT_BINARY = "llama-server"
+
+
+def _render_asset_tpl(tpl: str, tag: str) -> str:
+    """Render an asset template for a release tag.
+
+    ``{tag}`` is the full tag; ``{sha}`` is its last dash-segment — sd.cpp
+    drops the build number from filenames (master-920-2f88688 → 2f88688).
+    """
+    return tpl.format(tag=tag, sha=tag.rsplit("-", 1)[-1])
+
+
+def _binary_name(src: Dict[str, Any]) -> str:
+    """Binary a remote slot must provide (source ``binary:``, default llama-server)."""
+    return str(src.get("binary") or DEFAULT_BINARY)
+
 
 class BinError(Exception):
     pass
@@ -145,13 +163,15 @@ def require_source(bid: str) -> Dict[str, Any]:
 
 def latest_tag(repo: str, asset_tpl: str) -> str | None:
     """Newest release whose assets include the template rendered for its tag."""
-    url = f"https://api.github.com/repos/{repo}/releases?per_page=30"
+    # 100 (the API max) — a version-pinned asset (e.g. sd.cpp rocm-7.14.0
+    # while newer releases ship rocm-10.0.0) can sit far back in history.
+    url = f"https://api.github.com/repos/{repo}/releases?per_page=100"
     req = urllib.request.Request(url, headers={"User-Agent": "arkestra-bin", "Accept": "application/vnd.github+json"})
     with urllib.request.urlopen(req, timeout=30) as resp:
         releases = json.loads(resp.read())
     for rel in releases:
         tag = rel.get("tag_name") or ""
-        wanted = asset_tpl.format(tag=tag)
+        wanted = _render_asset_tpl(asset_tpl, tag)
         names = [a.get("name", "") for a in rel.get("assets", [])]
         if wanted in names:
             return tag
@@ -189,13 +209,13 @@ def extract(archive: Path, dest: Path) -> None:
         raise BinError(f"unsupported archive type: {archive.name}")
 
 
-def flatten_if_nested(dest: Path) -> None:
+def flatten_if_nested(dest: Path, binary: str = DEFAULT_BINARY) -> None:
     """Archives may nest one level (llama-<tag>-.../); hoist contents up."""
-    if (dest / "llama-server").exists():
+    if (dest / binary).exists():
         return
-    nested = next(dest.glob("*/llama-server"), None)
+    nested = next(dest.glob(f"*/{binary}"), None)
     if nested is None:
-        raise BinError(f"no llama-server found in extracted archive under {dest}")
+        raise BinError(f"no {binary} found in extracted archive under {dest}")
     for child in nested.parent.iterdir():
         shutil.move(str(child), str(dest / child.name))
     nested.parent.rmdir()
@@ -218,7 +238,7 @@ def fetch_one(bid: str, src: Dict[str, Any], state: dict,
 
     slot = slot_path(bid, src)
     entry = state.get(bid) or {}
-    binary = slot / "llama-server"
+    binary = slot / _binary_name(src)
     tag = entry.get("pinned")
     if not tag and not latest and binary.is_file():
         return "ok"
@@ -234,7 +254,7 @@ def fetch_one(bid: str, src: Dict[str, Any], state: dict,
     if not fetch:
         return "missing"
 
-    asset_name = asset_tpl.format(tag=tag)
+    asset_name = _render_asset_tpl(asset_tpl, tag)
     url = f"https://github.com/{repo}/releases/download/{tag}/{asset_name}"
     print(f"  {bid}: fetching {tag}", flush=True)
 
@@ -249,8 +269,8 @@ def fetch_one(bid: str, src: Dict[str, Any], state: dict,
         shutil.rmtree(new, ignore_errors=True)
         new.mkdir(parents=True)
         extract(tmpfile, new)
-        flatten_if_nested(new)
-        os.chmod(new / "llama-server", 0o755)
+        flatten_if_nested(new, _binary_name(src))
+        os.chmod(new / _binary_name(src), 0o755)
 
         # Atomic swap over the live slot.
         if old.exists():
@@ -270,14 +290,14 @@ def fetch_one(bid: str, src: Dict[str, Any], state: dict,
         "fetched": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     save_state(state)
-    print(f"  {bid}: installed {tag} -> {slot / 'llama-server'}")
+    print(f"  {bid}: installed {tag} -> {slot / _binary_name(src)}")
     return "fetched"
 
 
 def _verify_local(bid: str, src: Dict[str, Any], state: dict) -> str:
     """Local build: verify path, record sha. Never downloads."""
     slot = slot_path(bid, src)
-    binary = slot / "llama-server"
+    binary = slot / _binary_name(src)
     if not binary.is_file():
         return "missing"
 
