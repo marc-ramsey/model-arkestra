@@ -100,26 +100,33 @@ class ModelConfigManager(ConfigManager):
                     f"'{ckpt_id}'. Declare it in the 'checkpoints:' section."
                 )
             merged.update(ckpt)
-        # Instance args override checkpoint args.
+        # Instance args override checkpoint args — including an explicit
+        # 'model:' key, which then wins over the checkpoint's ref.
         instance = {k: v for k, v in model.items() if k != "checkpoint"}
         merged.update(instance)
-        # The weight ref lives only on the checkpoint; surface it as 'model'
-        # so callers reading cfg["model"] work unchanged. An instance cannot
-        # set its own ref.
-        if "ref" in merged:
+        # The weight ref lives on the checkpoint; surface it as 'model' so
+        # callers reading cfg["model"] work unchanged. An instance-level
+        # 'model:' key already won the merge and is left untouched.
+        if "ref" in merged and "model" not in merged:
             merged["model"] = merged.pop("ref")
+        elif "ref" in merged:
+            del merged["ref"]
 
         if env_vars is not None:
-            return self._traverse(merged, env_vars, strict=self.strict_expansion)
-        # Normalise whitespace without strict mode so unresolved keys survive.
+            # Runtime resolution is always strict: a missing env var must
+            # surface as an error, never as a literal ${...} in the command.
+            return self._traverse(merged, env_vars, strict=True)
+        # No env vars: placeholders survive for later runtime resolution.
         return self._traverse(merged, {}, strict=False)
 
     def get_backend(self, backend_id: str) -> Union[Dict[str, Any], None]:
         """Return the backend dict for *backend_id*.
 
         Returns a copy so callers can inspect without mutating the original.
+        A missing or null ``backends:`` section yields None, not an error.
         """
-        be = self.data.get("backends", {}).get(backend_id)
-        if not isinstance(be, dict):
+        backends = self.data.get("backends")
+        if not isinstance(backends, dict):
             return None
-        return dict(be)
+        be = backends.get(backend_id)
+        return dict(be) if isinstance(be, dict) else None
