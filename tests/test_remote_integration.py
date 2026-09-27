@@ -57,7 +57,7 @@ def _stop(proxy: Any) -> None:
 @pytest.fixture(scope="module")
 def worker_server():
     cfg = textwrap.dedent("""\
-        models-start-port: 18020
+        models-start-port: 18010
         model-ports: 4
         warmup-time: 5
         backends:
@@ -80,7 +80,7 @@ def worker_server():
 @pytest.fixture(scope="module")
 def master_server(worker_server):
     cfg = textwrap.dedent(f"""\
-        models-start-port: 18030
+        models-start-port: 18014
         model-ports: 4
         warmup-time: 5
         clusters:

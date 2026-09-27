@@ -89,8 +89,11 @@ def alpine_image():
 class TestContainerStartAndDetectExit:
     @pytest.mark.asyncio
     @pytest.mark.slow
-    async def test_real_container_starts_and_can_be_killed(self, alpine_image):
+    async def test_real_container_starts_and_can_be_killed(self, alpine_image, podman_cleanup):
+        cleanup = podman_cleanup
         runner = _make_runner()
+        # All tests reuse 18000: a leaked container from a prior test breaks
+        # this bind immediately, surfacing cleanup failures instead of hiding them.
         port = 18000
 
         ctx = _Model("alpine-sleeper", port)
@@ -109,6 +112,9 @@ class TestContainerStartAndDetectExit:
 
         ctx.container_id = cid
         print(f"[+] Started container: {cid[:12]}")
+        # Guaranteed teardown: container removed + port killed even on failure.
+        cleanup.track_container(cid)
+        cleanup.track_port(port)
 
         insp = _podman("inspect", "--format", "{{.State.Status}}", cid)
         assert insp.stdout.strip() == "running"
@@ -129,7 +135,8 @@ class TestWatchContainerDetectsExit:
     async def test_watch_detects_exit(self, alpine_image, podman_cleanup):
         cleanup = podman_cleanup
         runner = _make_runner()
-        port = 18001
+        # Reuses 18000 so uncleaned state from prior tests fails loudly.
+        port = 18000
         name = f"alpine-watcher-{uuid.uuid4().hex[:8]}"
 
         ctx = _Model("alpine-exit", port)
@@ -174,7 +181,8 @@ class TestStopPreventsRestart:
     async def test_stop_prevents_restart(self, alpine_image, podman_cleanup):
         cleanup = podman_cleanup
         runner = _make_runner()
-        port = 18002
+        # Reuses 18000 so uncleaned state from prior tests fails loudly.
+        port = 18000
         name = f"alpine-stop-{uuid.uuid4().hex[:8]}"
 
         ctx = _Model("alpine-stop-test", port)
@@ -220,10 +228,10 @@ class TestFullLifecycle:
 
     @pytest.mark.asyncio
     @pytest.mark.slow
-    async def test_start_and_stop(self, alpine_image):
-        # Use a port outside the 18000-18003 range to avoid conflicts with
-        # podman rootless pasta networking (which lsof can't see).
-        port = 28003
+    async def test_start_and_stop(self, alpine_image, podman_cleanup):
+        cleanup = podman_cleanup
+        # Reuses 18000 so uncleaned state from prior tests fails loudly.
+        port = 18000
         _kill_port(port)
 
         runner = PodmanRunner(
@@ -262,6 +270,9 @@ class TestFullLifecycle:
             if proc.returncode != 0:
                 raise RuntimeError(stderr.decode().strip())
             ctx_inner.container_id = stdout.decode().strip()
+            # Guaranteed teardown: tracker removes the container and kills the
+            # port even if the test fails before the final cleanup block.
+            cleanup.track_container(ctx_inner.container_id)
 
         orig = PodmanRunner._start_model_process
         PodmanRunner._start_model_process = patched_start.__get__(runner, PodmanRunner)
@@ -277,13 +288,9 @@ class TestFullLifecycle:
                 print(f"[+] Model running in container: {cid[:12]}")
 
             await asyncio.sleep(1.0)
+            cleanup.track_port(port)
         finally:
             PodmanRunner._start_model_process = orig
 
-        # Clean up the container (may have been removed by --rm already)
-        ctx = runner._ctx
-        if ctx and getattr(ctx, "container_id", None):
-            _podman("rm", "-f", ctx.container_id)
-        _kill_port(port)
-
+        # Container/port removal is guaranteed by the cleanup tracker teardown.
         print("[+] Full lifecycle — start → run → stop_all — clean")

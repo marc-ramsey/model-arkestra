@@ -50,11 +50,10 @@ with open(_test_cfg_path) as _f:
     _cfg: dict = yaml.safe_load(_f)
 
 _START_PORT: int = int(((_cfg.get("default") or {}).get("model-start-port")) or _cfg.get("models-start-port", 18000))
-_NUM_PORTS:   int = int(((_cfg.get("default") or {}).get("model-ports")) or _cfg.get("model-ports", 32))
-_CLEANUP_PORTS = tuple(range(_START_PORT, _START_PORT + _NUM_PORTS))
-
-# Also cover proxy test ports (e.g. 20100)
-_EXTRA_PORTS = tuple(range(20090, 20110))
+# All tests must bind within 18000–18019; the autouse safety net sweeps the
+# whole range (before/after every module) so a leaked listener is visible —
+# not just the config's worker window.
+_CLEANUP_PORTS = tuple(range(_START_PORT, _START_PORT + 20))
 
 # ── Port / process helpers (reusable by test modules) ────────────────────────
 
@@ -62,8 +61,8 @@ _EXTRA_PORTS = tuple(range(20090, 20110))
 def graceful_server_teardown(fixture_dict_or_proxy) -> None:
     """Gracefully shut down a live server fixture and release all test ports.
 
-    Releases ports **18000–18009** — the full range live fixtures may use
-    (server port + child model ports).
+    Releases ports **18000–18019** — the full test port range (server
+    port + child model ports).
 
     Usage::
 
@@ -98,7 +97,7 @@ def graceful_server_teardown(fixture_dict_or_proxy) -> None:
     if server_obj is not None:
         server_obj.should_exit = True
 
-    ports = tuple(range(18000, 18010))
+    ports = tuple(range(18000, 18020))
 
     # 3. Wait for all ports release: 0.5 s × 40 iterations = 20 seconds max
     poll_interval = 0.5
@@ -299,7 +298,7 @@ async def _cleanup_after_test(mr: ModelArkestra) -> None:
             # Wait until every port is actually free — prevents next test from hitting
             # a stale listener that survived shutdown/kill (rootless pasta networking,
             # slow process teardown, or leftover containers from other modules).
-            for port in list(_CLEANUP_PORTS) + list(_EXTRA_PORTS):
+            for port in _CLEANUP_PORTS:
                 _wait_for_port_free(port, timeout=5.0)
         except RuntimeError:
             pass
@@ -321,8 +320,6 @@ def _cleanup_ports() -> None:
     """
     for port in _CLEANUP_PORTS:
         _kill_port(port)
-    for port in _EXTRA_PORTS:
-        _kill_port(port)
     # Wait so killed listeners release their file descriptors.
     time.sleep(0.5)
     yield
@@ -330,12 +327,10 @@ def _cleanup_ports() -> None:
     time.sleep(0.2)
     for port in _CLEANUP_PORTS:
         _kill_port(port)
-    for port in _EXTRA_PORTS:
-        _kill_port(port)
 
     # Final sweep: kill any remaining llama-server on test ports that survived
     # all other cleanup strategies (zombie, root-owned, etc.).
-    for port in list(_CLEANUP_PORTS) + list(_EXTRA_PORTS):
+    for port in _CLEANUP_PORTS:
         subprocess.run(
             ["pkill", "-9", "-f", f"llama-server.*port.*{port}"],
             capture_output=True, timeout=5

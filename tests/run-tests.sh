@@ -9,10 +9,7 @@ cd "$(dirname "$0")/.."
 
 # ── Pre-flight cleanup ──────────────────────────────────────────────
 echo "[pre] Killing stale llama-server on test ports…"
-for port in $(seq 18000 18031); do
-    fuser -k -9 "${port}/tcp" 2>/dev/null || true
-done
-for port in $(seq 20090 20110); do
+for port in $(seq 18000 18019); do
     fuser -k -9 "${port}/tcp" 2>/dev/null || true
 done
 
@@ -22,10 +19,7 @@ rm -rf /var/tmp/buildah* 2>/dev/null || true
 # ── Run pytest with trap to clean up on ANY exit ────────────────────
 trap '
     echo "[post] Killing stale llama-server on test ports…"
-    for port in $(seq 18000 18031); do
-        fuser -k -9 "${port}/tcp" 2>/dev/null || true
-    done
-    for port in $(seq 20090 20110); do
+    for port in $(seq 18000 18019); do
         fuser -k -9 "${port}/tcp" 2>/dev/null || true
     done
     rm -rf /var/tmp/buildah* 2>/dev/null || true

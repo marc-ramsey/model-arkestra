@@ -432,10 +432,8 @@ def e2e_single(request, e2e_cache):
     combo_id = request.param[0]
     backend_name = request.param[1]
 
-    # Each fixture gets a unique admin port to avoid binding conflicts
-    test_method = request.node.name
-    # Deterministic port from test name, offset from ADMIN_PORT
-    unique_port = ADMIN_PORT + (int(hashlib.md5(test_method.encode()).hexdigest(), 16) % 50)
+    # Second-server allocation: 18004 (workers 18000-18001, server 18003).
+    unique_port = 18004
 
     config = _build_e2e_config(combo_id, backend_name)
     proxy, client = _start_server(unique_port, config, combo_id)
