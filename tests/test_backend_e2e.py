@@ -300,9 +300,8 @@ def _build_e2e_config(combo_id: str, backend_name: str, model_key: int = 0,
     lines.append(f"  {combo_id}:")
     lines.append(f"    model: {mref}")
     lines.append(f"    backend: {backend_name}")
-    lines.append("    args:")
-    lines.append("      temp: 0.7")
-    lines.append("      top-p: 0.95")
+    lines.append("    temp: 0.7")
+    lines.append("    top-p: 0.95")
 
     for name, ref in (extra_models or []):
         lines.append(f"  {name}:")
@@ -310,6 +309,7 @@ def _build_e2e_config(combo_id: str, backend_name: str, model_key: int = 0,
         lines.append(f"    backend: {backend_name}")
         lines.append("    tags:")
         lines.append("      - embed")
+        lines.append("    embeddings: true")
 
     return "\n".join(lines)
 
