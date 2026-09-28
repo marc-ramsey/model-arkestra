@@ -103,3 +103,43 @@ class TestInstanceModelKey:
         merged = cm.get_model("m1")
         assert merged["model"] == "/tmp/ckpt.gguf"
         assert "ref" not in merged
+
+
+class TestNestedArgsWarning:
+    """Nested ``args:`` on models/checkpoints is dead config — warn at load."""
+
+    def test_model_nested_args_warns(self, tmp_path, caplog):
+        import logging
+        with caplog.at_level(logging.WARNING, logger="model_arkestra.config_manager"):
+            _make_cm(tmp_path, """\
+                models:
+                  m1:
+                    model: /tmp/fake.gguf
+                    args:
+                      temp: 0.7
+                """)
+        assert any("'m1' has a nested 'args' block" in r.message for r in caplog.records)
+
+    def test_checkpoint_nested_args_warns(self, tmp_path, caplog):
+        import logging
+        with caplog.at_level(logging.WARNING, logger="model_arkestra.config_manager"):
+            _make_cm(tmp_path, """\
+                checkpoints:
+                  c1:
+                    ref: /tmp/fake.gguf
+                    args:
+                      ngl: 999
+                models: {}
+                """)
+        assert any("'c1' has a nested 'args' block" in r.message for r in caplog.records)
+
+    def test_flat_keys_no_warning(self, tmp_path, caplog):
+        import logging
+        with caplog.at_level(logging.WARNING, logger="model_arkestra.config_manager"):
+            _make_cm(tmp_path, """\
+                models:
+                  m1:
+                    model: /tmp/fake.gguf
+                    temp: 0.7
+                """)
+        assert not [r for r in caplog.records if "nested 'args'" in r.message]

@@ -1,8 +1,10 @@
 """Model-aware ConfigManager — extends base with model-specific accessors."""
 from __future__ import annotations
 
+
 import copy
 import json
+import logging
 from typing import Any, Dict, Optional, Union
 
 import yaml
@@ -35,6 +37,24 @@ class ModelConfigManager(ConfigManager):
         # when the configured default's runtime is missing. Kept OUT of self.data so
         # a config save never persists the auto-detected fallback over the user's choice.
         self._effective_default_backend: Optional[str] = None
+        self._warn_nested_args()
+
+    def _warn_nested_args(self) -> None:
+        """Warn about nested ``args:`` blocks on models/checkpoints.
+
+        Model and checkpoint inference keys are resolved flat (at the entry's
+        own level); a nested mapping is silently ignored by the arg merger,
+        so flag it loudly instead.
+        """
+        log = logging.getLogger(__name__)
+        for section in ("models", "checkpoints"):
+            entries = self.data.get(section)
+            if not isinstance(entries, dict):
+                continue
+            for name, entry in entries.items():
+                if isinstance(entry, dict) and isinstance(entry.get("args"), dict):
+                    log.warning("%s '%s' has a nested 'args' block — ignored. "
+                                "Move its keys flat under '%s'", section, name, name)
 
     @staticmethod
     def _load_base() -> Dict[str, Any]:
