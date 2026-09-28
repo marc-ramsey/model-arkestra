@@ -296,10 +296,10 @@ class ArkestraServer:
         """
         try:
             try:
-                return await fn(*args, **kwargs)
+                return await fn(model_name, *args, **kwargs)
             except (ModelNotStarted, ModelShutdown):
                 await self._arkestra.start(model_name)
-                return await fn(*args, **kwargs)
+                return await fn(model_name, *args, **kwargs)
         except HTTPException:
             raise
         except Exception as e:
