@@ -32,6 +32,10 @@ class LlamaCppEngine:
         'max-tokens': 'n-predict',
     }
 
+    # Keys llama-server rejects when started with --embeddings (no
+    # generation loop → no offload/sampling concepts).
+    _EMBEDDINGS_DENYLIST = frozenset({'ngl'})
+
     @staticmethod
     def build_cli_args(merged: Dict[str, Any], port: int) -> List[str]:
         """Convert merged param dict + port into llama-server CLI tokens.
@@ -57,8 +61,12 @@ class LlamaCppEngine:
             cli.extend(['--mmproj', mmproj_path])
 
         # ── Emit all remaining keys as CLI flags ──────────────────────────
+        embed_only = bool(merged.get('embeddings'))
         for key, value in merged.items():
             if key in ('model', 'repo', 'mmproj', 'port'):
+                continue
+            # Embedding servers reject generation-only flags (e.g. -ngl).
+            if embed_only and key in LlamaCppEngine._EMBEDDINGS_DENYLIST:
                 continue
             # Resolve aliased keys (e.g. max-tokens → n-predict)
             kebab = LlamaCppEngine._ALIAS_MAP.get(key, key).replace('_', '-')

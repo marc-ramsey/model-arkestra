@@ -52,6 +52,8 @@ model-args:
       options: [on, off, auto]
     no-mmap:
       type: boolean
+    embeddings:
+      type: boolean
     load-mode:
       type: string
       options: [auto, none, mmap, mlock, mmap+mlock, dio]
