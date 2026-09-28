@@ -115,13 +115,15 @@ async def cmd_models(args):
     name_filter = getattr(args, "model", None)
     models = [m for m in models if not name_filter or m["name"] == name_filter]
 
-    header = f"{'NAME':<30} {'MODEL':<40} {'SIZE':>6}"
+    header = f"{'NAME':<30} {'MODEL':<40} {'SIZE':>6} {'STATUS':<12} {'CTX':>8}"
     print(header)
     print("-" * len(header))
     for m in models:
         model_ref = m.get("model", "-") or "-"
         size = f"{m.get('size', 0):.1f} GB" if m.get("size") else "-"
-        print(f"{m['name']:<30} {model_ref:<40} {size:>6}")
+        status = (m.get("status") or {}).get("value", "?")
+        ctx_len = str(m.get("context_length", "-"))
+        print(f"{m['name']:<30} {model_ref:<40} {size:>6} {status:<12} {ctx_len:>8}")
 
 
 # ── chat ──────────────────────────────────────────────────────────────

@@ -28,6 +28,7 @@ from tests.test_backend_e2e import (
     _stop_server,
     _stop_all_and_wait,
     _start_model,
+    e2e_cache,
 )
 
 CLI = sys.executable
@@ -47,7 +48,7 @@ def _run_cli(*args: str, env_extra: dict | None = None,
 
 
 @pytest.fixture()
-def e2e_cli_server(request):
+def e2e_cli_server(request, e2e_cache):
     combo_id = request.param[0] if hasattr(request, "param") else "process-vulkan"
     backend_name = request.param[1] if hasattr(request, "param") else "vulkan-process"
 
@@ -70,7 +71,13 @@ class TestCliModels:
 
     @pytest.mark.parametrize("e2e_cli_server", COMBOS, indirect=True)
     def test_list_models(self, e2e_cli_server):
+        model_name = e2e_cli_server["combo_id"]
         env = {"ARKESTRA_URL": f"http://127.0.0.1:{ADMIN_PORT}"}
+
+        # Cache weights so /api/models lists the model (UNCACHED entries are hidden).
+        ok = _start_model(e2e_cli_server["client"], e2e_cli_server["base_url"], model_name)
+        assert ok, f"Model {model_name} failed to start"
+
         result = _run_cli("models", env_extra=env)
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert e2e_cli_server["combo_id"] in result.stdout
@@ -79,6 +86,11 @@ class TestCliModels:
     def test_list_models_filter(self, e2e_cli_server):
         model_name = e2e_cli_server["combo_id"]
         env = {"ARKESTRA_URL": f"http://127.0.0.1:{ADMIN_PORT}"}
+
+        # Cache weights so /api/models lists the model (UNCACHED entries are hidden).
+        ok = _start_model(e2e_cli_server["client"], e2e_cli_server["base_url"], model_name)
+        assert ok, f"Model {model_name} failed to start"
+
         result = _run_cli("models", "-m", model_name, env_extra=env)
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert model_name in result.stdout

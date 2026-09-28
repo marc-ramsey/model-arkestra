@@ -848,7 +848,7 @@ class ArkestraAdmin:
     def _add_api_models_route(self) -> None:
         @self._app.get("/api/models")
         async def api_models():
-            """Cached models only: name, model-name, size (GB)."""
+            """Cached models only: name, model-name, size, status, context_length."""
             data = []
             contexts = self.server._arkestra.models
             for model_name in self.server._arkestra.get_models():
@@ -870,6 +870,8 @@ class ArkestraAdmin:
                     "name": model_name,
                     "model": model_ref,
                     "size": size_gb,
+                    "status": model_status_for_ctx(ctx),
+                    "context_length": self.server._arkestra._resolve_context_length(model_name),
                 })
 
             return {"models": data}
