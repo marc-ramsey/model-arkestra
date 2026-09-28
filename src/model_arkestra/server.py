@@ -288,12 +288,40 @@ class ArkestraServer:
             "stream_options": req.stream_options,
         }.items() if v is not None}
 
+    async def _ensure_running(self, model_name: str) -> None:
+        """Pre-check for tag-routed endpoints: autostart a stopped model.
+
+        RUNNING models are a no-op; UNCACHED models are rejected (the user
+        must pull first); anything else is started and polled until ready.
+        """
+        ctx = self._arkestra.model_obj(model_name)
+        if ctx is not None:
+            if ctx.state == RunnerState.RUNNING:
+                return
+            if ctx.state == RunnerState.UNCACHED:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Model '{model_name}' is not cached; pull it first.")
+
+        model_cfg = self._arkestra.get_model(model_name) or {}
+        start_timeout = (
+            model_cfg.get("model-start-timeout")
+            or (self._arkestra.cm.data.get("default") or {}).get("model-start-timeout")
+            or BaseRunner.MODEL_START_TIMEOUT
+        )
+        await self._arkestra.start(model_name)
+        if not await self._wait_for_ready(model_name, start_timeout):
+            raise HTTPException(
+                status_code=503,
+                detail=f"Model '{model_name}' did not become ready in {start_timeout}s")
+
     async def _run_with_autostart(self, model_name: str, fn, *args: Any, **kwargs: Any) -> Any:
         """Run *fn*; if the model isn't up, start it and retry once.
 
-        Catches the typed not-started/stopped errors rather than matching
-        exception text, so unrelated failures (OOM, timeouts) surface as 500.
+        The pre-check autostarts stopped models up-front; the retry covers
+        races where the model dies mid-request.
         """
+        await self._ensure_running(model_name)
         try:
             try:
                 return await fn(model_name, *args, **kwargs)
