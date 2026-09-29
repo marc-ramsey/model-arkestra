@@ -88,19 +88,19 @@ def test_utf8_roundtrip():
 
 
 def test_wrap_truncates_oldest():
-    """Buffer full → oldest entries evicted, only newest remain."""
-    # Create context with a very small buffer so lines actually wrap.
-    # Each entry is ~6 bytes (4-byte seq prefix + 2 bytes for text like "x0")
+    """Buffer full → oldest entries evicted, newest remain."""
+    # Each entry is 9 bytes (6B header + "xNN\n"); a 50-byte ring
+    # holds at most 5 entries, so 15 writes must evict the oldest.
     from model_arkestra.unicode_ringbuffer import UnicodeRingBuffer
     ctx = _Model("test", 9999, max_log_lines=2)
-    tiny_buf = UnicodeRingBuffer(50)  # ~8 entries max
-    ctx._log_ring = tiny_buf
+    ctx._log_ring = UnicodeRingBuffer(50)
 
     for i in range(15):
         ctx._append_log_line(f"x{i}")
 
     result, _ = ctx._get_lines_since(0, 100)
-    assert len(result) <= 2
+    assert len(result) < 15
+    assert result[-1] == (15, "x14")
 
 
 # ── Admin endpoint tests ────────────────────────────────────────────────────

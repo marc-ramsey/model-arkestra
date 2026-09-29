@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
+from model_arkestra.common import resolve_admin_key
+
 
 class Registry:
     def __init__(self, cm: Any, local_url: str = ""):
@@ -112,7 +114,7 @@ class Registry:
             local_url = self._cm.get("default/url", "http://127.0.0.1:8080")
         self._clusters[self._local_cluster_key] = {
             "url": local_url.rstrip("/"),
-            "admin-key": self._cm.resolve_config("admin-key") or None,
+            "admin-key": resolve_admin_key(self._cm.data),
         }
         raw = self._cm.get("clusters", {})
         if not isinstance(raw, dict):

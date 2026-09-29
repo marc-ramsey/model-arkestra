@@ -539,6 +539,21 @@ def _resolve_backend(
     # Ultimate fallback
     return "cpu"
 
+# ── admin key resolution ───────────────────────────────────────────
+def resolve_admin_key(data: Dict[str, Any]) -> Optional[str]:
+    """Resolve the admin API key from a merged config dict.
+
+    Lookup order: ``default.admin-key`` → ``default-env.admin_key`` →
+    ``env.ADMIN_KEY``. Returns None if none are set.
+    """
+    for section, key in (("default", "admin-key"), ("default-env", "admin_key")):
+        val = (data.get(section) or {}).get(key)
+        if val:
+            return str(val)
+    val = (data.get("env") or {}).get("ADMIN_KEY")
+    return str(val) if val else None
+
+
 # ── Capability resolution helpers ───────────────────────
 def resolve_tags(model_cfg: Dict | None, global_cfg: Dict,
                  backend_id: str | None = None) -> list[str]:

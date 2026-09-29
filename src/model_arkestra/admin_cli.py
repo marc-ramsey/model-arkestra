@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict
 
+from model_arkestra.common import resolve_admin_key
 from model_arkestra.conn import Conn, add_common_args, resolve_conn
 
 try:
@@ -49,13 +50,7 @@ def _read_admin_key(config_path: str | None = None) -> str | None:
     Checks, in order: default.admin-key, default-env.admin_key, env.ADMIN_KEY.
     Returns None if none are set.
     """
-    data = _load_config(config_path)
-    for section, key in (("default", "admin-key"), ("default-env", "admin_key")):
-        val = (data.get(section) or {}).get(key)
-        if val:
-            return str(val)
-    val = (data.get("env") or {}).get("ADMIN_KEY")
-    return str(val) if val else None
+    return resolve_admin_key(_load_config(config_path))
 
 
 # ── HTTP helpers ───────────────────────────────────────────────────────
