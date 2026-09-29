@@ -94,6 +94,21 @@ class UnicodeRingBuffer:
         self._count += n
         return n
 
+    def _drop_oldest(self) -> bool:
+        """Consume exactly one complete oldest entry. Returns False if the
+        ring holds only a torn (incomplete) entry, which cannot be dropped
+        until the writer completes it."""
+        if self._count < 2:
+            return False
+        head2 = (self._head - self._count) % self._capacity
+        lo = self._buf[head2]
+        hi = self._buf[(head2 + 1) % self._capacity]
+        entry_len = (lo << 8) | hi + 2
+        if entry_len > self._count:
+            return False
+        self._consume(entry_len)
+        return True
+
     def write_force(self, seq: int, text: str) -> bool:
         """Write *text*; on BufferFullError drop one oldest entry and retry.
 
@@ -105,7 +120,8 @@ class UnicodeRingBuffer:
             except self.BufferFullError:
                 if not self:
                     return False
-                self.read_entries(max_lines=1)
+                if not self._drop_oldest():
+                    return False
         return False
 
     def read_entries(self, max_lines: int = 1, next_line: int | None = None) -> list[tuple[int, str]]:

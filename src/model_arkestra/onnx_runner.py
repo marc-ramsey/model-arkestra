@@ -50,23 +50,6 @@ class OnnxRunner(BaseRunner):
     so the event loop is never blocked.
     """
 
-    _DEFAULT_BACKEND = "onnx"
-    _DEFAULT_RUNNER = "onnx"
-
-    def __init__(self, config_manager, restart_delay: float = 5.0,
-                 restart_limit: int = 4, shutdown_timeout: float = 20.0,
-                 ready_timeout: float = 120.0, ready_poll_ms: float = 100.0,
-                 warmup_delay: Optional[float] = None, port_drain_timeout: float = 20.0,
-                 broadcast_addr: str = "0.0.0.0",
-                 log_buffer_size: Optional[int] = None,
-                 arkestra: Any = None):
-        super().__init__(config_manager, restart_delay=restart_delay,
-                         restart_limit=restart_limit, shutdown_timeout=shutdown_timeout,
-                         ready_timeout=ready_timeout, ready_poll_ms=ready_poll_ms,
-                         warmup_delay=warmup_delay, port_drain_timeout=port_drain_timeout,
-                         broadcast_addr=broadcast_addr, log_buffer_size=log_buffer_size,
-                         arkestra=arkestra)
-
     # ── Abstract lifecycle hooks (override base class defaults) ─────
 
     async def _start_model_process(
@@ -198,6 +181,12 @@ class OnnxRunner(BaseRunner):
             # _before_restart aborts early when already stopped; move to LOADING
             if ctx.state in (RunnerState.STOPPED, RunnerState.STOPPING):
                 ctx.set_state("load")
+            # Restart reuses the context; the config must be re-fetched —
+            # _start_model_process dereferences model_data directly.
+            model_data = self.cm.get_model(model_name, env_vars={})
+            if not model_data:
+                from model_arkestra.types import ModelNotStarted
+                raise ModelNotStarted(model_name)
             eff_port = port if port is not None else ctx.port
 
         elif ctx is not None and ctx.state == RunnerState.RUNNING:
@@ -260,9 +249,9 @@ class OnnxRunner(BaseRunner):
         if cache_dir is None:
             cache_dir = default_cache_root()
 
+        # HF-cache form only — the plain path was already checked above.
         search_paths = [
             Path(cache_dir) / f"models--{model_path.replace('/', '--')}" / "snapshots",
-            Path(model_path),
         ]
         for sp in search_paths:
             if sp.exists():

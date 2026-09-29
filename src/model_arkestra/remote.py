@@ -25,10 +25,6 @@ class RemoteRunner(BaseRunner):
         super().__init__(config_manager, restart_delay=restart_delay,
                          ready_timeout=ready_timeout, warmup_delay=warmup_delay,
                          **kwargs)
-        # Per-model URLs/keys live on the context (ctx._remote_base_url,
-        # ctx._admin_key); these runner-level values are fallbacks only.
-        self._remote_base_url: str = ""
-        self._admin_key: str = ""
 
     def _headers(self, ctx: Optional[_Model] = None) -> Dict[str, str]:
         """JSON headers for worker calls, carrying the admin key when set.
@@ -36,9 +32,9 @@ class RemoteRunner(BaseRunner):
         The per-model key (from the cluster config) takes precedence over the
         runner-level fallback.
         """
+        # Per-model key lives on the context (cluster config).
         headers: Dict[str, str] = {"Content-Type": "application/json"}
         key = (getattr(ctx, "_admin_key", "") or "") if ctx is not None else ""
-        key = key or self._admin_key
         if key:
             headers["x-admin-key"] = key
         return headers

@@ -65,3 +65,20 @@ class TestContextLogBuffer:
         result, _ = ctx._get_lines_since(0, 5)
         assert len(result) == 5
         assert [t for _, t in result] == ["line095", "line096", "line097", "line098", "line099"]
+
+    def test_force_write_keeps_all_but_one(self):
+        """write_force must drop exactly one oldest entry, not the whole buffer."""
+        # max_log_lines=1 → 200-byte ring; a 5-byte line makes an 11-byte
+        # entry, so ~18 fit. Force-writes fire constantly.
+        ctx = _Model("test", max_log_lines=1)
+        for i in range(30):
+            ctx._append_log_line(f"L{i:03d}")
+        result, _ = ctx._get_lines_since(0, 100)
+        # Correct one-entry drop: the ring stays full at 18 entries (199
+        # usable / 11B each). The buggy drop-all resets to 1 entry on each
+        # force, so after 30 writes it holds only 12.
+        assert len(result) >= 15, (
+            f"write_force dropped the whole buffer: only {len(result)} entries left"
+        )
+        assert result[-1][1] == "L029"
+        assert [s for s, _ in result] == list(range(result[0][0], result[-1][0] + 1))

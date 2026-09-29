@@ -536,7 +536,7 @@ def _resolve_backend(
     if effective_default:
         return str(effective_default)
 
-    # Ultimate fallback — matches BaseRunner._DEFAULT_BACKEND
+    # Ultimate fallback
     return "cpu"
 
 # ── Capability resolution helpers ───────────────────────
@@ -575,11 +575,10 @@ def resolve_tags(model_cfg: Dict | None, global_cfg: Dict,
 def _resolve_device_profile(
     cm: Any,
 ) -> Dict[str, Any]:
-    """Detect GPU hardware and return matching device-profile (env + args).
+    """Detect GPU hardware and return matching device-profile env vars.
 
     Called once at ModelArkestra init, memoized in self._device_profile.
-    Returns {env: {...}, args: {...}} for the best-matching profile,
-    or empty dict if no match found.
+    Returns the profile's ``env`` dict, or {} if no match found.
 
     Priority: exact key match → family fallback (rocm/cuda/vulkan) → none.
     """
@@ -619,8 +618,7 @@ def _resolve_device_profile(
     if matched_key is None:
         return {}
 
-    prof = profiles.get(matched_key, {})
-    return {"env": prof.get("env") or {}, "args": prof.get("args") or {}}
+    return profiles.get(matched_key, {}).get("env") or {}
 
 
 _HF_INFO_CACHE: Dict[str, Tuple[float, dict | None]] = {}
@@ -676,14 +674,8 @@ def _hf_model_info_uncached(repo_id: str) -> dict | None:
 
     total_bytes = sum(s.size for s in ggufs)
 
-    checkpoint_id = None
-    if ggufs:
-        checkpoint_id = ggufs[0].blob_id
-    elif tag:
-        # Tag didn't match any file — use sha as fallback
-        checkpoint_id = sha
-    else:
-        checkpoint_id = sha
+    # Blob of the first GGUF, or the repo sha when no file matched.
+    checkpoint_id = ggufs[0].blob_id if ggufs else sha
 
     return {
         "size_gb": round(total_bytes / 1e9, 2) if total_bytes else 0,

@@ -112,7 +112,7 @@ class Registry:
             local_url = self._cm.get("default/url", "http://127.0.0.1:8080")
         self._clusters[self._local_cluster_key] = {
             "url": local_url.rstrip("/"),
-            "admin-key": self._cm.get("env/ADMIN_KEY"),
+            "admin-key": self._cm.resolve_config("admin-key") or None,
         }
         raw = self._cm.get("clusters", {})
         if not isinstance(raw, dict):

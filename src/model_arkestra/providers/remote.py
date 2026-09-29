@@ -82,8 +82,10 @@ class RemoteProvider(Provider):
 
     async def stream(self, payload: Dict[str, Any]) -> AsyncIterator[Dict[str, Any]]:
         url = f"{self._base}/v1/chat/completions"
+        # Inject stream=true — remote servers don't infer it from the payload.
+        stream_payload = {**payload, "stream": True}
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers=self._headers(), timeout=120) as resp:
+            async with session.post(url, json=stream_payload, headers=self._headers(), timeout=120) as resp:
                 if resp.status != 200:
                     detail = await resp.text()
                     raise RuntimeError(f"Remote inference failed ({resp.status}): {detail}")

@@ -191,7 +191,7 @@ class ContainerRunner(BaseRunner, ABC):
             _read_stream(proc.stderr, "[err] "),
         )
 
-        proc.wait()
+        await proc.wait()
         if proc.returncode != 0:
             return []
         return interleaved
@@ -341,13 +341,17 @@ class ContainerRunner(BaseRunner, ABC):
         self._log_tasks[ctx.name] = log_task
 
     async def _watch_container(self, model_name: str, ctx: _Model) -> None:
-        """Poll container status and restart on unexpected exit."""
-        cid = getattr(ctx, "container_id", None)
-        if not cid:
-            return
+        """Poll container status and restart on unexpected exit.
 
+        Re-reads ``ctx.container_id`` each iteration so that after a restart
+        the watcher follows the new container instead of exiting.
+        """
         while True:
             await asyncio.sleep(2.0)  # poll interval
+
+            cid = getattr(ctx, "container_id", None)
+            if not cid:
+                return
 
             try:
                 proc = await asyncio.create_subprocess_exec(
@@ -366,8 +370,8 @@ class ContainerRunner(BaseRunner, ABC):
 
                 if INSPECT_RE.match(status):
                     await self._handle_restart(model_name, ctx, exit_code=1)
-                    # After restart the old container is gone or replaced.
-                    return
+                    # Loop re-reads ctx.container_id; if the model is stopped
+                    # or hit the crash limit the next iteration returns.
 
             except Exception as e:
                 logger.warning(

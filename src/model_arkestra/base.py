@@ -27,8 +27,6 @@ logger = logging.getLogger(__name__)
 class BaseRunner(ABC):
     LOG_BUFFER_DEFAULT = 2000
     MODEL_START_TIMEOUT = 300
-    _DEFAULT_BACKEND = "cpu"
-    _DEFAULT_RUNNER = "process"
 
     def __init__(self, config_manager: Any, restart_delay: float = 5.0,
                  restart_limit: int = 4, shutdown_timeout: float = 20.0,
@@ -48,7 +46,7 @@ class BaseRunner(ABC):
         self.port_drain_timeout = port_drain_timeout
         cfg_br = (self.cm.data.get("runners") or {}).get("broadcast_addr")
         self.broadcast_addr = broadcast_addr if broadcast_addr is not None else (cfg_br or "0.0.0.0")
-        cfg_lbs = self.cm.data.get('log-buffer-size')
+        cfg_lbs = self.cm.get('default/log-buffer-size')
         self.log_buffer_size = log_buffer_size if log_buffer_size is not None else (cfg_lbs or self.LOG_BUFFER_DEFAULT)
 
         # The single context this runner manages (set by Arkestra).
@@ -238,6 +236,10 @@ class BaseRunner(ABC):
         """Stop the model process for this runner's context."""
         ctx = self._ctx
         if ctx is None:
+            return
+        # 'stop' is only legal from active states — stop() on an already
+        # stopped model would raise IllegalTransition (e.g. eject → stop).
+        if ctx.state not in (RunnerState.RUNNING, RunnerState.LOADING, RunnerState.DOWNLOADING):
             return
         if ctx.download_task and not ctx.download_task.done():
             ctx.download_task.cancel()

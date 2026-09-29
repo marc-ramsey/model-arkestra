@@ -132,36 +132,3 @@ def parse_completion(data: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-# ── HTTP POST helpers ─────────────────────────────────────────────────────
-
-async def post_json(url: str, payload: Dict[str, Any], headers: Dict[str, str] | None = None,
-                    timeout: float = 120.0) -> tuple[int, bytes]:
-    """Post JSON and return (status_code, response_bytes).
-
-    Caller decodes / parses the body as needed.
-    """
-    import aiohttp
-
-    hdrs = headers or {"Content-Type": "application/json"}
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload, headers=hdrs, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
-            body = await resp.read()
-            return resp.status, body
-
-
-async def post_json_retried(url: str, payload: Dict[str, Any], headers: Dict[str, str] | None = None,
-                            max_retries: int = 6, retry_delay: float = 2.5) -> tuple[int, bytes]:
-    """Like ``post_json`` but retries on connection errors and timeouts."""
-    import aiohttp
-
-    hdrs = headers or {"Content-Type": "application/json"}
-    last_err: Exception | None = None
-    for attempt in range(max_retries):
-        try:
-            return await post_json(url, payload, hdrs)
-        except (aiohttp.ClientConnectionError, asyncio.TimeoutError, asyncio.CancelledError) as exc:
-            last_err = exc
-            if attempt == max_retries - 1:
-                break
-            await asyncio.sleep(retry_delay)
-    raise RuntimeError(f"Remote server not reachable after {max_retries} retries") from last_err

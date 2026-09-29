@@ -188,7 +188,7 @@ class ModelArkestra:
         """GPU device-profile env vars (empty dict if no GPU matched)."""
         if self._device_profile is None:
             self._device_profile = _resolve_device_profile(self.cm)
-        return self._device_profile.get("env", {})
+        return self._device_profile
 
     @property
     def models(self) -> Dict[str, Any]:
@@ -870,9 +870,11 @@ class ModelArkestra:
             if not repo:
                 raise ValueError(f"Cannot pull non-HF ref: {pull_ref}")
             if resolved is None:
-                # Raw refs always cache under models--<owner>--<repo>
+                # Raw refs always cache under models--<owner>--<repo>; the
+                # cache_path stores the <owner>--<repo> portion so
+                # _cleanup_partial_cache can re-derive the models-- dir.
                 resolved = ModelRef(ref=pull_ref, repo="hf",
-                                    cache_path=self._cache_dir_for_checkpoint(repo).name)
+                                    cache_path=repo.replace("/", "--"))
             cache_path = resolved.cache_path
             if files is None:
                 files = HfApi().list_repo_files(repo)

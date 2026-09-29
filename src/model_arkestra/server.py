@@ -13,6 +13,7 @@ Or embed into your own FastAPI app:
 from __future__ import annotations
 
 import asyncio
+import base64
 import importlib.metadata
 import json
 import os
@@ -615,7 +616,6 @@ class ArkestraServer:
                 model_name = str(req_body.get("model", ""))
                 b64_audio = req_body.get("audio_b64", req_body.get("audio", ""))
                 if isinstance(b64_audio, str):
-                    import base64
                     try:
                         audio_bytes = base64.b64decode(b64_audio)
                     except Exception:
@@ -674,17 +674,18 @@ class ArkestraServer:
                 "No image-gen model available. Configure a model with tags: [image-gen]",
                 legacy_key="image-model",
             )
+            output_format = str(req_body.get("output_format", "png"))
             img_bytes = await self._run_with_autostart(
                 model_name, self._arkestra.generate_image,
                 req_body.get("prompt", ""),
                 size=str(req_body.get("size", "")),
                 n=int(req_body.get("n", 1)),
-                output_format=str(req_body.get("output_format", "png")),
+                output_format=output_format,
             )
             return Response(content=img_bytes, media_type=f"image/{output_format}")
 
         # ── Streaming audio WebSocket (dev endpoint — may become /v1/...) ─
-        ws_path = self.base_url + "/ark/audio/stream" if self.base_url else "/ark/audio/stream"
+        ws_path = f"{self.base_url}/ark/audio/stream"
         @app.websocket(ws_path)
         async def audio_stream_ws(websocket: WebSocket) -> None:
             """Unified JSON-over-text protocol.
@@ -719,7 +720,6 @@ class ArkestraServer:
                                 json.dumps({"type":"error", "message": str(e)}))
 
                     elif msg_type == "audio_frame":
-                        import base64
                         raw_data = base64.b64decode(msg["data"])
                         model_name = (arkestra._find_model_by_tag("sherpa-asr") or
                                       arkestra._find_model_by_tag("sherpa"))

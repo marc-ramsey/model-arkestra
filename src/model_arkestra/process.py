@@ -97,11 +97,11 @@ class ProcessRunner(BaseRunner):
             self._log_tasks.append(asyncio.create_task(_read_stream(ctx.process.stderr)))
 
     async def _stop_model_process(self, ctx: _Model) -> None:
-        """Kill model process group: SIGHUP → wait 20s → SIGKILL.
+        """Kill model process group: SIGTERM → wait 20s → SIGKILL.
 
         The SIGKILL escalation runs in a finally-block-style guarantee: it
         fires on timeout, on cancel (e.g. server shutdown racing the grace
-        wait), and on any other error. A SIGHUP'd llama-server under load
+        wait), and on any other error. A SIGTERM'd llama-server under load
         must never survive as a zombie."""
         # Cancel log capture tasks.
         for t in getattr(self, '_log_tasks', []):
@@ -119,8 +119,8 @@ class ProcessRunner(BaseRunner):
 
         try:
             if self.arkestra:
-                self.arkestra.log(f"[stop] model={ctx.name} pid={pid} SIGHUP")
-            os.killpg(pid, signal.SIGHUP)
+                self.arkestra.log(f"[stop] model={ctx.name} pid={pid} SIGTERM")
+            os.killpg(pid, signal.SIGTERM)
             await asyncio.wait_for(proc.wait(), timeout=20.0)
         except (asyncio.TimeoutError, asyncio.CancelledError):
             self._kill_group(pid)

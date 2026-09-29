@@ -148,19 +148,8 @@ class LlamaProvider(Provider):
                             yield {"finish_reason": event["finish_reason"]}
                         elif "usage" in event:
                             usage_info.update(event["usage"])
-                        else:
-                            elapsed = round(time.monotonic() - start_time, 2)
-                            prompt_tok = usage_info.get("prompt_tokens", len(tokens_so_far))
-                            completion_tok = usage_info.get("completion_tokens") or len(tokens_so_far)
-                            usage_info.update({
-                                "model": self.model_name,
-                                "prompt_tokens": prompt_tok,
-                                "completion_tokens": completion_tok,
-                                "total_tokens": prompt_tok + completion_tok,
-                                "time_seconds": elapsed,
-                                "tokens_per_second": round(completion_tok / elapsed, 2) if elapsed > 0 else 0,
-                            })
-                            yield {"usage": usage_info}
+                        # {"done": True} ends the stream; no synthetic usage —
+                        # llama-server's real usage chunk (stream_options) wins.
             except Exception as e:
                 raise RunnerError(f"Stream error: {e}")
 
