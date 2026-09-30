@@ -9,6 +9,8 @@ from langchain_core.prompt_values import PromptValue
 from langchain_core.runnables import RunnableConfig
 from langchain_core.language_models import LanguageModelInput
 from langchain_core.runnables.schema import StandardStreamEvent, CustomStreamEvent
+import json
+
 from model_arkestra.arkestra import ModelArkestra
 
 
@@ -60,6 +62,45 @@ def _message_to_dict(msg: Any) -> Dict[str, Any]:
         return {"role": openai_role, "content": content}
     else:
         return {"role": openai_role, "content": ""}
+
+
+# ── SSE text extraction (LangChain needs structured tokens, not raw bytes) ──
+
+class _SSETextExtractor:
+    """Extract content deltas and usage from raw SSE byte chunks.
+
+    Used by the LangChain adapter which needs structured text tokens,
+    unlike the server proxy that forwards bytes verbatim.
+    """
+
+    def __init__(self):
+        self._buf = ""
+
+    def feed(self, chunk: bytes) -> list[tuple[str, Any]]:
+        """Return list of (kind, value) tuples: ("token", str) or ("usage", dict)."""
+        self._buf += chunk.decode("utf-8", errors="replace")
+        results: list[tuple[str, Any]] = []
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            line = line.strip()
+            if not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if data == "[DONE]":
+                continue
+            try:
+                obj = json.loads(data)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            choices = obj.get("choices", [])
+            if choices:
+                content = choices[0].get("delta", {}).get("content")
+                if content:
+                    results.append(("token", content))
+            usage = obj.get("usage")
+            if usage:
+                results.append(("usage", usage))
+        return results
 
 
 # ── Wrapper ───────────────────────────────────────────────────────────
@@ -128,24 +169,25 @@ class LangChainModelAdapter:
         payload.update(req_kwargs)
 
         buffer: List[str] = []
+        extractor = _SSETextExtractor()
 
-        async for event in self._arkestra.astream(
+        async for raw in self._arkestra.astream(
             self._model_name, payload=payload
         ):
-            if "token" in event:
-                buffer.append(event["token"])
-                yield AIMessageChunk(content="".join(buffer))
-            elif "usage" in event:
-                usage = event["usage"]
-                yield AIMessageChunk(
-                    content="".join(buffer),
-                    response_metadata={
-                        "model": usage.get("model"),
-                        "prompt_tokens": usage.get("prompt_tokens", 0),
-                        "completion_tokens": usage.get("completion_tokens", 0),
-                        "total_tokens": usage.get("total_tokens", 0),
-                    },
-                )
+            for kind, value in extractor.feed(raw):
+                if kind == "token":
+                    buffer.append(value)
+                    yield AIMessageChunk(content="".join(buffer))
+                elif kind == "usage":
+                    yield AIMessageChunk(
+                        content="".join(buffer),
+                        response_metadata={
+                            "model": value.get("model"),
+                            "prompt_tokens": value.get("prompt_tokens", 0),
+                            "completion_tokens": value.get("completion_tokens", 0),
+                            "total_tokens": value.get("total_tokens", 0),
+                        },
+                    )
 
     async def astream_events(
         self,
@@ -172,19 +214,21 @@ class LangChainModelAdapter:
 
         buffer: List[str] = []
         usage: Dict[str, Any] = {}
+        extractor = _SSETextExtractor()
 
-        async for event in self._arkestra.astream(
+        async for raw in self._arkestra.astream(
             self._model_name, payload=payload
         ):
-            if "token" in event:
-                buffer.append(event["token"])
-                yield StandardStreamEvent(
-                    event="on_chat_model_stream",
-                    name=self._model_name,
-                    data={"chunk": AIMessageChunk(content=event["token"])},
-                )
-            elif "usage" in event:
-                usage = event["usage"]
+            for kind, value in extractor.feed(raw):
+                if kind == "token":
+                    buffer.append(value)
+                    yield StandardStreamEvent(
+                        event="on_chat_model_stream",
+                        name=self._model_name,
+                        data={"chunk": AIMessageChunk(content=value)},
+                    )
+                elif kind == "usage":
+                    usage = value
 
         full_text = "".join(buffer)
         response_metadata: Dict[str, Any] = {

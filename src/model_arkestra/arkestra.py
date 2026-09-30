@@ -1058,7 +1058,7 @@ class ModelArkestra:
             return await prov.invoke_full("", messages=messages, **kwargs)
         return await prov.invoke_full(prompt, **kwargs)
 
-    async def astream(self, model_name: str, payload: Dict[str, Any], backend: Optional[str] = None) -> AsyncIterator[Dict[str, Any]]:
+    async def astream(self, model_name: str, payload: Dict[str, Any], backend: Optional[str] = None) -> AsyncIterator[bytes]:
         prov = self._provider_for(model_name)
         async for chunk in prov.stream(payload):
             yield chunk

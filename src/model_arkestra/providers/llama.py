@@ -13,7 +13,7 @@ from typing import Any, AsyncIterator, Dict, Optional
 import aiohttp
 
 from model_arkestra.providers.base import Provider
-from model_arkestra.http_proxy import sse_events, parse_completion
+from model_arkestra.http_proxy import parse_completion
 from model_arkestra.types import RunnerError
 
 
@@ -104,9 +104,11 @@ class LlamaProvider(Provider):
                 raise RunnerError(f"Request failed: {e}") from None
         raise RunnerError(f"Server not reachable after {_RETRIES} attempts") from last_err
 
-    async def stream(self, payload: Dict[str, Any]) -> AsyncIterator[Dict[str, Any]]:
+    async def stream(self, payload: Dict[str, Any]) -> AsyncIterator[bytes]:
+        """Yield raw SSE bytes from llama-server. No parsing — the caller
+        (server._stream_chat) forwards them verbatim and uses StreamStats
+        for side-channel counters."""
         p = dict(payload)
-        messages = None
         if "messages" in p and isinstance(p["messages"], (list, tuple)):
             messages = list(p["messages"])
         else:
@@ -123,33 +125,15 @@ class LlamaProvider(Provider):
         stream_payload.update({k: v for k, v in p.items() if k in LLAMA_FIELDS and v is not None})
 
         url = f"{self._base}/v1/chat/completions"
-        start_time = time.monotonic()
-        tokens_so_far: list[str] = []
-        usage_info: Dict[str, Any] = {}
 
         async with aiohttp.ClientSession() as session:
             try:
                 async with session.post(url, json=stream_payload, timeout=self._stream_timeout) as resp:
                     if resp.status != 200:
-                        # Surface the backend's rejection reason — a bare status
-                        # code (e.g. "Server error: 400") gives no clue whether
-                        # it was tools, message shape, or context overflow.
                         detail = (await resp.text())[:500]
                         raise RunnerError(f"Server error: {resp.status}: {detail}")
-                    async for event in sse_events(resp.content):
-                        if "token" in event:
-                            tokens_so_far.append(event["token"])
-                            yield {"token": event["token"]}
-                        elif "reasoning" in event:
-                            yield {"reasoning": event["reasoning"]}
-                        elif "tool_call" in event:
-                            yield {"tool_call": event["tool_call"]}
-                        elif "finish_reason" in event:
-                            yield {"finish_reason": event["finish_reason"]}
-                        elif "usage" in event:
-                            usage_info.update(event["usage"])
-                        # {"done": True} ends the stream; no synthetic usage —
-                        # llama-server's real usage chunk (stream_options) wins.
+                    async for chunk in resp.content.iter_any():
+                        yield chunk
             except Exception as e:
                 raise RunnerError(f"Stream error: {e}")
 

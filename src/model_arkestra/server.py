@@ -48,6 +48,7 @@ from model_arkestra.base import BaseRunner  # noqa: E402
 from model_arkestra.common import resolve_config_path, default_cache_root
 from model_arkestra.config_manager import ConfigManager
 from model_arkestra.conn import add_common_args, add_server_args, resolve_conn
+from model_arkestra.http_proxy import StreamStats
 from model_arkestra.types import ModelNotStarted, ModelShutdown, RunnerState
 
 
@@ -832,15 +833,11 @@ class ArkestraServer:
     # ── Completion (streaming) ────────────────────────────────────
 
     async def _stream_chat(self, model_name: str, req: ChatCompletionRequest) -> AsyncIterator[str]:
-        """Streaming completion → SSE token events."""
+        """Streaming completion → raw SSE pass-through with side-channel stats."""
         t0 = time.monotonic()
         first_token_time = None
         msg_count = len(req.messages)
-        tokens_seen = 0
-        first_chunk_sent = False
-        finish_reason = "stop"  # real reason from backend, or default
-        # Phase timings — set in the usage branch, but the error/no-usage
-        # paths below also record stats, so default them up front.
+        stats = StreamStats()
         prompt_ms = 0
         eval_ms = 0
 
@@ -853,134 +850,51 @@ class ArkestraServer:
             # OWUI don't send stream_options themselves, and without it
             # llama-server omits usage (we'd fall back to word estimates).
             stream_payload.setdefault("stream_options", {"include_usage": True})
-            async for event in self._arkestra.astream(model_name, payload=stream_payload):
-                if "token" in event:
-                    if not first_chunk_sent:
-                        first_token_time = time.monotonic()
-                        self._arkestra.log(f"[action=stream_start model={model_name} messages={msg_count}]")
-                        first_chunk_sent = True
-                    tokens_seen += 1
-                    chunk = ChatCompletionStreamResponse(
-                        model=model_name,
-                        choices=[ChatCompletionStreamChoice(
-                            index=0,
-                            delta=ChoiceDelta(role="assistant", content=event["token"]),
-                        )],
-                    )
-                    yield _sse_format(chunk.model_dump())
+            async for raw in self._arkestra.astream(model_name, payload=stream_payload):
+                # Side-channel: update stats (never blocks the data path)
+                stats.feed(raw)
+                if first_token_time is None and stats.tokens > 0:
+                    first_token_time = time.monotonic()
+                    self._arkestra.log(f"[action=stream_start model={model_name} messages={msg_count}]")
+                # Data path: forward verbatim
+                yield raw.decode("utf-8", errors="replace")
 
-                elif "reasoning" in event:
-                    # Thinking tokens — forwarded as reasoning_content so web
-                    # UIs (e.g. Open WebUI) can show a native reasoning block.
-                    chunk = ChatCompletionStreamResponse(
-                        model=model_name,
-                        choices=[ChatCompletionStreamChoice(
-                            index=0,
-                            delta=ChoiceDelta(reasoning_content=event["reasoning"]),
-                        )],
-                    )
-                    yield _sse_format(chunk.model_dump())
-
-                elif "tool_call" in event:
-                    # Streaming function-calling deltas — forwarded verbatim.
-                    chunk = ChatCompletionStreamResponse(
-                        model=model_name,
-                        choices=[ChatCompletionStreamChoice(
-                            index=0,
-                            delta=ChoiceDelta(tool_calls=event["tool_call"]),
-                        )],
-                    )
-                    yield _sse_format(chunk.model_dump())
-
-                elif "finish_reason" in event:
-                    finish_reason = event["finish_reason"]
-
-                elif "usage" in event:
-                    usage = event["usage"]
-                    # Forward the backend's real token counts so OWUI shows
-                    # accurate stats. The empty-delta chunk carries the final
-                    # finish_reason; usage rides on the same SSE frame.
-                    chunk = ChatCompletionStreamResponse(
-                        model=model_name,
-                        choices=[ChatCompletionStreamChoice(
-                            index=0,
-                            delta=ChoiceDelta(),
-                            finish_reason=finish_reason,
-                        )],
-                    ).model_dump()
-                    # Forward verbatim — keeps extra fields (e.g.
-                    # completion_tokens_details.reasoning_tokens) that OWUI renders.
-                    chunk["usage"] = usage
-                    yield _sse_format(chunk)
-                    # Send [DONE] marker
-                    latency_ms = round((time.monotonic() - t0) * 1000)
-                    self._arkestra.log(f"[action=stream_end model={model_name} duration_ms={latency_ms} tokens={tokens_seen}] status=ok")
-                    # Record for /api/v1/stats (Open WebUI shows these in the chat UI).
-                    # Phase split: prefill = t0→first token, eval = first→end.
-                    prompt_ms = round((first_token_time - t0) * 1000) if first_token_time else 0
-                    eval_ms = latency_ms - prompt_ms
-                    prompt_tokens = usage.get("prompt_tokens", 0) or max(
-                        1, sum(len(str(m.content).split()) for m in req.messages) // 4
-                    )
-                    completion_tokens = usage.get("completion_tokens", 0) or tokens_seen
-                    self._last_request_stats = {
-                        "model": model_name,
-                        "timestamp": time.time(),
-                        "latency_ms": latency_ms,
-                        "prompt_tokens": prompt_tokens,
-                        "completion_tokens": completion_tokens,
-                        "total_tokens": usage.get("total_tokens", 0) or (prompt_tokens + completion_tokens),
-                        "prompt_ms": prompt_ms,
-                        "eval_ms": eval_ms,
-                    }
-                    yield "data: [DONE]\n\n"
-                    return
+            # Stream ended — record stats
+            latency_ms = round((time.monotonic() - t0) * 1000)
+            prompt_ms = round((first_token_time - t0) * 1000) if first_token_time else 0
+            eval_ms = latency_ms - prompt_ms
+            usage = stats.usage
+            prompt_tokens = usage.get("prompt_tokens", 0) or max(
+                1, sum(len(str(m.content).split()) for m in req.messages) // 4
+            )
+            completion_tokens = usage.get("completion_tokens", 0) or stats.tokens
+            self._last_request_stats = {
+                "model": model_name,
+                "timestamp": time.time(),
+                "latency_ms": latency_ms,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": usage.get("total_tokens", 0) or (prompt_tokens + completion_tokens),
+                "prompt_ms": prompt_ms,
+                "eval_ms": eval_ms,
+            }
+            self._arkestra.log(f"[action=stream_end model={model_name} duration_ms={latency_ms} tokens={stats.tokens}] status=ok")
 
         except Exception as e:
             latency_ms = round((time.monotonic() - t0) * 1000)
-            self._arkestra.log(f"[action=stream_end model={model_name} duration_ms={latency_ms} tokens={tokens_seen}] status=error err={e}")
-            # Record for /api/v1/stats even on failure (OWUI tolerates missing keys)
+            self._arkestra.log(f"[action=stream_end model={model_name} duration_ms={latency_ms} tokens={stats.tokens}] status=error err={e}")
             self._last_request_stats = {
                 "model": model_name,
                 "timestamp": time.time(),
                 "latency_ms": latency_ms,
                 "prompt_tokens": 0,
-                "completion_tokens": tokens_seen,
-                "total_tokens": tokens_seen,
+                "completion_tokens": stats.tokens,
+                "total_tokens": stats.tokens,
                 "prompt_ms": prompt_ms,
                 "eval_ms": eval_ms,
             }
             # Never raise from inside a StreamingResponse generator — headers may already be flushed
-            yield _sse_format({"error": str(e), "model": model_name})
-            yield "data: [DONE]\n\n"
-            return
-
-        if not first_chunk_sent:
-            latency_ms = round((time.monotonic() - t0) * 1000)
-            self._arkestra.log(f"[action=stream_end model={model_name} duration_ms={latency_ms} tokens={tokens_seen}] status=no_tokens")
-            # Record for /api/v1/stats even when no tokens were produced
-            self._last_request_stats = {
-                "model": model_name,
-                "timestamp": time.time(),
-                "latency_ms": latency_ms,
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "total_tokens": 0,
-                "prompt_ms": prompt_ms,
-                "eval_ms": eval_ms,
-            }
-            # No tokens produced — send an empty final chunk. Covers streams
-            # that end on a finish_reason event with no usage (e.g. llama.cpp
-            # tool-call responses).
-            chunk = ChatCompletionStreamResponse(
-                model=model_name,
-                choices=[ChatCompletionStreamChoice(
-                    index=0,
-                    delta=ChoiceDelta(),
-                    finish_reason=finish_reason,
-                )],
-            )
-            yield _sse_format(chunk.model_dump())
+            yield f"data: {json.dumps({'error': str(e), 'model': model_name})}\n\n"
             yield "data: [DONE]\n\n"
 
     # ── Lifecycle management ──────────────────────────────────────

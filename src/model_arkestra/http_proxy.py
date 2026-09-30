@@ -1,11 +1,10 @@
 """Shared HTTP helpers for SSE streaming and chat completion proxying.
 
-Used by BaseRunner (local llama-server), RemoteRunner, and ArkestraServer.
+Used by LlamaProvider, RemoteProvider, and ArkestraServer.
 """
 from __future__ import annotations
-import asyncio
 import json
-from typing import Any, AsyncIterator, Dict, Optional
+from typing import Any, Dict
 from model_arkestra.types import RunnerState
 
 
@@ -14,73 +13,56 @@ def _extract_content(msg: Dict[str, Any]) -> str:
     return msg.get("content") or msg.get("reasoning_content") or ""
 
 
-# ── SSE parsing ───────────────────────────────────────────────────────────
+# ── Stream stats (side-channel) ───────────────────────────────────────────
 
-class _SSEParser:
-    """Stateless SSE parser that yields typed events.
+class StreamStats:
+    """Side-channel stats for a streaming SSE response.
+
+    Feed raw SSE bytes; get token/usage counts without gating the data path.
+    The proxy forwards bytes verbatim — this class only observes.
 
     Usage::
 
-        async for event in sse_events(raw_stream):
-            if "token" in event:
-                yield event["token"]
-            elif "usage" in event:
-                emit_usage(event["usage"])
-            elif event.get("done"):
-                break
+        stats = StreamStats()
+        async for chunk in resp.content.iter_any():
+            stats.feed(chunk)
+            yield chunk  # data path — never blocked by stats
+        print(stats.tokens, stats.usage)
     """
 
-    @staticmethod
-    def parse_line(line: str) -> Optional[Dict[str, Any]]:
-        """Parse a single SSE data line. Returns None for non-data lines."""
-        if not line.startswith("data:"):
-            return None
-        data_str = line[5:].strip()
-        if data_str == "[DONE]":
-            return {"done": True}
+    def __init__(self):
+        self.tokens: int = 0
+        self.usage: Dict[str, Any] = {}
+        self._buf: str = ""
 
-        try:
-            chunk = json.loads(data_str)
-        except (json.JSONDecodeError, ValueError):
-            return None
+    def feed(self, chunk: bytes) -> None:
+        """Process a raw byte chunk. Updates tokens/usage counters."""
+        self._buf += chunk.decode("utf-8", errors="replace")
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            line = line.strip()
+            if not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if data == "[DONE]":
+                continue
+            try:
+                obj = json.loads(data)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            choices = obj.get("choices", [])
+            if choices:
+                delta = choices[0].get("delta", {})
+                if delta.get("content"):
+                    self.tokens += 1
+            usage = obj.get("usage")
+            if usage:
+                self.usage.update(usage)
 
-        choices = chunk.get("choices", [])
-        delta = choices[0].get("delta", {}) if choices else {}
-        content = delta.get("content")
-        if content:
-            return {"token": content}
-        # llama.cpp emits thinking as a non-standard reasoning_content delta;
-        # surface it so web UIs can render a native reasoning block.
-        reasoning = delta.get("reasoning_content")
-        if reasoning:
-            return {"reasoning": reasoning}
-        # OpenAI-style tool-call deltas (streaming function calling).
-        tool_calls = delta.get("tool_calls")
-        if tool_calls:
-            return {"tool_call": tool_calls}
-        usage = chunk.get("usage")
-        if usage:
-            return {"usage": usage}
-        # Final chunk: no delta content, just the finish reason.
-        finish_reason = choices[0].get("finish_reason") if choices else None
-        if finish_reason:
-            return {"finish_reason": finish_reason}
-        return None
-
-
-async def sse_events(raw_lines) -> AsyncIterator[Dict[str, Any]]:
-    """Convert raw HTTP lines into typed SSE events.
-
-    Yields dicts with keys: ``"token"``, ``"usage"``, or ``"done"``.
-    """
-    async for raw in raw_lines:
-        text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
-        line = text.strip()
-        if not line:
-            continue
-        event = _SSEParser.parse_line(line)
-        if event is not None:
-            yield event
+    def reset(self) -> None:
+        self.tokens = 0
+        self.usage = {}
+        self._buf = ""
 
 
 # ── Chat completion extraction ───────────────────────────────────────────
@@ -130,5 +112,3 @@ def parse_completion(data: Dict[str, Any]) -> Dict[str, Any]:
             "time_seconds": 0,
         }),
     }
-
-

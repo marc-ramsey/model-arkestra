@@ -223,17 +223,22 @@ def mock_arkestra():
     )
 
     def _make_sse_stream(tokens):
-        """Helper to create a real async generator for SSE streaming."""
+        """Helper to create a real async generator yielding raw SSE bytes."""
         async def sse_generator():
             for t in tokens:
-                yield {"token": t}
-            yield {"usage": {
-                "model": "qwen3-4b",
-                "prompt_tokens": 5,
-                "completion_tokens": len(tokens),
-                "total_tokens": 5 + len(tokens),
-                "time_seconds": 0.1,
-            }}
+                chunk = {"choices": [{"delta": {"content": t}}]}
+                yield f"data: {json.dumps(chunk)}\n\n".encode()
+            usage_chunk = {
+                "choices": [],
+                "usage": {
+                    "model": "qwen3-4b",
+                    "prompt_tokens": 5,
+                    "completion_tokens": len(tokens),
+                    "total_tokens": 5 + len(tokens),
+                },
+            }
+            yield f"data: {json.dumps(usage_chunk)}\n\n".encode()
+            yield b"data: [DONE]\n\n"
         return sse_generator()
 
     def _astream(model_name, payload):
@@ -536,6 +541,59 @@ class TestChatCompletionsStreaming:
         data_lines = [json.loads(l.split(": ", 1)[1]) for l in lines
                       if l.startswith("data: ") and "choices" in l]
         assert data_lines[-1]["choices"][0]["finish_reason"] == "stop"
+
+    def test_streaming_no_usage_still_sends_done(self, mock_arkestra):
+        """Stream with tokens + finish_reason but no usage chunk still sends [DONE]."""
+        client, _ = _build_app(mock_arkestra)
+
+        async def no_usage_stream():
+            yield {"token": "Hello"}
+            yield {"token": " world"}
+            yield {"finish_reason": "stop"}
+            # No usage event — simulates backend ignoring include_usage
+
+        mock_arkestra.astream = lambda model_name, payload: no_usage_stream()
+
+        resp = client.post("/v1/chat/completions", json={
+            "model": "qwen3-4b",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "stream": True,
+        })
+        assert resp.status_code == 200
+        lines = [l for l in resp.text.split("\n") if l.strip()]
+        # Must end with [DONE]
+        assert lines[-1] == "data: [DONE]"
+        # Token chunks present
+        data_lines = [json.loads(l.split(": ", 1)[1]) for l in lines
+                      if l.startswith("data: ") and "choices" in l]
+        assert len(data_lines) >= 2
+
+    def test_streaming_tool_call_no_usage_sends_done(self, mock_arkestra):
+        """Tool-call stream ending with finish_reason but no usage still sends [DONE]."""
+        client, _ = _build_app(mock_arkestra)
+
+        async def tool_no_usage_stream():
+            yield {"tool_call": [{"index": 0, "id": "call_1", "type": "function",
+                                  "function": {"name": "get_weather", "arguments": "{}"}}]}
+            yield {"finish_reason": "tool_calls"}
+            # No usage event — llama.cpp omits it for tool-call responses
+
+        mock_arkestra.astream = lambda model_name, payload: tool_no_usage_stream()
+
+        resp = client.post("/v1/chat/completions", json={
+            "model": "qwen3-4b",
+            "messages": [{"role": "user", "content": "weather in Paris?"}],
+            "tools": [{"type": "function"}],
+            "stream": True,
+        })
+        assert resp.status_code == 200
+        lines = [l for l in resp.text.split("\n") if l.strip()]
+        # Must end with [DONE]
+        assert lines[-1] == "data: [DONE]"
+        # Tool-call delta present
+        data_lines = [json.loads(l.split(": ", 1)[1]) for l in lines
+                      if l.startswith("data: ") and "choices" in l]
+        assert any("tool_calls" in d["choices"][0].get("delta", {}) for d in data_lines)
 
 
 # ═══════════════════════════════════════════════════════════════

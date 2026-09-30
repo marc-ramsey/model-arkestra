@@ -13,7 +13,7 @@ import aiohttp
 
 from model_arkestra.providers.base import Provider
 from model_arkestra.providers.llama import LLAMA_FIELDS
-from model_arkestra.http_proxy import sse_events, parse_completion
+from model_arkestra.http_proxy import parse_completion
 
 
 _RETRIES = 6
@@ -80,26 +80,21 @@ class RemoteProvider(Provider):
             raise RuntimeError(f"Remote worker still returned {last_status} after {_RETRIES} attempts") from last_err
         raise RuntimeError(f"Remote server not reachable after {_RETRIES} attempts") from last_err
 
-    async def stream(self, payload: Dict[str, Any]) -> AsyncIterator[Dict[str, Any]]:
+    async def stream(self, payload: Dict[str, Any]) -> AsyncIterator[bytes]:
         url = f"{self._base}/v1/chat/completions"
         # Inject stream=true — remote servers don't infer it from the payload.
         stream_payload = {**payload, "stream": True}
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=stream_payload, headers=self._headers(), timeout=120) as resp:
-                if resp.status != 200:
-                    detail = await resp.text()
-                    raise RuntimeError(f"Remote inference failed ({resp.status}): {detail}")
-                async for event in sse_events(resp.content):
-                    if "token" in event:
-                        yield {"token": event["token"]}
-                    elif "reasoning" in event:
-                        yield {"reasoning": event["reasoning"]}
-                    elif "tool_call" in event:
-                        yield {"tool_call": event["tool_call"]}
-                    elif "finish_reason" in event:
-                        yield {"finish_reason": event["finish_reason"]}
-                    elif "usage" in event:
-                        yield {"usage": event["usage"]}
+            try:
+                async with session.post(url, json=stream_payload, headers=self._headers(), timeout=120) as resp:
+                    if resp.status != 200:
+                        detail = await resp.text()
+                        raise RuntimeError(f"Remote inference failed ({resp.status}): {detail}")
+                    # Raw byte pass-through — SSE is already well-formed.
+                    async for chunk in resp.content.iter_any():
+                        yield chunk
+            except Exception as e:
+                raise RuntimeError(f"Stream error: {e}")
 
     # ── embeddings ───────────────────────────────────────────────
     async def embed(self, text: str) -> Dict[str, Any]:

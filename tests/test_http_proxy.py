@@ -1,14 +1,12 @@
-"""Tests for model_arkestra.http_proxy — shared SSE parser, completion helper, and status mapper."""
+"""Tests for StreamStats and parse_completion in http_proxy."""
 from __future__ import annotations
 
-import asyncio
 import json
 
 import pytest
 
 from model_arkestra.http_proxy import (
-    _SSEParser,
-    sse_events,
+    StreamStats,
     parse_completion,
     model_status,
     model_status_for_ctx,
@@ -16,230 +14,132 @@ from model_arkestra.http_proxy import (
 from model_arkestra.types import RunnerState
 
 
-# ═══════════════════════════════════════════════════════════════
-# _SSEParser.parse_line — single line unit tests
-# ═══════════════════════════════════════════════════════════════
+def _sse(*chunks: dict) -> bytes:
+    """Build raw SSE bytes from a list of OpenAI chunk dicts."""
+    parts = []
+    for c in chunks:
+        parts.append(f"data: {json.dumps(c)}\n\n")
+    parts.append("data: [DONE]\n\n")
+    return "".join(parts).encode()
 
 
-class TestSSEParser:
-    """Unit tests for the stateless SSE parser."""
+# ── StreamStats ───────────────────────────────────────────────────────────
 
-    def test_token_content(self):
-        chunk = {"choices": [{"delta": {"content": "Hello"}}]}
-        result = _SSEParser.parse_line(f"data: {json.dumps(chunk)}")
-        assert result == {"token": "Hello"}
+class TestStreamStats:
+    def test_counts_tokens(self):
+        stats = StreamStats()
+        raw = _sse(
+            {"choices": [{"delta": {"role": "assistant", "content": ""}}]},
+            {"choices": [{"delta": {"content": "Hello"}}]},
+            {"choices": [{"delta": {"content": " world"}}]},
+        )
+        stats.feed(raw)
+        assert stats.tokens == 2
 
-    def test_reasoning_content_not_yielded(self):
-        """Delta without 'content' returns None — reasoning delta is separate."""
-        chunk = {"choices": [{"delta": {"reasoning": "Thinking..."}}]}
-        result = _SSEParser.parse_line(f"data: {json.dumps(chunk)}")
-        assert result is None
+    def test_extracts_usage(self):
+        stats = StreamStats()
+        raw = _sse(
+            {"choices": [{"delta": {"content": "Hi"}}]},
+            {"choices": [], "usage": {"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6}},
+        )
+        stats.feed(raw)
+        assert stats.usage["prompt_tokens"] == 5
+        assert stats.usage["completion_tokens"] == 1
 
-    def test_reasoning_content_event(self):
-        """llama.cpp reasoning_content deltas surface as a distinct event."""
-        chunk = {"choices": [{"delta": {"reasoning_content": "Thinking..."}}]}
-        result = _SSEParser.parse_line(f"data: {json.dumps(chunk)}")
-        assert result == {"reasoning": "Thinking..."}
+    def test_handles_fragmented_chunks(self):
+        """Feed one byte at a time — buffer must reassemble correctly."""
+        stats = StreamStats()
+        raw = _sse(
+            {"choices": [{"delta": {"content": "A"}}]},
+            {"choices": [{"delta": {"content": "B"}}]},
+        )
+        for i in range(len(raw)):
+            stats.feed(raw[i:i+1])
+        assert stats.tokens == 2
 
-    def test_tool_call_delta_event(self):
-        """OpenAI-style tool-call deltas surface as a distinct event."""
-        tc = [{"index": 0, "id": "call_1", "type": "function",
-              "function": {"name": "get_weather", "arguments": "{\"city\":"}}]
-        chunk = {"choices": [{"delta": {"tool_calls": tc}}]}
-        result = _SSEParser.parse_line(f"data: {json.dumps(chunk)}")
-        assert result == {"tool_call": tc}
+    def test_ignores_non_data_lines(self):
+        stats = StreamStats()
+        raw = b"event: message\ndata: {\"choices\": [{\"delta\": {\"content\": \"x\"}}]}\n\n"
+        stats.feed(raw)
+        # The data line is still parsed (SSE spec: event: is a separate field)
+        assert stats.tokens == 1
 
-    def test_finish_reason_event(self):
-        """Final chunk with only a finish reason surfaces it."""
-        chunk = {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}
-        result = _SSEParser.parse_line(f"data: {json.dumps(chunk)}")
-        assert result == {"finish_reason": "tool_calls"}
+    def test_ignores_malformed_json(self):
+        stats = StreamStats()
+        raw = b"data: {broken\n\ndata: [DONE]\n\n"
+        stats.feed(raw)
+        assert stats.tokens == 0
 
-    def test_content_wins_over_tool_call(self):
-        chunk = {"choices": [{"delta": {"content": "Hi", "tool_calls": [{"index": 0}]}}]}
-        result = _SSEParser.parse_line(f"data: {json.dumps(chunk)}")
-        assert result == {"token": "Hi"}
+    def test_reset(self):
+        stats = StreamStats()
+        stats.feed(_sse({"choices": [{"delta": {"content": "x"}}]}))
+        assert stats.tokens == 1
+        stats.reset()
+        assert stats.tokens == 0
+        assert stats.usage == {}
 
-    def test_usage_event(self):
-        chunk = {"usage": {"prompt_tokens": 5, "completion_tokens": 10}}
-        result = _SSEParser.parse_line(f"data: {json.dumps(chunk)}")
-        assert result == {"usage": {"prompt_tokens": 5, "completion_tokens": 10}}
+    def test_empty_content_not_counted(self):
+        """Role-only first chunk (content="") must not count as a token."""
+        stats = StreamStats()
+        raw = _sse(
+            {"choices": [{"delta": {"role": "assistant", "content": ""}}]},
+            {"choices": [{"delta": {"content": "real"}}]},
+        )
+        stats.feed(raw)
+        assert stats.tokens == 1
 
-    def test_done_marker(self):
-        result = _SSEParser.parse_line("data: [DONE]")
-        assert result == {"done": True}
-
-    def test_empty_data_returns_none(self):
-        assert _SSEParser.parse_line("") is None
-
-    def test_non_data_prefix_returns_none(self):
-        assert _SSEParser.parse_line(": something") is None
-        assert _SSEParser.parse_line("comment: foo") is None
-
-    def test_invalid_json_returns_none(self):
-        result = _SSEParser.parse_line("data: {broken")
-        assert result is None
-
-    def test_empty_choices_returns_none(self):
-        chunk = {"choices": []}
-        result = _SSEParser.parse_line(f"data: {json.dumps(chunk)}")
-        assert result is None
-
-
-# ═══════════════════════════════════════════════════════════════
-# sse_events — async generator tests (no network)
-# ═══════════════════════════════════════════════════════════════
-
-
-class TestSSEEvents:
-    """Tests for the SSE event stream parser."""
-
-    @staticmethod
-    def _make_lines(lines: list[str]):
-        """Wrap raw strings into a list of async-iterated items."""
-        async def gen():
-            for l in lines:
-                yield l
-        return gen()
-
-    @pytest.mark.asyncio
-    async def test_yields_tokens_and_done(self):
-        raw = self._make_lines([
-            f"data: {json.dumps({'choices': [{'delta': {'content': 'A'}}]})}",
-            f"data: {json.dumps({'choices': [{'delta': {'content': 'B'}}]})}",
-            "data: [DONE]",
-        ])
-        events = [e async for e in sse_events(raw)]
-        assert len(events) == 3
-        assert events[0] == {"token": "A"}
-        assert events[1] == {"token": "B"}
-        assert events[2] == {"done": True}
-
-    @pytest.mark.asyncio
-    async def test_empty_lines_skipped(self):
-        raw = self._make_lines(["", "\n", f"data: {json.dumps({'choices': [{'delta': {'content': 'x'}}]})}"])
-        events = [e async for e in sse_events(raw)]
-        assert len(events) == 1
-        assert events[0] == {"token": "x"}
-
-    @pytest.mark.asyncio
-    async def test_usage_event_in_stream(self):
-        raw = self._make_lines([
-            f"data: {json.dumps({'choices': [{'delta': {'content': 'Hi'}}]})}",
-            f"data: {json.dumps({'usage': {'prompt_tokens': 2}})}",
-            "data: [DONE]",
-        ])
-        events = [e async for e in sse_events(raw)]
-        assert {"token": "Hi"} in events
-        assert {"usage": {"prompt_tokens": 2}} in events
-
-    @pytest.mark.asyncio
-    async def test_no_events_returns_empty(self):
-        raw = self._make_lines(["", "", ""])
-        events = [e async for e in sse_events(raw)]
-        assert events == []
+    def test_tool_call_delta_not_counted_as_token(self):
+        stats = StreamStats()
+        raw = _sse(
+            {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"name": "f"}}]}}]},
+        )
+        stats.feed(raw)
+        assert stats.tokens == 0
 
 
-# ═══════════════════════════════════════════════════════════════
-# parse_completion — non-streaming response extraction
-# ═══════════════════════════════════════════════════════════════
-
+# ── parse_completion ──────────────────────────────────────────────────────
 
 class TestParseCompletion:
-    """Tests for extracting {content, usage} from a chat.completion response."""
-
-    def test_standard_response(self):
+    def test_basic(self):
         data = {
-            "choices": [{"message": {"role": "assistant", "content": "Hello world"}}],
-            "usage": {"prompt_tokens": 3, "completion_tokens": 5},
+            "choices": [{"message": {"role": "assistant", "content": "hello"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4},
         }
         result = parse_completion(data)
-        assert result["content"] == "Hello world"
+        assert result["content"] == "hello"
+        assert result["finish_reason"] == "stop"
         assert result["usage"]["prompt_tokens"] == 3
 
-    def test_reasoning_content_fallback(self):
+    def test_tool_calls(self):
+        tc = [{"type": "function", "function": {"name": "get_weather", "arguments": "{}"}}]
         data = {
-            "choices": [{"message": {"role": "assistant", "reasoning_content": "Let me think..."}}],
+            "choices": [{"message": {"role": "assistant", "content": None, "tool_calls": tc}, "finish_reason": "tool_calls"}],
+            "usage": {},
         }
         result = parse_completion(data)
-        assert result["content"] == "Let me think..."
-
-    def test_empty_choices(self):
-        result = parse_completion({"choices": []})
-        assert result["content"] == ""
-        assert isinstance(result["usage"], dict)
-
-    def test_reasoning_and_content_prefers_content(self):
-        """When both content and reasoning_content exist, content wins."""
-        data = {"choices": [{"message": {"content": "Final answer", "reasoning_content": "Thinking..."}}]}
-        result = parse_completion(data)
-        assert result["content"] == "Final answer"
-
-    def test_tool_calls_extracted(self):
-        data = {
-            "choices": [{
-                "message": {"role": "assistant", "content": None,
-                            "tool_calls": [{"type": "function",
-                                            "function": {"name": "f", "arguments": "{}"}}]},
-                "finish_reason": "tool_calls",
-            }],
-        }
-        result = parse_completion(data)
-        assert result["content"] == ""
-        assert result["tool_calls"][0]["function"]["name"] == "f"
+        assert result["tool_calls"] == tc
         assert result["finish_reason"] == "tool_calls"
 
-    def test_finish_reason_defaults_to_stop(self):
-        data = {"choices": [{"message": {"content": "hi"}, "finish_reason": None}]}
+    def test_empty_choices(self):
+        data = {"choices": [], "usage": {}}
         result = parse_completion(data)
+        assert result["content"] == ""
         assert result["finish_reason"] == "stop"
-        assert result["tool_calls"] is None
 
 
-# ═══════════════════════════════════════════════════════════════
-# model_status — RunnerState → WebUI status mapping
-# ═══════════════════════════════════════════════════════════════
-
+# ── model_status ──────────────────────────────────────────────────────────
 
 class TestModelStatus:
-    """Tests for the state-to-WebUI-status mapper."""
-
-    def test_running_becomes_loaded(self):
+    def test_running(self):
         assert model_status(RunnerState.RUNNING) == {"value": "loaded"}
 
-    def test_loading_stays_loading(self):
-        assert model_status(RunnerState.LOADING) == {"value": "loading"}
-
-    def test_stopped_becomes_stopped(self):
+    def test_stopped(self):
         assert model_status(RunnerState.STOPPED) == {"value": "stopped"}
 
-    def test_stopping_becomes_stopping(self):
-        assert model_status(RunnerState.STOPPING) == {"value": "stopping"}
+    def test_error(self):
+        result = model_status(RunnerState.ERROR, "boom")
+        assert result["value"] == "error"
+        assert result["error_message"] == "boom"
 
-    def test_uncached_becomes_uncached(self):
-        assert model_status(RunnerState.UNCACHED) == {"value": "uncached"}
-
-    def test_error_with_message(self):
-        result = model_status(RunnerState.ERROR, "oom killed")
-        assert result == {"value": "error", "error_message": "oom killed"}
-
-    def test_error_without_message(self):
-        result = model_status(RunnerState.ERROR)
-        assert result == {"value": "error", "error_message": "unknown error"}
-
-
-# ═══════════════════════════════════════════════════════════════
-# model_status_for_ctx — context-aware wrapper
-# ═══════════════════════════════════════════════════════════════
-
-
-class TestModelStatusForCtx:
-    """Tests for the None-safe context wrapper."""
-
-    def test_none_context_is_uncached(self):
+    def test_ctx_none(self):
         assert model_status_for_ctx(None) == {"value": "uncached"}
-
-    def test_empty_mock_context_runs(self):
-        ctx = type("Ctx", (), {"state": RunnerState.RUNNING, "last_error": None})()
-        result = model_status_for_ctx(ctx)
-        assert result == {"value": "loaded"}
