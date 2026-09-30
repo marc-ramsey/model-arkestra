@@ -84,6 +84,25 @@ def test_split_info_parses_shard_and_tag():
     assert tag == "Q8_0"
 
 
+def test_split_info_tag_before_shard_suffix():
+    # unsloth layout: quant tag precedes the shard suffix. The shard
+    # numbers must parse — that is what _shards_for matches on.
+    prefix, tag, idx, count = _split_info(
+        "m-UD-IQ4_XS-00001-of-00003.gguf")
+    assert (idx, count) == (1, 3)
+    assert prefix.endswith("m-UD-IQ4_XS")
+
+
+def test_gguf_split_shards_tag_before_shard_suffix():
+    files = [
+        "UD-IQ4_XS/m-UD-IQ4_XS-00001-of-00003.gguf",
+        "UD-IQ4_XS/m-UD-IQ4_XS-00002-of-00003.gguf",
+        "UD-IQ4_XS/m-UD-IQ4_XS-00003-of-00003.gguf",
+    ]
+    plan = build_plan("repo/m:UD-IQ4_XS", files)
+    assert plan.shards == files
+
+
 # ── format detection ───────────────────────────────────────────────────────
 
 def test_detect_onnx_whisper():

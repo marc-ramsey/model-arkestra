@@ -43,8 +43,10 @@ _DATA_DIR = "data/"
 # Filename markers that disqualify a GGUF from being the *primary* model file.
 _NON_MODEL_MARKERS = ("mmproj", "imatrix", "mtp-", "eagle3-", "dflash-", "dspark-")
 
-_SPLIT_RE = re.compile(r"^(.+)-([0-9]{5})-of-([0-9]{5})$", re.IGNORECASE)
-_TAG_RE = re.compile(r"[-.]([A-Z0-9_]+)$", re.IGNORECASE)
+# Shard suffix ``NNNNN-of-MMMMM`` at the end of the filename (tag-before order).
+_SPLIT_TAIL_RE = re.compile(r"-(\d{5})-of-(\d{5})$", re.IGNORECASE)
+# Shard suffix ``NNNNN-of-MMMMM`` in the middle, followed by a quant tag.
+_SPLIT_MID_RE = re.compile(r"-(\d{5})-of-(\d{5})[-.]([A-Z0-9_]+)$", re.IGNORECASE)
 
 
 # ── Plan ─────────────────────────────────────────────────────────────────
@@ -277,15 +279,19 @@ def _split_info(path: str) -> tuple[str, str, int, int]:
       ``prefix-TAG-NNNNN-of-MMMMM.gguf``  and  ``prefix-NNNNN-of-MMMMM-TAG.gguf``
     """
     base = path[:-5] if path.endswith(".gguf") else path
-    # Strip a trailing quant tag (e.g. -Q8_0) so the shard regex can anchor.
-    tag_m = _TAG_RE.search(base)
-    tag = tag_m.group(1).upper() if tag_m else ""
-    core = base[:tag_m.start()] if tag_m else base
-    index, count = 1, 1
-    m = _SPLIT_RE.match(core)
+    # Tag before the shard suffix: ``...-UD-IQ4_XS-00001-of-00003``.
+    m = _SPLIT_TAIL_RE.search(base)
     if m:
-        core, index, count = m.group(1), int(m.group(2)), int(m.group(3))
-    return core, tag, index, count
+        return base[:m.start()], "", int(m.group(1)), int(m.group(2))
+    # Tag after the shard suffix: ``...-00001-of-00003-Q8_0``.
+    m = _SPLIT_MID_RE.search(base)
+    if m:
+        return base[:m.start()], m.group(3).upper(), int(m.group(1)), int(m.group(2))
+    # Unsharded: strip a trailing quant tag (e.g. ``-Q8_0``).
+    tag_m = re.search(r"[-.]([A-Z0-9_]+)$", base, re.IGNORECASE)
+    if tag_m:
+        return base[:tag_m.start()], tag_m.group(1).upper(), 1, 1
+    return base, "", 1, 1
 
 
 def _quant_bits(tag: str) -> int:
