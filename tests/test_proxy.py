@@ -504,10 +504,9 @@ class TestChatCompletionsStreaming:
         client, _ = _build_app(mock_arkestra)
 
         async def tool_stream():
-            yield {"tool_call": [{"index": 0, "id": "call_1", "type": "function",
-                                  "function": {"name": "get_weather", "arguments": "{\"city\":"}}]}
-            yield {"tool_call": [{"index": 0, "function": {"arguments": "Paris\"}"}}]}
-            yield {"finish_reason": "tool_calls"}
+            yield b'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":"}}]}}]}\n\n'
+            yield b'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"Paris\""}}]}}]}\n\n'
+            yield b'data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}\n\ndata: [DONE]\n\n'
 
         mock_arkestra.astream = lambda model_name, payload: tool_stream()
 
@@ -540,17 +539,20 @@ class TestChatCompletionsStreaming:
         lines = [l for l in resp.text.split("\n") if l.strip()]
         data_lines = [json.loads(l.split(": ", 1)[1]) for l in lines
                       if l.startswith("data: ") and "choices" in l]
-        assert data_lines[-1]["choices"][0]["finish_reason"] == "stop"
+        # The finish chunk (last with non-empty choices) carries the reason;
+        # the trailing usage chunk has empty choices.
+        finish_lines = [d for d in data_lines if d["choices"]]
+        assert finish_lines[-1]["choices"][0]["finish_reason"] == "stop"
 
     def test_streaming_no_usage_still_sends_done(self, mock_arkestra):
         """Stream with tokens + finish_reason but no usage chunk still sends [DONE]."""
         client, _ = _build_app(mock_arkestra)
 
         async def no_usage_stream():
-            yield {"token": "Hello"}
-            yield {"token": " world"}
-            yield {"finish_reason": "stop"}
-            # No usage event — simulates backend ignoring include_usage
+            yield b'data: {"choices":[{"index":0,"delta":{"content":"Hello"}}]}\n\n'
+            yield b'data: {"choices":[{"index":0,"delta":{"content":" world"}}]}\n\n'
+            yield b'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'
+            # No usage chunk — simulates backend ignoring include_usage
 
         mock_arkestra.astream = lambda model_name, payload: no_usage_stream()
 
@@ -573,10 +575,9 @@ class TestChatCompletionsStreaming:
         client, _ = _build_app(mock_arkestra)
 
         async def tool_no_usage_stream():
-            yield {"tool_call": [{"index": 0, "id": "call_1", "type": "function",
-                                  "function": {"name": "get_weather", "arguments": "{}"}}]}
-            yield {"finish_reason": "tool_calls"}
-            # No usage event — llama.cpp omits it for tool-call responses
+            yield b'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{}"}}]}}]}\n\n'
+            yield b'data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}\n\ndata: [DONE]\n\n'
+            # No usage chunk — llama.cpp omits it for tool-call responses
 
         mock_arkestra.astream = lambda model_name, payload: tool_no_usage_stream()
 
@@ -594,6 +595,61 @@ class TestChatCompletionsStreaming:
         data_lines = [json.loads(l.split(": ", 1)[1]) for l in lines
                       if l.startswith("data: ") and "choices" in l]
         assert any("tool_calls" in d["choices"][0].get("delta", {}) for d in data_lines)
+
+    def test_streaming_usage_chunk_forwarded_verbatim(self, mock_arkestra):
+        """A usage chunk from the backend reaches the client untouched."""
+        client, _ = _build_app(mock_arkestra)
+
+        usage_chunk = {
+            "id": "chatcmpl-abc", "object": "chat.completion.chunk", "created": 1,
+            "model": "qwen3-4b", "choices": [],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 7, "total_tokens": 12,
+                      "completion_tokens_details": {"reasoning_tokens": 0}},
+            "timings": {"predicted_n": 7, "predicted_ms": 100.0},
+        }
+
+        async def usage_stream():
+            yield b'data: {"choices":[{"index":0,"delta":{"content":"Hi"}}]}\n\n'
+            yield f"data: {json.dumps(usage_chunk)}\n\ndata: [DONE]\n\n".encode()
+
+        mock_arkestra.astream = lambda model_name, payload: usage_stream()
+
+        resp = client.post("/v1/chat/completions", json={
+            "model": "qwen3-4b",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "stream": True,
+        })
+        assert resp.status_code == 200
+        lines = [l for l in resp.text.split("\n") if l.strip()]
+        data_lines = [json.loads(l.split(": ", 1)[1]) for l in lines
+                      if l.startswith("data: ") and l.strip() != "data: [DONE]"]
+        # Usage chunk forwarded verbatim — extra fields (timings) survive
+        usage_line = next(d for d in data_lines if "usage" in d)
+        assert usage_line["usage"]["total_tokens"] == 12
+        assert usage_line["usage"]["completion_tokens_details"] == {"reasoning_tokens": 0}
+        assert usage_line["timings"]["predicted_n"] == 7
+        assert usage_line["id"] == "chatcmpl-abc"
+        # Real counts land in /api/v1/stats, not word estimates
+        assert mock_arkestra._last_request_stats["completion_tokens"] == 7
+        assert mock_arkestra._last_request_stats["prompt_tokens"] == 5
+
+    def test_streaming_stats_word_estimate_without_usage(self, mock_arkestra):
+        """No usage chunk — stats fall back to token count / word estimates."""
+        client, _ = _build_app(mock_arkestra)
+
+        async def bare_stream():
+            yield b'data: {"choices":[{"index":0,"delta":{"content":"one"}}]}\n\ndata: [DONE]\n\n'
+
+        mock_arkestra.astream = lambda model_name, payload: bare_stream()
+
+        client.post("/v1/chat/completions", json={
+            "model": "qwen3-4b",
+            "messages": [{"role": "user", "content": "Say one word"}],
+            "stream": True,
+        })
+        stats = mock_arkestra._last_request_stats
+        assert stats["completion_tokens"] == 1
+        assert stats["prompt_tokens"] >= 1
 
 
 # ═══════════════════════════════════════════════════════════════

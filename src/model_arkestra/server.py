@@ -832,7 +832,7 @@ class ArkestraServer:
 
     # ── Completion (streaming) ────────────────────────────────────
 
-    async def _stream_chat(self, model_name: str, req: ChatCompletionRequest) -> AsyncIterator[str]:
+    async def _stream_chat(self, model_name: str, req: ChatCompletionRequest) -> AsyncIterator[bytes]:
         """Streaming completion → raw SSE pass-through with side-channel stats."""
         t0 = time.monotonic()
         first_token_time = None
@@ -856,8 +856,8 @@ class ArkestraServer:
                 if first_token_time is None and stats.tokens > 0:
                     first_token_time = time.monotonic()
                     self._arkestra.log(f"[action=stream_start model={model_name} messages={msg_count}]")
-                # Data path: forward verbatim
-                yield raw.decode("utf-8", errors="replace")
+                # Data path: forward verbatim — no decode, no re-encode
+                yield raw
 
             # Stream ended — record stats
             latency_ms = round((time.monotonic() - t0) * 1000)
@@ -894,8 +894,8 @@ class ArkestraServer:
                 "eval_ms": eval_ms,
             }
             # Never raise from inside a StreamingResponse generator — headers may already be flushed
-            yield f"data: {json.dumps({'error': str(e), 'model': model_name})}\n\n"
-            yield "data: [DONE]\n\n"
+            yield json.dumps({"error": str(e), "model": model_name}).encode()
+            yield b"data: [DONE]\n\n"
 
     # ── Lifecycle management ──────────────────────────────────────
 

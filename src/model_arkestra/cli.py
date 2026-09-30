@@ -246,19 +246,29 @@ async def _send(session, target: str, model: str,
                 history.pop()
                 return
 
-            async for line in resp.content:
-                line = line.strip()
-                if not line or not line.startswith(b"data: "):
-                    continue
-                data = line[6:]
-                if data == b"[DONE]":
-                    break
-                try:
-                    chunk = json.loads(data)
-                    token = chunk["choices"][0]["delta"].get("content", "")
-                    print(token, end="", flush=True)
-                except (json.JSONDecodeError, KeyError):
-                    pass
+            # resp.content yields arbitrary byte chunks, not lines —
+            # buffer and split on newlines so multi-event chunks parse.
+            buf = b""
+            async for chunk_bytes in resp.content:
+                buf += chunk_bytes
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    line = line.strip()
+                    if not line.startswith(b"data: "):
+                        continue
+                    data = line[6:]
+                    if data == b"[DONE]":
+                        return
+                    try:
+                        obj = json.loads(data)
+                        choices = obj.get("choices") or []
+                        if not choices:
+                            continue  # usage-only chunk
+                        token = choices[0].get("delta", {}).get("content", "")
+                        if token:
+                            print(token, end="", flush=True)
+                    except (json.JSONDecodeError, ValueError):
+                        pass
 
         print("\n")
     except aiohttp.ClientError as e:
