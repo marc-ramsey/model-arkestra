@@ -7,7 +7,7 @@ new ONNX and snapshot planners, format detection, and scaffold naming.
 from __future__ import annotations
 
 from model_arkestra.hf_models import (
-    build_plan, detect_format, derived_name, scaffold_entry,
+    build_plan, detect_format, derived_name, scaffold_entries,
     split_repo_tag, _quant_bits, _split_info,
 )
 
@@ -188,59 +188,63 @@ def test_derived_name_owner_basename():
     assert derived_name("unsloth/Qwen3-4B-GGUF") == "unsloth-qwen3-4b-gguf"
 
 
-def test_scaffold_whisper():
+def test_scaffold_entries_gguf_pair():
+    # Layered config: checkpoint carries the ref; model points at it.
+    ckpt, model = scaffold_entries("unsloth/Qwen3-4B-GGUF",
+                                   HfPlanLike("gguf", ["m-Q4_K_M.gguf"]))
+    assert ckpt == {"ref": "unsloth/Qwen3-4B-GGUF"}
+    assert model == {"checkpoint": "unsloth-qwen3-4b-gguf"}
+
+
+def test_scaffold_entries_gguf_with_tag():
+    ckpt, model = scaffold_entries("unsloth/Qwen3-4B-GGUF",
+                                   HfPlanLike("gguf", ["m-Q4_K_M.gguf"], tag="Q4_K_M"))
+    assert ckpt == {"ref": "unsloth/Qwen3-4B-GGUF:Q4_K_M"}
+
+
+def test_scaffold_entries_whisper():
     plan = HfPlanLike("onnx-whisper",
                       ["encoder_model.onnx", "decoder_model_merged.onnx",
                        "tokenizer.json"])
-    entry = scaffold_entry("Xenova/whisper-tiny", plan)
-    assert entry == {
-        "backend": "onnx",
-        "model": "Xenova/whisper-tiny",
-        "type": "whisper",
-        "tokenizer": "Xenova/whisper-tiny",
-    }
+    ckpt, model = scaffold_entries("Xenova/whisper-tiny", plan)
+    # tags drive the ONNX runner's inference mode; tokenizer defaults to
+    # the model path, so neither field is needed on the checkpoint.
+    assert ckpt == {"backend": "onnx", "ref": "Xenova/whisper-tiny",
+                    "tags": ["asr"]}
+    assert model == {"checkpoint": "xenova-whisper-tiny"}
 
 
-def test_scaffold_embedding():
-    entry = scaffold_entry("Xenova/bge-small",
-                           HfPlanLike("onnx-embed", ["model.onnx"]))
-    assert entry["type"] == "embed"
-    assert entry["tokenizer"] == "Xenova/bge-small"
+def test_scaffold_entries_embedding():
+    ckpt, _ = scaffold_entries("Xenova/bge-small",
+                               HfPlanLike("onnx-embed", ["model.onnx"]))
+    assert ckpt == {"backend": "onnx", "ref": "Xenova/bge-small",
+                    "tags": ["embed"]}
 
 
-def test_scaffold_gguf_chat():
-    entry = scaffold_entry("unsloth/Qwen3-4B-GGUF",
-                           HfPlanLike("gguf", ["m-Q4_K_M.gguf"]),
-                           backend="rocm")
-    assert entry["backend"] == "rocm"
-    assert entry["model"] == "unsloth/Qwen3-4B-GGUF"
-    assert "type" not in entry
-
-
-def test_scaffold_tts_includes_voices_path():
+def test_scaffold_entries_tts_includes_voices_path():
     plan = HfPlanLike("onnx-tts", ["model.onnx", "voices/a.bin"])
     plan.voices = ["voices/a.bin"]
-    entry = scaffold_entry("Xenova/kokoro", plan)
-    assert entry["type"] == "tts"
-    assert entry["voices_path"] == "Xenova/kokoro"
+    ckpt, _ = scaffold_entries("Xenova/kokoro", plan)
+    assert ckpt == {"backend": "onnx", "ref": "Xenova/kokoro",
+                    "tags": ["tts"], "voices_path": "Xenova/kokoro"}
 
 
-def test_scaffold_tts_without_voices_omits_voices_path():
-    plan = HfPlanLike("onnx-tts", ["model.onnx"])
-    entry = scaffold_entry("Xenova/kokoro", plan)
-    assert "voices_path" not in entry
+def test_scaffold_entries_tts_without_voices_omits_voices_path():
+    ckpt, _ = scaffold_entries("Xenova/kokoro",
+                               HfPlanLike("onnx-tts", ["model.onnx"]))
+    assert "voices_path" not in ckpt
 
 
-def test_scaffold_snapshot_has_no_entry():
-    assert scaffold_entry("x/m", HfPlanLike("snapshot", ["a"])) is None
+def test_scaffold_entries_snapshot_has_no_pair():
+    assert scaffold_entries("x/m", HfPlanLike("snapshot", ["a"])) is None
 
 
 # Minimal stand-in so scaffold tests don't need a real plan.
 class HfPlanLike:
-    def __init__(self, fmt, files):
+    def __init__(self, fmt, files, tag=""):
         self.format = fmt
         self.repo = ""
-        self.tag = ""
+        self.tag = tag
         self.files = files
         self.tokenizer_repo = ""
         self.voices = []

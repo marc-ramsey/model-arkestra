@@ -320,3 +320,84 @@ class TestCmDelegation:
         )
         be = arkestra.get_backend("vulkan-radv")
         assert be is not None
+
+
+# ── Raw-pull config writing (_write_pulled_entry) ──────────────────────────
+
+
+class TestWritePulledEntry:
+    """A raw pull writes a checkpoint + model pair, persists it, and a
+    re-pull only aligns the checkpoint ref (models entry never rewritten)."""
+
+    def _plan(self, repo: str, fmt: str = "gguf", tag: str = "UD-Q4_K_XL"):
+        from model_arkestra.hf_models import HfPlan
+        p = HfPlan(repo=repo, format=fmt, tag=tag)
+        p.files = [f"{repo}:{tag}" if fmt == "gguf" else "m.onnx"]
+        if fmt.startswith("onnx"):
+            p.files = ["m.onnx"]
+        return p
+
+    def _ctx(self, arkestra, name):
+        ctx = _Model(name, 0)
+        arkestra._registry.register(name, ctx, [name])
+        return ctx
+
+    def test_creates_checkpoint_and_model_pair_on_disk(self):
+        arkestra = _make_cm(
+            backend_cfg={"default": "vulkan-radv"},
+            runner_cfg={"default": "process"},
+        )
+        repo = "unsloth/Qwen3-4B-GGUF"
+        name = "unsloth-qwen3-4b-gguf"
+        ctx = self._ctx(arkestra, name)
+        arkestra._write_pulled_entry(ctx, repo, f"{repo}:UD-Q4_K_XL", None,
+                                     self._plan(repo))
+
+        # In-memory: layered pair.
+        assert arkestra._cm.get(f"checkpoints/{name}") == {
+            "backend": "vulkan-radv",
+            "ref": f"{repo}:UD-Q4_K_XL",
+        }
+        assert arkestra._cm.get(f"models/{name}") == {"checkpoint": name}
+
+        # On disk: the user view is what export() persists.
+        import yaml
+        data = yaml.safe_load(open(arkestra._cm.config_path).read())
+        assert data["checkpoints"][name]["ref"] == f"{repo}:UD-Q4_K_XL"
+        assert data["models"][name] == {"checkpoint": name}
+
+    def test_repull_only_aligns_checkpoint_ref(self):
+        arkestra = _make_cm(
+            backend_cfg={"default": "vulkan-radv"},
+            runner_cfg={"default": "process"},
+        )
+        repo = "unsloth/Qwen3-4B-GGUF"
+        name = "unsloth-qwen3-4b-gguf"
+        ctx = self._ctx(arkestra, name)
+        arkestra._write_pulled_entry(ctx, repo, f"{repo}:Q4_0", None,
+                                     self._plan(repo, tag="Q4_0"))
+
+        # User customizes the model instance after the first pull.
+        arkestra._cm[f"models/{name}"] = {"checkpoint": name, "temp": 0.2}
+
+        # Re-pull a different quant: ref changes, user fields survive.
+        arkestra._write_pulled_entry(ctx, repo, f"{repo}:UD-Q4_K_XL", None,
+                                     self._plan(repo, tag="UD-Q4_K_XL"))
+        assert arkestra._cm.get(f"checkpoints/{name}")["ref"] == f"{repo}:UD-Q4_K_XL"
+        assert arkestra._cm.get(f"models/{name}") == {"checkpoint": name, "temp": 0.2}
+
+        # Re-pull the same ref: config untouched.
+        arkestra._write_pulled_entry(ctx, repo, f"{repo}:UD-Q4_K_XL", None,
+                                     self._plan(repo, tag="UD-Q4_K_XL"))
+        assert arkestra._cm.get(f"models/{name}") == {"checkpoint": name, "temp": 0.2}
+
+    def test_onnx_pair_carries_backend_and_tags(self):
+        arkestra = _make_cm(runner_cfg={"default": "process"})
+        repo = "Xenova/whisper-tiny"
+        name = "xenova-whisper-tiny"
+        ctx = self._ctx(arkestra, name)
+        arkestra._write_pulled_entry(ctx, repo, repo, None,
+                                     self._plan(repo, fmt="onnx-whisper", tag=""))
+        ckpt = arkestra._cm.get(f"checkpoints/{name}")
+        assert ckpt == {"backend": "onnx", "ref": repo, "tags": ["asr"]}
+        assert arkestra._cm.get(f"models/{name}") == {"checkpoint": name}

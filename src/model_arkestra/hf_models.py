@@ -228,38 +228,48 @@ def derived_name(repo: str) -> str:
     return f"{owner}-{base}".lower().replace("/", "-")
 
 
-#: onnx subtype → ``type:`` field for a startable config entry.
+def _scaffold_unused() -> None:  # pragma: no cover
+    pass
+
+
+#: onnx subtype → (``type:``, ``tags:``) for a startable config entry.
 _ONNX_TYPE_FIELD = {
-    "onnx-whisper": "whisper",
-    "onnx-embed": "embed",
-    "onnx": "embed",
-    "onnx-tts": "tts",
+    "onnx-whisper": ("whisper", ["asr"]),
+    "onnx-embed": ("embed", ["embed"]),
+    "onnx": ("embed", ["embed"]),
+    "onnx-tts": ("tts", ["tts"]),
 }
 
 
-def scaffold_entry(repo: str, plan: HfPlan,
-                   backend: str | None = None) -> dict | None:
-    """A startable ``models.<name>`` dict for a freshly pulled repo.
+def scaffold_entries(repo: str, plan: HfPlan) -> tuple[dict, dict] | None:
+    """Config pair for a freshly pulled repo: ``(checkpoint, model)``.
 
-    Returns None when the format has no known runner (snapshot) — such
-    refs cannot be pulled as models.
+    The checkpoint carries the weight ref; the model instance is a bare
+    pointer to it. ONNX checkpoints name the runner (``backend: onnx``)
+    and the ``tags`` the runner derives inference type from (asr/tts);
+    the tokenizer defaults to the model path, so no explicit field. GGUF
+    gets no ``tags:`` — the capability chain (backend/engine → chat)
+    resolves it. Returns None for snapshots: unknown formats have no
+    known runner.
     """
     if plan.format == "snapshot":
         return None
     model_ref = f"{repo}:{plan.tag}" if plan.tag else repo
     if plan.format in _ONNX_TYPE_FIELD:
-        entry = {
+        _type, tags = _ONNX_TYPE_FIELD[plan.format]
+        ckpt: dict = {
             "backend": "onnx",
-            "model": model_ref,
-            "type": _ONNX_TYPE_FIELD[plan.format],
-            "tokenizer": plan.tokenizer_repo or repo,
+            "ref": model_ref,
+            "tags": list(tags),
         }
         if plan.format == "onnx-tts" and plan.voices:
             # Kokoro loads voices from the repo's voices/ dir in the cache.
-            entry["voices_path"] = model_ref
-        return entry
-    # gguf — plain llama model on the effective default backend.
-    return {"backend": backend or "", "model": model_ref}
+            ckpt["voices_path"] = model_ref
+    else:
+        # gguf — backend stamped by the caller (effective default backend).
+        ckpt = {"ref": model_ref}
+    name = derived_name(repo)
+    return ckpt, {"checkpoint": name}
 
 
 # ── GGUF selection internals ─────────────────────────────────────────────

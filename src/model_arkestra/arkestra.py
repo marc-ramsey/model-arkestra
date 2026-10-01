@@ -21,7 +21,7 @@ from model_arkestra.container_runner import DockerRunner, PodmanRunner
 from model_arkestra.onnx_runner import OnnxRunner
 from model_arkestra.process import ProcessRunner
 from model_arkestra.remote import RemoteRunner
-from model_arkestra.hf_models import derived_name, scaffold_entry
+from model_arkestra.hf_models import derived_name, scaffold_entries
 from model_arkestra.types import RunnerState, _Model
 from model_arkestra.unicode_ringbuffer import UnicodeRingBuffer
 from model_arkestra.http_proxy import model_status_for_ctx
@@ -927,33 +927,45 @@ class ModelArkestra:
         ``model`` is aligned to what was fetched.
         """
         name = entry_name or derived_name(repo)
-        entry = scaffold_entry(repo, plan, backend=self.cm.effective_default_backend())
-        if entry is None:
+        scaffold = scaffold_entries(repo, plan)
+        if scaffold is None:
             # Unrecognized format — pull() refuses these, so this is only
             # reachable if the plan is stale. Log and leave config alone.
             self.log(f"[pull] {name}: no known runner for {repo} — entry not written",
                      level="WARNING")
             return
+        checkpoint, model = scaffold
 
-        cfg = self._cm.data.setdefault("models", {})
-        existing = cfg.get(name)
+        # Mutate via the setter so the user view (_config) is updated too —
+        # export() only persists that view.
+        existing = self._cm.get(f"checkpoints/{name}")
         if isinstance(existing, dict):
-            # Same model re-pulled: keep every user field, align the ref.
-            if existing.get("model") != entry["model"]:
-                existing["model"] = entry["model"]
-                ctx._append_log_line(f"[pull] {name}: ref updated to {entry['model']}")
+            # Re-pull: keep every user field, align only the ref.
+            # Associated model(s) are never touched.
+            if existing.get("ref") != checkpoint["ref"]:
+                updated = dict(existing)
+                updated["ref"] = checkpoint["ref"]
+                self._cm[f"checkpoints/{name}"] = updated
+                ctx._append_log_line(f"[pull] {name}: ref updated to {checkpoint['ref']}")
             else:
                 ctx._append_log_line(f"[pull] {name}: entry intact")
         else:
-            cfg[name] = entry
+            # Stamp the effective default backend at creation only.
+            if not checkpoint.get("backend"):
+                checkpoint = dict(checkpoint,
+                                  backend=self.cm.effective_default_backend())
+            self._cm[f"checkpoints/{name}"] = checkpoint
+            self._cm[f"models/{name}"] = model
             ctx._append_log_line(
                 f"[pull] {name}: model entry created — arkestra start {name}")
         self._cm.export(self._cm.config_path)
 
         # Keep the live context aligned with the (possibly new) config.
         self._registry.register(name, ctx, [name])
-        if entry.get("backend"):
-            ctx.backend_id = entry["backend"]
+        backend = (self._cm.get(f"checkpoints/{name}/backend")
+                   or self._cm.get(f"models/{name}/backend"))
+        if backend:
+            ctx.backend_id = backend
 
     def can_start(self, model_name: str) -> bool:
         """Check if model is eligible for a fresh start."""
