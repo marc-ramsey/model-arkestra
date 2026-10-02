@@ -504,8 +504,8 @@ class TestChatCompletionsStreaming:
         client, _ = _build_app(mock_arkestra)
 
         async def tool_stream():
-            yield b'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":"}}]}}]}\n\n'
-            yield b'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"Paris\""}}]}}]}\n\n'
+            yield b'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\\"city\\":"}}]}}]}\n\n'
+            yield b'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"Paris\\""}}]}}]}\n\n'
             yield b'data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}\n\ndata: [DONE]\n\n'
 
         mock_arkestra.astream = lambda model_name, payload: tool_stream()
