@@ -41,7 +41,12 @@ Rule 6: Wrap the body text manually at 72 characters to prevent Git formatting i
 Rule 7: Use the body to explain what and why vs. how. Assume the code explains the how;
         the message must explain the context and reasoning. 
 
-- If the prompt indicates that a bug is being fixed, don't write the fix right away. First write the test. Observe it failing. Then write the fix. And observe the test passing.        
+- If the prompt indicates that a bug is being fixed, don't write the fix right away. First write the test. Observe it failing. Then write the fix. And observe the test passing.
+
+## Writing test fixtures for wire protocols (SSE, JSON streams)
+- Build fixtures from structured data with `json.dumps(...)` — never hand-write byte literals containing nested/escaped JSON. Hand-literals re-escape through every layer (shell → Python literal → JSON) and validity is only caught minutes later in the full suite.
+- Keep hand-written byte literals to trivial cases only (`data: [DONE]`, empty bodies).
+- When a test asserts on state written by production code into a mock, initialize that attribute with a real value in setup (e.g. `mock._last_request_stats = {}`) so an unwritten path fails loudly with KeyError instead of returning MagicMock noise.        
 
 ## What this is
 ModelArkestra runs LLM models (llama.cpp GGUF) via a lightweight HTTP server with an admin dashboard. Models are started/stopped on demand; the server auto-allocates ports from a configurable range.
