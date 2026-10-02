@@ -531,6 +531,13 @@ class TestChatCompletionsStreaming:
     def test_streaming_finish_reason_from_usage_event(self, mock_arkestra):
         """When the stream ends with a usage event, finish_reason is 'stop'."""
         client, _ = _build_app(mock_arkestra)
+
+        async def fin_stream():
+            yield b'data: {"choices":[{"index":0,"delta":{"content":"Hi"}}]}\n\n'
+            yield b'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n'
+            yield f"data: {json.dumps({'choices': [], 'usage': {'prompt_tokens': 5, 'completion_tokens': 1}})}\n\ndata: [DONE]\n\n".encode()
+
+        mock_arkestra.astream = lambda model_name, payload: fin_stream()
         resp = client.post("/v1/chat/completions", json={
             "model": "qwen3-4b",
             "messages": [{"role": "user", "content": "Hi"}],
@@ -614,12 +621,13 @@ class TestChatCompletionsStreaming:
 
         mock_arkestra.astream = lambda model_name, payload: usage_stream()
 
-        resp = client.post("/v1/chat/completions", json={
-            "model": "qwen3-4b",
-            "messages": [{"role": "user", "content": "Hi"}],
-            "stream": True,
-        })
-        assert resp.status_code == 200
+        with client.stream("POST", "/v1/chat/completions", json={
+                "model": "qwen3-4b",
+                "messages": [{"role": "user", "content": "Hi"}],
+                "stream": True}) as resp:
+            assert resp.status_code == 200
+            for _ in resp.iter_bytes():
+                pass
         lines = [l for l in resp.text.split("\n") if l.strip()]
         data_lines = [json.loads(l.split(": ", 1)[1]) for l in lines
                       if l.startswith("data: ") and l.strip() != "data: [DONE]"]
@@ -642,11 +650,12 @@ class TestChatCompletionsStreaming:
 
         mock_arkestra.astream = lambda model_name, payload: bare_stream()
 
-        client.post("/v1/chat/completions", json={
-            "model": "qwen3-4b",
-            "messages": [{"role": "user", "content": "Say one word"}],
-            "stream": True,
-        })
+        with client.stream("POST", "/v1/chat/completions", json={
+                "model": "qwen3-4b",
+                "messages": [{"role": "user", "content": "Say one word"}],
+                "stream": True}) as resp:
+            for _ in resp.iter_bytes():
+                pass
         stats = mock_arkestra._last_request_stats
         assert stats["completion_tokens"] == 1
         assert stats["prompt_tokens"] >= 1
