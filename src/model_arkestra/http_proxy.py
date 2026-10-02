@@ -33,14 +33,18 @@ class StreamStats:
     def __init__(self):
         self.tokens: int = 0
         self.usage: Dict[str, Any] = {}
-        self._buf: str = ""
+        # Bytes, not str: avoids re-concatenating a growing string per chunk
+        # (O(n^2) across the stream). Only complete lines are decoded.
+        self._buf: bytes = b""
 
     def feed(self, chunk: bytes) -> None:
         """Process a raw byte chunk. Updates tokens/usage counters."""
-        self._buf += chunk.decode("utf-8", errors="replace")
-        while "\n" in self._buf:
-            line, self._buf = self._buf.split("\n", 1)
-            line = line.strip()
+        self._buf += chunk
+        while b"\n" in self._buf:
+            line_bytes, self._buf = self._buf.split(b"\n", 1)
+            # Decode each complete line once — the buffer holds at most one
+            # partial line between feeds, so growth stays O(line), not O(stream).
+            line = line_bytes.decode("utf-8", errors="replace").strip()
             if not line.startswith("data:"):
                 continue
             data = line[5:].strip()
@@ -62,7 +66,7 @@ class StreamStats:
     def reset(self) -> None:
         self.tokens = 0
         self.usage = {}
-        self._buf = ""
+        self._buf = b""
 
 
 # ── Chat completion extraction ───────────────────────────────────────────
