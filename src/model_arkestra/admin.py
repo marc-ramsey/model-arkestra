@@ -10,6 +10,7 @@ import aiohttp
 import copy
 import mimetypes
 import os
+import secrets
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -36,6 +37,80 @@ from model_arkestra.types import RunnerState
 
 # ── Model config field definitions (single source of truth) ─────────────
 MODEL_CONFIG_FIELDS = frozenset({"backend", "runner", "tags", "max_log_lines"})
+
+# Liveness/connection probes — always reachable, no key required.
+# Shared by the embedded gate below and ArkestraServer's CLI-level gate so
+# both postures agree on what a monitoring probe may call anonymously.
+AUTH_OPEN_PATHS = frozenset({
+    "/health", "/v1/health", "/api/v1/health",
+})
+
+
+def validate_key(name: str, value: Optional[str]) -> Optional[str]:
+    """Reject keys that cannot travel in an HTTP header.
+
+    Header values are ASCII (RFC 7230), so a non-ASCII key could never be sent
+    by a client - and secrets.compare_digest raises TypeError on such str, which
+    would turn a request into a 500. Failing at startup surfaces the typo in
+    config instead of breaking requests later.
+    """
+    if value is None or not isinstance(value, str):
+        return value
+    try:
+        value.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise ValueError(
+            f"{name} must be ASCII (it travels in an Authorization header); "
+            f"position {exc.start} is not representable"
+        ) from exc
+    return value
+
+
+ASCII_KEY_ERR = "API keys must be ASCII - HTTP headers cannot carry others"
+
+
+def ascii_key(key: Optional[str], label: str = "key") -> Optional[str]:
+    """Validate a configured key and return it unchanged.
+
+    Header values are ASCII-only by RFC 7230, so a non-ASCII key could never be
+    presented by any client. Rejecting at config load keeps every later string
+    comparison safe (secrets.compare_digest raises on non-Latin-1 str) instead
+    of crashing the request path with a 500.
+
+    Raises:
+        ValueError: when ``key`` contains characters outside ASCII.
+    """
+    if key is None or key == "":
+        return None
+    try:
+        key.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise ValueError(f"{ASCII_KEY_ERR}: {label}") from exc
+    return key
+
+
+def _const_eq(token: str, key: Optional[str]) -> bool:
+    """Constant-time compare; False when no key configured or lengths differ."""
+    if not key:
+        return False
+    return secrets.compare_digest(token, key)
+
+
+def is_open_path(path: str, base_url: str = "") -> bool:
+    """True when ``path`` (prefix-stripped) is a keyless probe route."""
+    return strip_base(path, base_url) in AUTH_OPEN_PATHS
+
+
+def strip_base(path: str, base_url: str = "") -> str:
+    """Drop ``base_url`` so gating matches the logical route.
+
+    Both auth middlewares run outside the prefix-rewriting middleware, so
+    under ``base_url=/ark`` a request for /ark/v1/chat/completions arrives
+    still prefixed — and would otherwise slip past the /v1 gate.
+    """
+    if base_url and (path == base_url or path.startswith(base_url + "/")):
+        return path[len(base_url):] or "/"
+    return path
 
 
 def _build_start_kwargs(body: Dict[str, Any] | None) -> Dict[str, Any]:
@@ -70,8 +145,10 @@ class ArkestraAdmin:
     def __init__(self, server: "ArkestraServer", admin_key: Optional[str], app: FastAPI,
                  api_key: Optional[str] = None, base_url: str = ""):
         self.server = server
-        self.admin_key = admin_key
-        self.api_key = api_key
+        # A key must survive an HTTP header round-trip (headers are ASCII), so
+        # reject non-conformant config early rather than 500 on every request.
+        self.admin_key = ascii_key(admin_key)
+        self.api_key = ascii_key(api_key)
         self._app = app
         self.base_url = base_url
         self._installed = False
@@ -234,9 +311,13 @@ class ArkestraAdmin:
             return {"ok": True, "cluster": name}
 
     def _add_root_route(self) -> None:
+        # Never embed the API key in served HTML: GET / matches no gated
+        # namespace, so any network client could read the token out of the
+        # page and replay it on /admin/*. The dashboard prompts for a key on
+        # the first 401 instead (see static/api.js).
         html = Path(__file__).parent / "static" / "index.html"
         content = (html.read_text()
-                   .replace("{{API_KEY}}", self.api_key or "")
+                   .replace("{{API_KEY}}", "")
                    .replace("{{BASE_URL}}", self.base_url or ""))
 
         @self._app.get("/")
@@ -261,17 +342,48 @@ class ArkestraAdmin:
             return Response(content=file_path.read_bytes(), media_type=mime,
                             headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
+    # ── auth helpers ────────────────────────────────────────────────
+    def token_ok_admin(self, token: str) -> bool:
+        """Constant-time compare against admin_key only (/admin/* is its own)."""
+        return _const_eq(token, self.admin_key)
+
+    def token_ok_api(self, token: str) -> bool:
+        """True for api_key OR admin_key - an admin reaches inference/config."""
+        # Admin must reach /api/models and /v1/* (the console calls both), so
+        # the keys are a superset pair rather than two isolated realms.
+        return _const_eq(token, self.api_key) or _const_eq(token, self.admin_key)
+
+    def auth_ok(self, token: str) -> bool:
+        """True when ``token`` matches either key."""
+        return self.token_ok_api(token)
+
     def _add_auth_middleware(self) -> None:
-        # Install auth middleware for both /admin and /api namespaces.
-        # Both accept api_key OR admin_key as Bearer token — either works.
+        # Two keys, two scopes. api_key guards the working namespaces (/v1/*,
+        # /api/*, dashboard); admin_key additionally owns /admin/*. With
+        # neither configured there is no token to present, so everything stays
+        # open - that single-user LAN posture must never gain a hidden default.
         @self._app.middleware("http")
         async def api_auth(request: Request, call_next):
-            path = request.url.path
+            base = self.base_url or ""
+
+            # Classify on the logical route first. Auth runs outside the
+            # prefix-rewriting middleware, so /ark/v1/... must be stripped
+            # before it can match any namespace gate.
+            path = strip_base(request.url.path, base)
+
+            # Liveness probes carry no model data and Open WebUI polls them
+            # anonymously to render connection state - never gated.
+            if is_open_path(path):
+                return await call_next(request)
+
             is_admin = path == "/admin" or path.startswith("/admin/")
-            # OWUI polls /api/v1/health unauthenticated for connection status
-            is_api = (path == "/api" or path.startswith("/api/")) and path != "/api/v1/health"
-            any_gated = (is_admin and self.admin_key) or (is_api and self.api_key)
-            if not any_gated:
+            is_dash = path in ("/", "/index.html")
+            is_api = (path == "/api" or path.startswith("/api/")
+                      or path == "/v1" or path.startswith("/v1/"))
+
+            # A route needs a token only if some key exists to serve it.
+            if not ((is_admin and self.admin_key)
+                    or (self.api_key and (is_api or is_dash))):
                 return await call_next(request)
 
             header = request.headers.get("authorization", "")
@@ -282,21 +394,17 @@ class ArkestraAdmin:
                 )
             token = header[7:]
 
-            # For /admin routes, accept either key
-            if is_admin and self.admin_key and token == self.admin_key:
-                return await call_next(request)
-            if is_admin and self.api_key and token == self.api_key:
-                return await call_next(request)
-            # For /api routes, accept either key (admin also works)
-            if is_api and self.admin_key and token == self.admin_key:
-                return await call_next(request)
-            if is_api and self.api_key and token == self.api_key:
+            # /admin/* answers only to admin_key; every other gated route takes
+            # api_key too. Keeps a leaked API token from reaching the console.
+            admitted = self.token_ok_admin(token) if is_admin else self.token_ok_api(token)
+            if admitted:
                 return await call_next(request)
 
             return JSONResponse(
                 status_code=401,
                 content={"error": "Invalid or missing Authorization header"},
             )
+
 
     def _add_models_route(self) -> None:
         @self._app.get("/admin/models")

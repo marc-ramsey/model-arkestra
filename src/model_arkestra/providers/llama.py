@@ -31,8 +31,13 @@ LLAMA_FIELDS = frozenset({
     "stream_options",
 })
 
-_RETRIES = 12
 _RETRY_SLEEP = 2.5
+# Wall-clock budget for the whole call, retries included. Counting attempts is
+# not a bound: a server that accepts TCP but never answers burns one full
+# per-attempt timeout each go-round (12 × 60s ≈ 12 min of a frozen request).
+_RETRY_DEADLINE = 90.0
+# Single POST budget. Bounded below _RETRY_DEADLINE so at least one retry fits.
+_CHAT_TIMEOUT = 60.0
 # Per-request timeout for chat/stream calls. sock_read bounds the gap between
 # chunks — it is the only liveness guard. total is unbounded: a healthy stream
 # never goes silent, while long-context prefills and slow per-token rates on
@@ -79,30 +84,45 @@ class LlamaProvider(Provider):
             payload["messages"] = [{"role": "user", "content": prompt}]
         payload.update({k: v for k, v in kwargs.items() if k in LLAMA_FIELDS and v is not None})
 
+        deadline = time.monotonic() + _RETRY_DEADLINE
         last_err: Exception | None = None
-        for attempt in range(_RETRIES):
+        while True:
+            retryable = False
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.post(
-                        f"{self._base}/v1/chat/completions", json=payload, timeout=60
+                        f"{self._base}/v1/chat/completions", json=payload,
+                        timeout=_CHAT_TIMEOUT,
                     ) as resp:
                         if resp.status == 503:
-                            await asyncio.sleep(_RETRY_SLEEP)
-                            continue
-                        if resp.status in (502, 504):
+                            # Server is up, model busy/unloaded — worth retrying,
+                            # but keep the real cause for the final report.
+                            last_err = RunnerError("Server returned 503 (model busy)")
+                            retryable = True
+                        elif resp.status in (502, 504):
                             raise RunnerError(f"Server returned {resp.status}: upstream or gateway failure")
-                        if resp.status != 200:
+                        elif resp.status != 200:
                             raise RunnerError(f"Server error: {resp.status}")
-                        data = await resp.json()
-                return parse_completion(data)
+                        else:
+                            data = await resp.json()
             except (aiohttp.ClientConnectionError, asyncio.TimeoutError) as exc:
                 last_err = exc
-                if attempt == _RETRIES - 1:
-                    break
-                await asyncio.sleep(_RETRY_SLEEP)
+                retryable = True
+            except RunnerError:
+                raise
             except Exception as e:
                 raise RunnerError(f"Request failed: {e}") from None
-        raise RunnerError(f"Server not reachable after {_RETRIES} attempts") from last_err
+
+            if not retryable:
+                return parse_completion(data)
+
+            if deadline - time.monotonic() <= _RETRY_SLEEP:
+                break
+            await asyncio.sleep(_RETRY_SLEEP)
+
+        # asyncio.TimeoutError stringifies to '' — name the cause explicitly.
+        why = str(last_err) or type(last_err).__name__
+        raise RunnerError(f"{why} — giving up after {int(_RETRY_DEADLINE)}s of retries") from last_err
 
     async def stream(self, payload: Dict[str, Any]) -> AsyncIterator[bytes]:
         """Yield raw SSE bytes from llama-server. No parsing — the caller

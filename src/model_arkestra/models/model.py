@@ -120,7 +120,13 @@ class _Model:
         else:
             # process / podman / docker — HTTP engine on the model port
             cls = PROVIDERS.get(self.engine or "llama-cpp", LlamaProvider)
-            self._provider = cls(self.name, self.port or 0)
+            # LlamaProvider is the only engine that streams, so it is the only
+            # one honoring the sock-read override (config default/stream-sock-timeout).
+            if cls is LlamaProvider:
+                self._provider = cls(self.name, self.port or 0,
+                                      stream_sock_timeout=self._stream_sock_timeout)
+            else:
+                self._provider = cls(self.name, self.port or 0)
         return self._provider
 
     # ── log ring ────────────────────────────────────────────────

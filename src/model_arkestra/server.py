@@ -19,6 +19,7 @@ import json
 import os
 import platform
 import re
+import secrets
 import time
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -221,6 +222,7 @@ class ArkestraServer:
         openai_aliases: Optional[Dict[str, str]] = None,
         extra_headers: Optional[Dict[str, str]] = None,
         admin_key: Optional[str] = None,
+        api_key: Optional[str] = None,
         broadcast_addr: Optional[str] = None,
         allow_origins: Optional[List[str]] = None,
         base_url: str = "",
@@ -231,6 +233,9 @@ class ArkestraServer:
         self.openai_aliases = openai_aliases or {}
         self.extra_headers = extra_headers or {}
         self.admin_key = admin_key
+        # CLI/env key wins over config so the outer middleware and the
+        # /admin + /api gates accept one token, not two.
+        self.api_key = api_key
         self.base_url = base_url
         self.allow_origins = allow_origins
         self.bind_host = bind_host
@@ -765,7 +770,7 @@ class ArkestraServer:
         # ── Admin subcomponent ───────────────────────────────────
         from model_arkestra.admin import ArkestraAdmin
         admin_key = self._arkestra.resolve_config("admin_key", explicit=self.admin_key)
-        api_key = self._arkestra.resolve_config("api_key")
+        api_key = self.api_key or self._arkestra.resolve_config("api_key")
         self._admin = ArkestraAdmin(self, admin_key=admin_key, app=app, api_key=api_key,
                                     base_url=self.base_url)
         self._admin.install()
@@ -1039,6 +1044,7 @@ def main(argv: list[str] | None = None) -> None:
         port=args.port,
         ready_timeout=args.ready_timeout,
         openai_aliases=aliases,
+        api_key=args.api_key,
         allow_origins=["*"] if args.cors else None,
         broadcast_addr=args.broadcast_addr,
         base_url=conn.base_path,
@@ -1047,20 +1053,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     app = proxy.get_app()
 
-    # ── Optional API key middleware (runs before every request) ────────
-    if args.api_key:
-        from fastapi import Request
-        from fastapi.responses import JSONResponse
-
-        @app.middleware("http")
-        async def auth_middleware(request: Request, call_next):
-            header = request.headers.get("Authorization", "")
-            if not header.startswith("Bearer ") or header[7:] != args.api_key:
-                return JSONResponse(
-                    status_code=401,
-                    content={"detail": "Missing or invalid API key"},
-                )
-            return await call_next(request)
+    # Auth lives in ArkestraAdmin's middleware (installed by get_app()). A second
+    # gate here would register later and run outermost, silently overriding the
+    # api_key/admin_key split with its own narrower policy.
 
     # ── Startup banner ────────────────────────────────────────────────
     scheme = "https" if args.ssl_certfile else conn.scheme

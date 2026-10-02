@@ -1,5 +1,6 @@
 """Shared constants and utilities for container-based runners."""
 from __future__ import annotations
+import logging
 import os
 import re
 import subprocess as _subprocess
@@ -9,19 +10,44 @@ from model_arkestra.gpu_detect import detect_all
 from pathlib import Path
 import yaml
 from typing import Any, Dict, List, Optional, Tuple
+
+log = logging.getLogger(__name__)
+
 INFRA_KEYS = frozenset({
     'backend', 'runner', 'max_log_lines',
 })
 
+SCHEMA_FILE = "schemas.yaml"
+
 
 def _load_schema_registry(config_path: Optional[str] = None) -> Dict[str, Any]:
-    """Load the engine-arg schema registry from package data (read-only)."""
+    """Load the engine-arg schema registry from package data (read-only).
+
+    Raises RuntimeError when the file is missing, unparseable, or malformed.
+    Every inference arg is filtered against this whitelist, so a failed load
+    would silently strip ngl/ctx-size/flash-attn from all launches — better to
+    fail loudly than to start servers with no configured args.
+    """
     try:
         from importlib.resources import files
-        text = (files("model_arkestra.data") / "schemas.yaml").read_text()
-        return yaml.safe_load(text) or {}
-    except Exception:
-        return {}
+        text = (files("model_arkestra.data") / SCHEMA_FILE).read_text()
+    except Exception as e:
+        log.error("Schema registry unreadable: %s", e)
+        raise RuntimeError(f"Schema registry '{SCHEMA_FILE}' missing from package data") from e
+
+    try:
+        data = yaml.safe_load(text)
+    except Exception as e:
+        log.error("Schema registry parse error: %s", e)
+        raise RuntimeError(f"Schema registry '{SCHEMA_FILE}' is not valid YAML") from e
+
+    # Structural check: expect {model-args: {<engine>: {<arg>: {...}}}}
+    if not isinstance(data, dict) or not isinstance(data.get("model-args"), dict):
+        raise RuntimeError(
+            f"Schema registry '{SCHEMA_FILE}' must be a mapping containing a"
+            f" 'model-args' mapping"
+        )
+    return data
 
 
 def _get_inference_keys(model_data: Dict, backend_cfg: Dict, default_section: Dict,
@@ -138,12 +164,10 @@ def resolve_model_ref(
     final_quant = quant or default_quant
 
     # --- Step 4: Build fully qualified ref ---
+    # A slash in the repo (alias name or default/model-repo) is still just a
+    # namespace: "ggml-org/llama.cpp" + "model" must not drop the model name.
     if effective_repo and model_name:
-        if "/" in effective_repo:
-            # Owner already has slash — use as-is, append model if needed
-            ref = f"{effective_repo}"
-        else:
-            ref = f"{effective_repo}/{model_name}"
+        ref = f"{effective_repo.rstrip('/')}/{model_name}"
     elif effective_repo:
         ref = effective_repo
     else:
@@ -170,8 +194,14 @@ def _split_quant(s: str) -> Tuple[str, str]:
     if idx != -1:
         return s[:idx], s[idx + 1:]
     return s, ""
-# Subprocess env — convert os.environ to plain dict for uvloop compatibility
-SUBPROCESS_ENV: Dict[str, str] = dict(os.environ)
+
+def subprocess_env() -> Dict[str, str]:
+    """Plain dict copy of the live environment for subprocess calls.
+
+    Read at call time — a module-level snapshot would miss vars set after
+    import (embedders, tests). Matches process.py's per-spawn copy.
+    """
+    return dict(os.environ)
 
 # ── Default config directory ───────────────────────────────────────────────
 DEFAULT_CONFIG_DIR = Path.home() / ".config" / "arkestra"

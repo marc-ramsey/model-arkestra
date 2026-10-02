@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 from model_arkestra.base import BaseRunner
 from model_arkestra.common import (
-    INSPECT_RE, SUBPROCESS_ENV,
+    INSPECT_RE, subprocess_env,
     build_model_args, default_cache_root,
     resolve_binary_from_backend, safe_container_name,
 )
@@ -172,7 +172,7 @@ class ContainerRunner(BaseRunner, ABC):
             *cmd_parts,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=SUBPROCESS_ENV,
+            env=subprocess_env(),
         )
 
         interleaved: List[str] = []
@@ -238,7 +238,7 @@ class ContainerRunner(BaseRunner, ABC):
                     self._container_cmd(), "rm", "-f", cid,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
-                    env=SUBPROCESS_ENV,
+                    env=subprocess_env(),
                 )
                 await proc.wait()
             except Exception:
@@ -253,7 +253,7 @@ class ContainerRunner(BaseRunner, ABC):
         inspect = await asyncio.create_subprocess_exec(
             cmd, "image", "inspect", image,
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-            env=SUBPROCESS_ENV)
+            env=subprocess_env())
         if (await inspect.wait()) == 0:
             return  # already present
 
@@ -261,7 +261,7 @@ class ContainerRunner(BaseRunner, ABC):
         pull = await asyncio.create_subprocess_exec(
             cmd, "pull", image,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-            env=SUBPROCESS_ENV)
+            env=subprocess_env())
         async for raw in pull.stdout:
             line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
             if line:
@@ -282,7 +282,7 @@ class ContainerRunner(BaseRunner, ABC):
                 *pre_cmd,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
-                env=SUBPROCESS_ENV,
+                env=subprocess_env(),
             )
             await proc.wait()
 
@@ -322,7 +322,7 @@ class ContainerRunner(BaseRunner, ABC):
             shlex.join(cmd_parts),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=SUBPROCESS_ENV,
+            env=subprocess_env(),
         )
         stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
@@ -358,7 +358,7 @@ class ContainerRunner(BaseRunner, ABC):
                     self._container_cmd(), "inspect", cid, "--format", "{{.State.Status}}",
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                    env=SUBPROCESS_ENV,
+                    env=subprocess_env(),
                 )
                 stdout, _ = await proc.communicate()
 
@@ -389,7 +389,7 @@ class ContainerRunner(BaseRunner, ABC):
             self._container_cmd(), "logs", "-f", "--tail", "0", container_id,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=SUBPROCESS_ENV,
+            env=subprocess_env(),
         )
 
         async def _read_stream(stream):
@@ -442,7 +442,7 @@ class ContainerRunner(BaseRunner, ABC):
                 self._container_cmd(), "stop", "--time", str(self.port_drain_timeout), cid,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=SUBPROCESS_ENV,
+                env=subprocess_env(),
             )
             await stop.wait()
         except Exception:

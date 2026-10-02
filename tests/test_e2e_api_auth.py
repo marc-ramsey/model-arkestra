@@ -1,8 +1,9 @@
 """E2E tests for /api/* endpoint authentication.
 
 Verifies Bearer token enforcement on all /api/* routes:
-- 401 when no header or wrong token (when api_key is configured)
-- 200 with correct api_key OR admin_key on any /api/* route
+- 401 when no header or wrong token (when a key is configured)
+- 200 with api_key OR admin_key on /v1/* and /api/* routes
+- 200 only for admin_key on /admin/* - an inference token must not reach the console
 - Endpoints: GET /api/models, GET /api/clusters
 
 Run: pytest tests/test_e2e_api_auth.py -v --timeout=120
@@ -242,13 +243,14 @@ class TestAPIRoutes:
 
 @pytest.mark.e2e
 class TestAdminRoutesWithKey:
-    """Admin routes work with both api_key and admin_key."""
+    """/admin/* belongs to admin_key alone; api_key is never admitted there."""
 
     def test_admin_models_with_api_key(self, api_server):
+        # An inference token must not reach model lifecycle or config mutation.
         r = api_server["client"].get(
             f"{api_server['base_url']}/admin/models",
             headers={"Authorization": "Bearer test-api-key"})
-        assert r.status_code == 200
+        assert r.status_code == 401
 
     def test_admin_models_with_admin_key(self, api_server):
         r = api_server["client"].get(
