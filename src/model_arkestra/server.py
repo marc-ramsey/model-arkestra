@@ -865,7 +865,6 @@ class ArkestraServer:
                 yield raw
 
             # Stream ended — record stats
-            import traceback; print("PROBE-POSTLOOP reached", flush=True)
             latency_ms = round((time.monotonic() - t0) * 1000)
             prompt_ms = round((first_token_time - t0) * 1000) if first_token_time else 0
             eval_ms = latency_ms - prompt_ms

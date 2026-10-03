@@ -208,6 +208,9 @@ def _build_app(mock_arkestra, aliases=None):
         return Response(content=png, media_type="image/png")
 
     client = TestClient(app, raise_server_exceptions=False)
+    # Expose the proxy so tests can assert on server-side state
+    # (e.g. _last_request_stats written by _stream_chat's side channel).
+    client._proxy = proxy
     return client, mock_arkestra
 
 
@@ -626,9 +629,9 @@ class TestChatCompletionsStreaming:
                 "messages": [{"role": "user", "content": "Hi"}],
                 "stream": True}) as resp:
             assert resp.status_code == 200
-            for _ in resp.iter_bytes():
-                pass
-        lines = [l for l in resp.text.split("\n") if l.strip()]
+            # Accumulate manually — httpx forbids .text/.content after iter_bytes()
+            body = b"".join(resp.iter_bytes())
+        lines = [l for l in body.decode().split("\n") if l.strip()]
         data_lines = [json.loads(l.split(": ", 1)[1]) for l in lines
                       if l.startswith("data: ") and l.strip() != "data: [DONE]"]
         # Usage chunk forwarded verbatim — extra fields (timings) survive
@@ -637,9 +640,10 @@ class TestChatCompletionsStreaming:
         assert usage_line["usage"]["completion_tokens_details"] == {"reasoning_tokens": 0}
         assert usage_line["timings"]["predicted_n"] == 7
         assert usage_line["id"] == "chatcmpl-abc"
-        # Real counts land in /api/v1/stats, not word estimates
-        assert mock_arkestra._last_request_stats["completion_tokens"] == 7
-        assert mock_arkestra._last_request_stats["prompt_tokens"] == 5
+        # Real counts land on the server (source of /api/v1/stats), not word estimates
+        stats = client._proxy._last_request_stats
+        assert stats["completion_tokens"] == 7
+        assert stats["prompt_tokens"] == 5
 
     def test_streaming_stats_word_estimate_without_usage(self, mock_arkestra):
         """No usage chunk — stats fall back to token count / word estimates."""
@@ -656,7 +660,8 @@ class TestChatCompletionsStreaming:
                 "stream": True}) as resp:
             for _ in resp.iter_bytes():
                 pass
-        stats = mock_arkestra._last_request_stats
+        # Stats live on the server object, not the mocked arkestra backend
+        stats = client._proxy._last_request_stats
         assert stats["completion_tokens"] == 1
         assert stats["prompt_tokens"] >= 1
 
