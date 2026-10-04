@@ -20,6 +20,9 @@ class Registry:
         self._cm = cm
         self._checkpoints: Dict[str, Any] = {}   # checkpoint_id → _Model
         self._models: Dict[str, str] = {}        # model_name → checkpoint_id
+        # User-boundary case folding: any typed casing of a registered name maps
+        # to the first-seen config spelling. Config keys themselves stay exact.
+        self._folded_to_name: Dict[str, str] = {}
         self._local_cluster_key: str = cm.get("default/local-cluster-key", "local")
 
         # ── port pool ───────────────────────────────────────────
@@ -41,6 +44,9 @@ class Registry:
         """
         self._checkpoints[checkpoint_id] = ctx
         for name in model_names:
+            folded = name.casefold()
+            if folded not in self._folded_to_name:   # first spelling wins; later same-fold names alias it
+                self._folded_to_name[folded] = name
             self._models[name] = checkpoint_id
 
         # Attach config for capability derivation (use first model name).
@@ -67,13 +73,19 @@ class Registry:
             pass
 
     # ── lookup ──────────────────────────────────────────────────
+    def _resolve(self, model_name: str) -> Optional[str]:
+        """Any user-typed casing → the exact registered spelling, or None."""
+        return self._folded_to_name.get(model_name.casefold())
+
     def get_checkpoint_id(self, model_name: str) -> Optional[str]:
-        """Resolve a model name to its checkpoint id."""
-        return self._models.get(model_name)
+        """Resolve a model name (any casing) to its checkpoint id."""
+        name = self._resolve(model_name)
+        return None if name is None else self._models[name]
 
     def get_context(self, model_name: str) -> Optional[Any]:
-        """Resolve a model name to its context (via checkpoint)."""
-        ckpt_id = self._models.get(model_name)
+        """Resolve a model name (any casing) to its context (via checkpoint)."""
+        name = self._resolve(model_name)
+        ckpt_id = self._models.get(name) if name else None
         if ckpt_id is None:
             return None
         return self._checkpoints.get(ckpt_id)
@@ -93,8 +105,9 @@ class Registry:
 
     # ── port pool ───────────────────────────────────────────────
     def allocate_port(self, model_name: str) -> int:
-        """Reuse a stopped checkpoint's port, else take the next from the pool."""
-        ckpt_id = self._models.get(model_name)
+        """Reuse a stopped checkpoint's port (any casing), else take the next from the pool."""
+        name = self._resolve(model_name)
+        ckpt_id = self._models.get(name) if name else None
         ctx = self._checkpoints.get(ckpt_id) if ckpt_id else None
         if ctx is not None and ctx.port is not None:
             return ctx.port
