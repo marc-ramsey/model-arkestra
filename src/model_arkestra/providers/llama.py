@@ -39,14 +39,18 @@ _RETRY_DEADLINE = 90.0
 # Single POST budget. Bounded below _RETRY_DEADLINE so at least one retry fits.
 _CHAT_TIMEOUT = 60.0
 # Per-request timeout for chat/stream calls. sock_read bounds the gap between
-# chunks — it is the only liveness guard. total is unbounded: a healthy stream
-# never goes silent, while long-context prefills and slow per-token rates on
-# 27B-class models legitimately exceed any fixed total and used to be
-# aborted mid-stream (surfacing as client "Connection error" + hang).
-# sock_read defaults to 120s (27B+ prefills on consumer GPUs can exceed 30s
-# before the first token) and is overridable via config
-# ``default/stream-sock-timeout``.
-_DEFAULT_STREAM_SOCK_READ = 120.0
+# chunks — it is the only liveness guard. total is unbounded: long-context
+# prefills and slow per-token rates on 27B-class models legitimately exceed
+# any fixed total (a tighter one used to abort healthy streams mid-flight,
+# surfacing as client "Connection error" + hang).
+#
+# A stream that is *silent* for minutes is not a dead peer: agentic workloads
+# stall it on the client side while tools execute, and single tokens can take
+# very long once KV cache runs deep. 120s fired exactly there (mid-reasoning,
+# ~2 min in) killing streams that were fine. Bounded at 600s so a truly wedged
+# llama-server still surfaces an error instead of hanging forever; dead peers
+# are caught immediately by TCP reset, not this timeout.
+_DEFAULT_STREAM_SOCK_READ = 600.0
 
 
 def stream_timeout(sock_read: Optional[float] = None) -> aiohttp.ClientTimeout:
