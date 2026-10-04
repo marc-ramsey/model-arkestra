@@ -41,6 +41,10 @@ def _start_server(port: int, config: str) -> tuple[Any, httpx.Client]:
         asyncio.run(server_obj.serve())
 
     t = threading.Thread(target=serve, daemon=True)
+    # Keep the thread on the server so _stop() can join it — otherwise the
+    # port stays bound by pytest itself and the module-scope port sweep in
+    # conftest SIGKILLs this very process.
+    proxy._server_thread = t
     t.start()
     time.sleep(2)  # give uvicorn time to bind
     client = httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=30)
@@ -48,8 +52,21 @@ def _start_server(port: int, config: str) -> tuple[Any, httpx.Client]:
 
 
 def _stop(proxy: Any) -> None:
-    if hasattr(proxy, "_server"):
-        proxy._server.should_exit = True
+    """Stop the server and wait for its port to be released.
+
+    Setting ``should_exit`` alone leaves the serve thread (and thus the bound
+    socket) alive until uvicorn notices — a race that lets conftest's next-
+    module port sweep find *this* process on 18010/18011 and kill it.
+    """
+    server_obj = getattr(proxy, "_server", None)
+    if server_obj is not None:
+        server_obj.should_exit = True
+    t = getattr(proxy, "_server_thread", None)
+    if t is not None:
+        # Bounded wait: uvicorn drains in-flight requests on shutdown.
+        t.join(timeout=10)
+        if t.is_alive():
+            print(f"[remote] serve thread still alive after 10 s — port may leak")
 
 
 # ── Fixtures ───────────────────────────────────────────────────────────────

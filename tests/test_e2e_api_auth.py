@@ -230,7 +230,7 @@ class TestAPIRoutes:
     """New /api/* endpoints return correct response shapes."""
 
     def test_api_models_list_structure(self, api_server):
-        """GET /api/models returns cached-only models with name/model/size only."""
+        """GET /api/models returns non-UNCACHED models with the documented keys."""
         r = api_server["client"].get(
             f"{api_server['base_url']}/api/models",
             headers={"Authorization": "Bearer test-api-key"})
@@ -238,7 +238,9 @@ class TestAPIRoutes:
         body = r.json()
         models = body.get("models", [])
         for m in models:
-            assert set(m.keys()) <= {"name", "model", "size"}
+            # e397a3a added status + context_length (shared with /v1/models).
+            assert set(m.keys()) <= {
+                "name", "model", "size", "status", "context_length"}
 
 
 @pytest.mark.e2e

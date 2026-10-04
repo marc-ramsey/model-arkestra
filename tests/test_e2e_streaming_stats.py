@@ -30,6 +30,7 @@ from test_backend_e2e import (  # noqa: E402
     _stop_all_and_wait,
     _stop_server,
     _admin_headers,
+    e2e_cache,
 )
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -54,8 +55,11 @@ def e2e_serialized():
 
 
 @pytest.fixture()
-def streaming_server(e2e_serialized, request):
-    """One server per test on a dedicated port; lock held across its life."""
+def streaming_server(e2e_serialized, e2e_cache, request):
+    """One server per test on a dedicated port; lock held across its life.
+
+    Depends on the session ``e2e_cache`` so weights are pre-downloaded —
+    without it the model is UNCACHED and /admin/start 409s before any pull."""
     combo_id = request.param[0] if hasattr(request, "param") else "process-vulkan"
     backend_name = request.param[1] if hasattr(request, "param") else "vulkan-process"
 

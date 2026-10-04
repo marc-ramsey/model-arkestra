@@ -21,6 +21,7 @@ exported for modules that need low-level cleanup inside their own fixtures.
 
 from __future__ import annotations
 import asyncio
+import logging
 import os
 import signal
 import subprocess
@@ -56,6 +57,16 @@ _START_PORT: int = int(((_cfg.get("default") or {}).get("model-start-port")) or 
 _CLEANUP_PORTS = tuple(range(_START_PORT, _START_PORT + 20))
 
 # ── Port / process helpers (reusable by test modules) ────────────────────────
+
+log = logging.getLogger(__name__)
+
+
+def _lsof_pids(port: int) -> list[int]:
+    """All numeric PIDs lsof reports for *port*."""
+    result = subprocess.run(
+        ["lsof", f"-ti:{port}"], capture_output=True, text=True
+    )
+    return [int(s) for s in result.stdout.split() if s.isdigit()]
 
 
 def graceful_server_teardown(fixture_dict_or_proxy) -> None:
@@ -116,17 +127,38 @@ def graceful_server_teardown(fixture_dict_or_proxy) -> None:
             return  # all ports free — done
         time.sleep(poll_interval)
 
-    # Port(s) still occupied after 20 s → force kill as last resort
+    # Port(s) still occupied after 20 s → force kill as last resort.
+    # Only foreign PIDs — the port may be held by this process's own
+    # (leaked) in-process server, which must not take down pytest.
     for p in ports:
-        result = subprocess.run(
-            ["lsof", f"-ti:{p}"], capture_output=True, text=True
-        )
-        for pid in result.stdout.strip().split():
-            if pid:
-                try:
-                    os.kill(int(pid), 9)
-                except OSError:
-                    pass
+        all_pids = _lsof_pids(p)
+        if len(all_pids) == 1 and all_pids[0] == os.getpid():
+            log.warning("port %d still held by this process (PID %d); "
+                        "in-process server leaked, not killing", p, all_pids[0])
+            continue
+        for pid in _foreign_pids(all_pids):
+            try:
+                os.kill(pid, 9)
+            except OSError:
+                pass
+
+
+def _foreign_pids(pids) -> list[int]:
+    """PIDs excluding this interpreter.
+
+    Test servers run in-process (daemon threads), so ``lsof -ti:<port>`` can
+    return pytest's own PID — killing it would SIGKILL the whole test session,
+    exactly how a leaked port used to take down the suite at module boundaries.
+    """
+    self = os.getpid()
+    out = []
+    for p in pids:
+        if isinstance(p, str) and not p.isdigit():
+            continue
+        pid = int(p)
+        if pid != self and pid not in out:
+            out.append(pid)
+    return out
 
 
 def _kill_port(port: int) -> None:
@@ -135,14 +167,9 @@ def _kill_port(port: int) -> None:
     Tries os.kill first (fast), falls back to fuser/kill command for edge cases
     where the process is owned by root or os.kill silently fails.
     """
-    # Strategy 1: lsof + os.kill (fast path)
-    pids = []
-    result = subprocess.run(
-        ["lsof", f"-ti:{port}"], capture_output=True, text=True
-    )
-    for pid in result.stdout.strip().split():
-        if pid:
-            pids.append(int(pid))
+    # Strategy 1: lsof + os.kill (fast path). Never touches this interpreter —
+    # in-process test servers bind these ports; SIGKILLing pytest ends the session.
+    pids = _foreign_pids(_lsof_pids(port))
 
     for pid in list(pids):
         try:
@@ -150,10 +177,12 @@ def _kill_port(port: int) -> None:
         except OSError:
             pass  # may be root-owned or already dead
 
-    # Strategy 2: fuser -k as fallback (handles permission edge cases)
+    # Strategy 2: fuser -k by PID as fallback (handles permission edge cases).
+    # By-PID on purpose — a blanket ``fuser -k <port>/tcp`` would hit this process too.
     if pids:
-        subprocess.run(["fuser", "-k", "-9", f"{port}/tcp"],
-                       capture_output=True, timeout=5)
+        for pid in list(pids):
+            subprocess.run(["fuser", "-k", "-9", str(pid)],
+                           capture_output=True, timeout=5)
 
     # Strategy 3: broad llama-server cleanup on this port (zombie orphans)
     result = subprocess.run(
@@ -168,13 +197,20 @@ def _kill_port(port: int) -> None:
 
 
 def _wait_for_port_free(port: int, timeout: float = 10.0) -> bool:
-    """Block until no process is listening on *port*, or *timeout* seconds elapse."""
+    """Block until no foreign process is listening on *port*, or *timeout* elapses.
+
+    A port held only by this interpreter (leaked in-process server) cannot be
+    cleared here — it reports free with a warning so the leak stays visible,
+    instead of silently passing and poisoning later tests.
+    """
     deadline = asyncio.get_event_loop().time() + timeout
     while asyncio.get_event_loop().time() < deadline:
-        result = subprocess.run(
-            ["lsof", f"-ti:{port}"], capture_output=True, text=True
-        )
-        pids = [p for p in result.stdout.strip().split() if p]
+        all_pids = _lsof_pids(port)
+        if len(all_pids) == 1 and all_pids[0] == os.getpid():
+            log.warning("port %d still held by this process (PID %d); "
+                        "in-process server leaked, reporting free", port, all_pids[0])
+            return True
+        pids = _foreign_pids(all_pids)
         if not pids:
             return True
         # Still alive — SIGKILL anyone who won't die
