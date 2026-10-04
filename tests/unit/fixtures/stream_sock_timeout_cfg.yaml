@@ -1,0 +1,14 @@
+default:
+  model-start-port: 18020
+  model-ports: 4
+  stream-sock-timeout: 450
+
+backends: {}
+runners:
+  process:
+    class-name: ProcessRunner
+
+models:
+  m1:
+    model: dummy/x:Q4_K_M
+

@@ -282,7 +282,8 @@ class ModelArkestra:
             ctx = _Model(ctx_name, None, max_log_lines=500)
             ctx.backend_id = backend_id
             ctx.runner_type = runner_type
-            ctx._stream_sock_timeout = self._cm.get("default/stream-sock-timeout", None)
+            # Model → checkpoint → default chain (None falls back to the provider's hardcoded value).
+            ctx._stream_sock_timeout = self.resolve_stream_sock_timeout(primary)
             if not is_cached:
                 ctx._state = RunnerState.UNCACHED   # construction-time init
             if resolved.cache_path:
@@ -331,6 +332,31 @@ class ModelArkestra:
 
     def get_model(self, model_name: str, env_vars: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         return self._cm.get_model(model_name, env_vars)
+
+    def resolve_stream_sock_timeout(self, model_name: str):
+        """Stream sock-read timeout with the standard resolution chain.
+
+        Model entry → checkpoint entry → ``default/stream-sock-timeout`` → None
+        (None lets LlamaProvider fall back to its hardcoded default).
+        Bounds silence between stream chunks — agentic tool-call gaps and slow
+        per-token rates on large models legitimately exceed short values.
+        """
+        if self.get_model(model_name) is None:
+            return None  # unknown model — nothing at any level can apply to it
+        cfg = self.get_model(model_name) or {}
+        val = cfg.get("stream-sock-timeout")
+        if isinstance(val, (int, float)):
+            return float(val)
+        ckpt_id = self._cm.checkpoint_for(model_name)
+        if ckpt_id is not None:
+            ckpt_cfg = self._cm.get_checkpoint(ckpt_id) or {}
+            val = ckpt_cfg.get("stream-sock-timeout")
+            if isinstance(val, (int, float)):
+                return float(val)
+        val = self._cm.get("default/stream-sock-timeout", None)
+        if isinstance(val, (int, float)):
+            return float(val)
+        return None
 
     def get_models(self) -> list:
         return self._cm.get_models()

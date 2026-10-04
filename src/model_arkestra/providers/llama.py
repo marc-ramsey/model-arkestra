@@ -50,7 +50,9 @@ _CHAT_TIMEOUT = 60.0
 # ~2 min in) killing streams that were fine. Bounded at 600s so a truly wedged
 # llama-server still surfaces an error instead of hanging forever; dead peers
 # are caught immediately by TCP reset, not this timeout.
-_DEFAULT_STREAM_SOCK_READ = 600.0
+# Floor is deliberately generous: a silent stream mid-flight usually means the
+# client (agentic tool execution) or one very slow token, not a dead peer.
+_DEFAULT_STREAM_SOCK_READ = 300.0
 
 
 def stream_timeout(sock_read: Optional[float] = None) -> aiohttp.ClientTimeout:
