@@ -12,6 +12,7 @@ from model_arkestra.gpu_detect import has_rocm, has_vulkan, has_nvidia, detect_a
 from model_arkestra.base import BaseRunner
 from model_arkestra.common import (
     _resolve_backend, _resolve_device_profile, default_cache_root,
+    resolve_key_chain,
     ModelRef,
     resolve_config_path, image_and_runner_for_backend, resolve_model_ref,
     resolve_model_path_str,
@@ -341,21 +342,20 @@ class ModelArkestra:
         Bounds silence between stream chunks — agentic tool-call gaps and slow
         per-token rates on large models legitimately exceed short values.
         """
-        if self.get_model(model_name) is None:
+        cfg = self.get_model(model_name)  # merged view: checkpoint + instance
+        if cfg is None:
             return None  # unknown model — nothing at any level can apply to it
-        cfg = self.get_model(model_name) or {}
-        val = cfg.get("stream-sock-timeout")
+        backend_id = _resolve_backend(self._cm, cfg, model_name)
+        be_cfg = (self._cm.data.get("backends") or {}).get(backend_id) or {}
+        val = resolve_key_chain(
+            cfg,
+            be_cfg.get("args"),
+            self._cm.data.get("default") or {},
+            "stream-sock-timeout",
+        )
         if isinstance(val, (int, float)):
             return float(val)
-        ckpt_id = self._cm.checkpoint_for(model_name)
-        if ckpt_id is not None:
-            ckpt_cfg = self._cm.get_checkpoint(ckpt_id) or {}
-            val = ckpt_cfg.get("stream-sock-timeout")
-            if isinstance(val, (int, float)):
-                return float(val)
-        val = self._cm.get("default/stream-sock-timeout", None)
-        if isinstance(val, (int, float)):
-            return float(val)
+        # Non-numeric at every level — a typo must not wedge the provider.
         return None
 
     def get_models(self) -> list:

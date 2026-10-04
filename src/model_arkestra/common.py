@@ -436,6 +436,22 @@ def _runtime_macros(cm: Any) -> Dict[str, Any]:
     return macros
 
 
+def resolve_key_chain(model_cfg: Optional[Dict], backend_args: Optional[Dict],
+                      default_section: Optional[Dict], key: str) -> Any:
+    """First non-empty value of *key* across model → backend.args → default.
+
+    Pure dict walk — no macro expansion, no schema gating. Callers wanting
+    ``${...}`` resolution per level use :func:`_resolve_arg`; callers with a
+    typed expectation (e.g. numeric) validate the result themselves so an
+    ill-typed value can fall through rather than error.
+    """
+    for d in (model_cfg, backend_args, default_section):
+        v = d.get(key) if isinstance(d, dict) else None
+        if v is not None and v != "":
+            return v
+    return None
+
+
 def _resolve_arg(model_data: Dict, backend_cfg: Dict, default_section: Dict,
                  key: str, cm: Any, macros: Dict[str, Any]):
     """Resolve one key through the unified chain.

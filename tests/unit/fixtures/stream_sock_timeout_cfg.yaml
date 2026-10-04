@@ -1,9 +1,9 @@
-default:
-  model-start-port: 18020
-  model-ports: 4
-  stream-sock-timeout: 450
+backends:
+  gpu:
+    runner: process
+    args:
+      stream-sock-timeout: 600
 
-backends: {}
 runners:
   process:
     class-name: ProcessRunner
@@ -11,4 +11,5 @@ runners:
 models:
   m1:
     model: dummy/x:Q4_K_M
-
+    backend: gpu
+    stream-sock-timeout: 900

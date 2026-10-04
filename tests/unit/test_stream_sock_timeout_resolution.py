@@ -1,12 +1,11 @@
-"""Resolution chain for stream-sock-timeout: model → checkpoint → default.
+"""Resolution chain for stream-sock-timeout:
+model → checkpoint(merged) → backend.args → default.
 
 The value bounds the gap between SSE chunks on an in-flight stream (aiohttp
-sock_read). A per-model override must win over a per-checkpoint one, which wins
-over ``default/stream-sock-timeout``; nothing set anywhere yields None so the
-provider falls back to its hardcoded floor.
-
-Each case writes plain YAML literals — no f-string indentation gymnastics.
-Model entries are indented under ``models:`` (YAML requires it).
+sock_read). Nothing set anywhere yields None so the provider falls back to its
+hardcoded floor. The walk is shared with build_model_args via resolve_key_chain()
+in common.py; this key deliberately stays OUT of schemas.yaml — it configures a
+provider, not inference.
 """
 from __future__ import annotations
 
@@ -85,3 +84,21 @@ class TestStreamSockTimeoutChain:
         y = _yaml(default_extra="\n  stream-sock-timeout: 450",
                   models_block="\n  m1:\n    model: dummy/x:Q4_K_M\n")
         assert _arkestra(y).resolve_stream_sock_timeout("ghost") is None
+
+    def test_backend_args_wins_over_default(self):
+        """backend.args level — the rung added by sharing resolve_key_chain()."""
+        y = (f"default:\n  model-start-port: 18020\n  model-ports: 4\n"
+             f"  stream-sock-timeout: 450\n\n"
+             f"backends:\n  gpu:\n    runner: process\n"
+             f"    args:\n      stream-sock-timeout: 600\n\n"
+             f"runners:\n  process:\n    class-name: ProcessRunner\n\n"
+             f"models:\n  m1:\n    model: dummy/x:Q4_K_M\n    backend: gpu\n")
+        assert _arkestra(y).resolve_stream_sock_timeout("m1") == 600.0
+
+    def test_model_wins_over_backend_args(self):
+        y = (f"backends:\n  gpu:\n    runner: process\n"
+             f"    args:\n      stream-sock-timeout: 600\n\n"
+             f"runners:\n  process:\n    class-name: ProcessRunner\n\n"
+             f"models:\n  m1:\n    model: dummy/x:Q4_K_M\n    backend: gpu\n"
+             f"    stream-sock-timeout: 900\n")
+        assert _arkestra(y).resolve_stream_sock_timeout("m1") == 900.0
