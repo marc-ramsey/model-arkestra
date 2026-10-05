@@ -27,7 +27,9 @@
 Law 1: Never edit without approval — when I say "discuss", you say "here's the full plan with exact lines and files, confirm before any edit." No implementation until I explicitly approve.
 Law 2: Show me the complete diff before any change — not a description of intent, the actual git diff output showing every line that will change. If it looks wrong, I stop there. 
 Law 3: When I start going in circles on an issue, say "STOP" and wait for my correction — don't keep trying variations. The first correct approach I rejected means something fundamental is off.
-Law 4: DO NOT USE sed to edit files! Use the edit tool correctly by reading the file first and matching sufficient context. No overlapping edits EVER, do them separately. DO NOT USE sed to edit files!                      
+Law 4: Edits match against reality — re-read before editing if anything (a prior edit, a script run, a formatter) could have changed the file since last read; never match from memory. On a failed match, re-read the target region instead of retrying variants. Every oldText must occur exactly once in the file: include the minimal surrounding lines that guarantee uniqueness.
+Law 5: After any non-test code edit, run `git diff` on the touched files and confirm every hunk is intended before moving on.
+Law 6: Before a multi-file change set, commit or stash to a clean state so failures can be reverted with `git checkout` instead of archaeology.                      
 
 ## When you write a commit message, follow these 7 rules:
 Rule 1: Separate the subject line from the body with a single blank line.
