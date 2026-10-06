@@ -193,6 +193,7 @@ class ArkestraAdmin:
         self._add_pull_stop_route()
         self._add_api_models_route()
         self._add_api_clusters_route()
+        self._add_plugins_route()
         self._installed = True
         return self
 
@@ -994,6 +995,12 @@ class ArkestraAdmin:
                 base_url = str(cfg.get("url", ""))
                 result.append({"name": name, "url": base_url})
             return {"clusters": result}
+
+    def _add_plugins_route(self) -> None:
+        @self._app.get("/admin/plugins")
+        async def admin_plugins():
+            """Loaded plugins with load state (ok/error + reason)."""
+            return {"plugins": getattr(self.server, "_plugins", [])}
 
 
 # Type hints — resolved at runtime via string ref

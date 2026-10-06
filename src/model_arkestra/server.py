@@ -775,6 +775,10 @@ class ArkestraServer:
                                     base_url=self.base_url)
         self._admin.install()
 
+        # ── Plugins (config plugins: paths → mounted at /api/plugins/<name>) ─
+        from model_arkestra.plugins import load_plugins
+        self._plugins = load_plugins(app, self)
+
         self._app = app
         return app
 
