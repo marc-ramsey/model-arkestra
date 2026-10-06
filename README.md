@@ -198,14 +198,14 @@ See [Configuration Format](./docs/config.md#remote-federation-runner-remote) for
 
 Models are downloaded via HuggingFace Hub. Control where they land by setting `HF_HUB_CACHE`:
 
-- **Via config.yaml** in the `default-env:` section (resolved through `_env` at startup):
+- **Via config.yaml** in the `env:` section (resolved through `_env` at startup):
   ```yaml
-  default-env:
+  env:
     hf-hub-cache: /data/hf-cache
   ```
 - **Or as an environment variable** in the host shell (`HF_HUB_CACHE`).
 
-The default is `~/.cache/huggingface/hub`. The [`config.md`](./docs/config.md#default-env---runtime-environment-variables) has full details on the `default-env:` section.
+The default is `~/.cache/huggingface/hub`. The [`config.md`](./docs/config.md#env---runtime-environment-variables) has full details on the `env:` section.
 
 ## Capabilities
 

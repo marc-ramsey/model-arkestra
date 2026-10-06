@@ -589,10 +589,10 @@ def _resolve_backend(
 def resolve_admin_key(data: Dict[str, Any]) -> Optional[str]:
     """Resolve the admin API key from a merged config dict.
 
-    Lookup order: ``default.admin-key`` → ``default-env.admin_key`` →
+    Lookup order: ``default.admin-key`` → ``env.admin_key`` →
     ``env.ADMIN_KEY``. Returns None if none are set.
     """
-    for section, key in (("default", "admin-key"), ("default-env", "admin_key")):
+    for section, key in (("default", "admin-key"), ("env", "admin_key")):
         val = (data.get(section) or {}).get(key)
         if val:
             return str(val)

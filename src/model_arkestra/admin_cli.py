@@ -47,7 +47,7 @@ def _load_config(path: str | None = None) -> dict:
 def _read_admin_key(config_path: str | None = None) -> str | None:
     """Read the admin API key from config.yaml.
 
-    Checks, in order: default.admin-key, default-env.admin_key, env.ADMIN_KEY.
+    Checks, in order: default.admin-key, env.admin_key, env.ADMIN_KEY.
     Returns None if none are set.
     """
     return resolve_admin_key(_load_config(config_path))
@@ -136,7 +136,7 @@ async def cmd_status(args: argparse.Namespace) -> None:
     from model_arkestra.common import default_cache_root
     data = _load_config(args.config)
     hf_cache = None
-    hc = (data.get("default-env") or {}).get("hf-hub-cache") or os.environ.get("HF_HUB_CACHE")
+    hc = (data.get("env") or {}).get("hf-hub-cache") or os.environ.get("HF_HUB_CACHE")
     if hc:
         hf_cache = str(Path(hc).expanduser())
     if not hf_cache:

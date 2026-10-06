@@ -72,10 +72,10 @@ def _read_api_key(config_path: Path) -> str | None:
     """Read api_key or admin_key from config for /api/* auth."""
     data = _load_config_data(config_path)
     default = data.get("default") or {}
-    default_env = data.get("default-env") or {}
-    key = (default_env.get("api-key") or default_env.get("api_key")
+    env_sec = data.get("env") or {}
+    key = (env_sec.get("api-key") or env_sec.get("api_key")
            or default.get("api_key") or data.get("api_key")
-           or default_env.get("admin-key") or default_env.get("admin_key")
+           or env_sec.get("admin-key") or env_sec.get("admin_key")
            or default.get("admin_key") or data.get("admin_key"))
     return str(key) if key else None
 

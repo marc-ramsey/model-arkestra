@@ -89,7 +89,7 @@ class TestMakeConn:
     def test_api_key_from_config(self, tmp_path, monkeypatch):
         from model_arkestra.cli import _make_conn
         cfg = tmp_path / "config.yaml"
-        cfg.write_text("default-env:\n  api-key: cfg-key\n")
+        cfg.write_text("env:\n  api-key: cfg-key\n")
         monkeypatch.setenv("ARKESTRA_CONFIG", str(cfg))
         conn = _make_conn(_args())
         assert conn.api_key == "cfg-key"
@@ -97,7 +97,7 @@ class TestMakeConn:
     def test_flag_key_beats_config(self, tmp_path, monkeypatch):
         from model_arkestra.cli import _make_conn
         cfg = tmp_path / "config.yaml"
-        cfg.write_text("default-env:\n  api-key: cfg-key\n")
+        cfg.write_text("env:\n  api-key: cfg-key\n")
         monkeypatch.setenv("ARKESTRA_CONFIG", str(cfg))
         conn = _make_conn(_args(api_key="flag-key"))
         assert conn.api_key == "flag-key"

@@ -4,7 +4,7 @@ Model Arkestra ships an administrative panel that integrates into the same FastA
 
 ## Public Endpoints (No Auth)
 
-The `/api/*` namespace exposes read-only endpoints. When `api_key` is set in `config.default-env.api_key` (via the computed `_env` section), these endpoints require a `Bearer` token matching the key — enabling API-level auth.
+The `/api/*` namespace exposes read-only endpoints. When `api_key` is set in `config.env.api_key` (via the computed `_env` section), these endpoints require a `Bearer` token matching the key — enabling API-level auth.
 
 | Method | Path | Description |
 |---|---|---|
@@ -19,10 +19,10 @@ When `api_key` is configured, include `Authorization: Bearer <api_key>` to acces
 
 ## Configuring Auth
 
-Both namespaces gate independently. Set the keys in `config.yaml`'s `default-env:` section:
+Both namespaces gate independently. Set the keys in `config.yaml`'s `env:` section:
 
 ```yaml
-default-env:
+env:
   admin_key: supersecret    # gates /admin/* — header: Bearer <key>
   api_key: apipublic        # gates /api/* — header: Bearer <key>
 ```
@@ -42,7 +42,7 @@ server = ArkestraServer(
 app = server.get_app()
 ```
 
-The key resolves with priority: **constructor argument** > `_env.admin_key` (computed from `config.default-env.admin_key` + process env) > disabled (no auth).
+The key resolves with priority: **constructor argument** > `_env.admin_key` (computed from `config.env.admin_key` + process env) > disabled (no auth).
 
 When `admin_key` is provided, every request to `/admin/*` must include the header:
 
@@ -661,7 +661,7 @@ arkestra-admin --url http://localhost:8080 --api-key SECRET <command>
 ### Authentication Priority
 1. `--api-key KEY` flag (highest)
 2. `$ARKESTRA_API_KEY` environment variable
-3. `admin_key` from `config.yaml`'s `default-env:` section
+3. `admin_key` from `config.yaml`'s `env:` section
 
 ### Commands
 

@@ -55,7 +55,7 @@ class TestCacheRoot:
         with tempfile.TemporaryDirectory() as td:
             cfg_path = os.path.join(td, "cfg.yaml")
             with open(cfg_path, "w") as f:
-                f.write(f"default-env:\n  hf_hub_cache: {td}\nmodels: {{}}\n")
+                f.write(f"env:\n  hf_hub_cache: {td}\nmodels: {{}}\n")
             ma = ModelArkestra(cfg_path)
             assert ma._cache_root() == Path(td)
 
@@ -64,7 +64,7 @@ class TestCacheRoot:
             # Set env var before ModelArkestra construction so _env picks it up
             cfg_path = os.path.join(td, "cfg.yaml")
             with open(cfg_path, "w") as f:
-                f.write("default-env:\n  hf_hub_cache: /config/hf\nmodels: {}\n")
+                f.write("env:\n  hf_hub_cache: /config/hf\nmodels: {}\n")
             monkeypatch.setenv("HF_HUB_CACHE", "/os-env/hf")
             ma = ModelArkestra(cfg_path)
             assert ma._cache_root() == Path("/os-env/hf")
@@ -73,7 +73,7 @@ class TestCacheRoot:
         with tempfile.TemporaryDirectory() as td:
             cfg_path = os.path.join(td, "cfg.yaml")
             with open(cfg_path, "w") as f:
-                f.write(f"default-env:\n  hf_hub_cache: {td}\nmodels: {{}}\n")
+                f.write(f"env:\n  hf_hub_cache: {td}\nmodels: {{}}\n")
             monkeypatch.setenv("HF_HUB_CACHE", "/os-env/hf")
             ma = ModelArkestra(cfg_path)
             assert ma._cache_root() == Path("/os-env/hf")
@@ -96,7 +96,7 @@ class TestCacheDirForCheckpoint:
         with tempfile.TemporaryDirectory() as td:
             cfg_path = os.path.join(td, "cfg.yaml")
             with open(cfg_path, "w") as f:
-                f.write(f"default-env:\n  hf_hub_cache: {td}\nmodels: {{}}\n")
+                f.write(f"env:\n  hf_hub_cache: {td}\nmodels: {{}}\n")
             ma = ModelArkestra(cfg_path)
             result = ma._cache_dir_for_checkpoint("unsloth/Qwen3-4B-GGUF:Q4_K_M")
             expected = Path(td) / "models--unsloth--Qwen3-4B-GGUF:Q4_K_M"
@@ -107,7 +107,7 @@ class TestCacheDirForCheckpoint:
         with tempfile.TemporaryDirectory() as td:
             cfg_path = os.path.join(td, "cfg.yaml")
             with open(cfg_path, "w") as f:
-                f.write(f"default-env:\n  hf_hub_cache: {td}\nmodels: {{}}\n")
+                f.write(f"env:\n  hf_hub_cache: {td}\nmodels: {{}}\n")
             ma = ModelArkestra(cfg_path)
             result = ma._cache_dir_for_checkpoint("meta-llama/Llama-3.2-1B")
             expected = Path(td) / "models--meta-llama--Llama-3.2-1B"
@@ -133,7 +133,7 @@ class TestEjectMethod:
         ma = self._make_arkestra()
         with tempfile.TemporaryDirectory() as tmpdir:
             # Override cache root to our temp dir
-            ma._cm.data["default_env"] = {"hf_hub_cache": tmpdir}
+            ma._cm.data["env"] = {"hf_hub_cache": tmpdir}
 
             # Build runner with qwen3.5-4b in RUNNING state
             runner = MockRunner()
@@ -163,8 +163,8 @@ class TestEjectMethod:
         monkeypatch.delenv("HF_HUB_CACHE", raising=False)
         ma = self._make_arkestra()
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Set default-env (kebab-case) and invalidate cached _env
-            ma._cm.data["default-env"] = {"hf_hub_cache": tmpdir}
+            # Set env (kebab-case) and invalidate cached _env
+            ma._cm.data["env"] = {"hf_hub_cache": tmpdir}
             ma._env = None  # force rebuild on next resolve_config
 
             runner = MockRunner()
@@ -215,7 +215,7 @@ class TestEjectMethod:
         ma = self._make_arkestra()
         with tempfile.TemporaryDirectory() as tmpdir:
             # Set cache root first so all paths resolve correctly
-            ma._cm.data["default_env"] = {"hf_hub_cache": tmpdir}
+            ma._cm.data["env"] = {"hf_hub_cache": tmpdir}
 
             shared_checkpoint = "shared/same-model:Q4_K_M"
             shared_cache_path = "shared/same-model"
@@ -254,7 +254,7 @@ class TestEjectMethod:
         ma = self._make_arkestra()
         with tempfile.TemporaryDirectory() as tmpdir:
             # Set cache root first so all paths resolve correctly
-            ma._cm.data["default_env"] = {"hf_hub_cache": tmpdir}
+            ma._cm.data["env"] = {"hf_hub_cache": tmpdir}
 
             shared_checkpoint = "shared/same-model:Q4_K_M"
             shared_cache_path = "shared/same-model"

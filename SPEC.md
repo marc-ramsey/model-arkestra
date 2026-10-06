@@ -60,7 +60,7 @@ precedence, all keys:
   filled from `default:` (`model-repo`, `model-quant`).
 - **Args**: model `args:` dict + runtime inference kwargs (last wins),
   merged flat, then converted to CLI tokens by the engine.
-- **Env keys** (`default-env:` + process env): explicit arg → `os.environ` →
+- **Env keys** (`env:` + process env): explicit arg → `os.environ` →
   YAML default. Computed at startup, never persisted.
 
 ### Model entry

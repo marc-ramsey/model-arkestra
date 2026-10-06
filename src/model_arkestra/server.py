@@ -194,7 +194,7 @@ class ArkestraServer:
             e.g. {"gpt-4": "qwen3-4b", "claude": "llama3"}
         extra_headers: Extra response headers to inject on every response.
         admin_key: Admin panel API key — gates all /admin/* paths. Falls back
-            to config.default_env.admin_key (via _env) if not provided.
+            to config.env.admin_key (via _env) if not provided.
         base_url: URL path prefix for all endpoints (e.g. "/ark"). Defaults
             to no prefix. Resolved from the public URL's path component
             (``--url`` / ``ARKESTRA_URL`` / config ``default.url``).
@@ -1073,7 +1073,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.config or Path(resolved_path).exists():
         try:
             cm = ConfigManager(str(resolved_path))
-            hc = cm.get("default-env/hf-hub-cache") or os.environ.get("HF_HUB_CACHE")
+            hc = cm.get("env/hf-hub-cache") or os.environ.get("HF_HUB_CACHE")
             if hc:
                 hf_cache = str(Path(hc).expanduser())
         except Exception:

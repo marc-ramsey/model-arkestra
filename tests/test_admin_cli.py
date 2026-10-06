@@ -2,7 +2,7 @@
 
 arkestra-admin now resolves its target via the shared ``conn.resolve_conn``:
     --url  >  ARKESTRA_URL env  >  config default.url  >  http://127.0.0.1:8080
-and auth via  --api-key  >  ARKESTRA_API_KEY  >  config default-env.admin_key.
+and auth via  --api-key  >  ARKESTRA_API_KEY  >  config env.admin_key.
 The resolved ``Conn`` is attached to ``args.conn`` before dispatch.
 """
 from __future__ import annotations
@@ -39,14 +39,14 @@ class TestLoadConfig:
 
 
 # ═══════════════════════════════════════════════════════════════
-# _read_admin_key — default-env section reader
+# _read_admin_key — env section reader
 # ═══════════════════════════════════════════════════════════════
 
 
 class TestReadAdminKey:
     def test_reads_from_default_env_section(self, tmp_path):
         cfg = tmp_path / "config.yaml"
-        cfg.write_text("default-env:\n  admin_key: supersecret\n")
+        cfg.write_text("env:\n  admin_key: supersecret\n")
         assert _read_admin_key(str(cfg)) == "supersecret"
 
     def test_returns_none_when_no_env(self, tmp_path):
@@ -127,7 +127,7 @@ class TestApiKeyResolution:
         assert args.conn.api_key == "envkey"
 
     def test_api_key_from_config(self, tmp_path):
-        cfg = _make_config({"default-env": {"admin_key": "cfgkey"}}, tmp_path)
+        cfg = _make_config({"env": {"admin_key": "cfgkey"}}, tmp_path)
         env = {k: v for k, v in os.environ.items() if k != "ARKESTRA_API_KEY"}
         with patch.dict(os.environ, env, clear=True):
             args = _run_main(["--config", cfg, "models"])

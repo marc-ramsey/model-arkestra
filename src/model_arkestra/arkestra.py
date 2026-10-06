@@ -475,16 +475,16 @@ class ModelArkestra:
     # ── env resolution (computed at init, never persisted) ───────
 
     def _ensure_env(self) -> Dict[str, str]:
-        """Merge default-env YAML with actual os.environ into _env (lazily, once).
+        """Merge env YAML with actual os.environ into _env (lazily, once).
 
-        precedence: explicit constructor args > os.environ > default-env defaults.
+        precedence: explicit constructor args > os.environ > env defaults.
         The _env dict is computed once at startup and never written to disk.
         Keys are normalized to kebab-case regardless of YAML convention used.
         Env var lookup uppercases the key and replaces '-' with '_'.
         """
         if getattr(self, "_env", None) is not None:
             return self._env
-        defaults = self._cm.get("default-env", {}) or {}
+        defaults = self._cm.get("env", {}) or {}
         result: Dict[str, str] = {}
         for raw_key in defaults:
             # Normalize any case/convention to kebab-case
@@ -507,9 +507,9 @@ class ModelArkestra:
         Input is normalized to kebab-case before lookup, so underscore or
         camelCase inputs also work: ``resolve_config("admin_key")`` resolves
         the same as ``resolve_config("admin-key")``.
-        Precedence: explicit arg → _env (default-env + os.environ merged).
+        Precedence: explicit arg → _env (env + os.environ merged).
         The _env section is never persisted to disk — it's always freshly
-        computed from default-env config values plus the actual process env.
+        computed from env config values plus the actual process env.
         """
         if explicit is not None and explicit != "":
             return explicit

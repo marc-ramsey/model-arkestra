@@ -56,7 +56,7 @@ default:
   model-repo: unsloth           # default HuggingFace repo owner
   model-quant: Q4_K_M          # default quantizer suffix
 
-default-env:
+env:
   admin_key: whatever
   hf-hub-cache: ~/.cache/huggingface
 
@@ -129,7 +129,7 @@ ONNX model keys:
 
 See [ONNX Server](./onnx-server.md) for full documentation.
 
-### `default-env:` — Runtime Environment Variables
+### `env:` — Runtime Environment Variables
 
 All env-var-backed settings are declared here in **kebab-case**. Values are merged with the actual process environment at startup into a computed `_env` section (never persisted to disk).
 
@@ -145,7 +145,7 @@ Keys can also be overridden at runtime via the actual process environment variab
 
 #### Example:
 ```yaml
-default-env:
+env:
   admin_key: "supersecret"
   hf-hub-cache: /data/hf-cache
 ```

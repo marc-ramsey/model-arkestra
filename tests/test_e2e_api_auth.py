@@ -31,14 +31,14 @@ API_AUTH_PORT = 18004
 ADMIN_KEY = "super-admin-key"
 
 
-# ── Config with both api-key and admin-key set via default-env ───────────────
+# ── Config with both api-key and admin-key set via env ───────────────
 
 _API_KEY_CONFIG = """\
 default:
   model-start-port: 18200
   model-ports: 4
 
-default-env:
+env:
   admin-key: super-admin-key
   api-key: test-api-key
 

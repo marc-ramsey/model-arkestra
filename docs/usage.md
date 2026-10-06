@@ -52,7 +52,7 @@ The server serves a context-tabbed chat UI at `/` when the admin routes are
 mounted (i.e. on `ArkestraServer` deployments).
 
 - Open `http://host:port/` in a browser.
-- **Auth**: if the server runs with an `api_key` (or `default-env` key in
+- **Auth**: if the server runs with an `api_key` (or `env` key in
   config), the key is injected into the page automatically. If you reach the
   page without it, the browser prompts once on the first `401` and stores the
   key in `localStorage` (`arkestra-api-key`).
