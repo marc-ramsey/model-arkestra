@@ -41,7 +41,8 @@ def app_client():
     # Don't start the server — we only need the FastAPI app
     client = TestClient(server.get_app())
     key = server._arkestra.cm.data.get("env", {}).get("ADMIN_KEY") or ""
-    client.headers["X-Admin-Key"] = key
+    if key:
+        client.headers["Authorization"] = f"Bearer {key}"
     yield client
 
 
