@@ -271,7 +271,7 @@ class TestStreamForwarding:
 
         to = stream_timeout()
         assert to.total is None
-        assert to.sock_read == 120.0
+        assert to.sock_read == 300.0
 
     async def test_stream_sock_read_still_configurable(self):
         from model_arkestra.providers.llama import stream_timeout
