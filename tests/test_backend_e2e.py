@@ -289,7 +289,14 @@ def _build_e2e_config(combo_id: str, backend_name: str, model_key: int = 0,
                 out.append(f"{pfx}{k}: {_fmt(v)}")
         return out
 
+    # Isolate the HF cache explicitly — never inherit ambient HF_HUB_CACHE
+    # (a developer's personal cache would silently leak into e2e results).
+    hf_cache = _ensure_e2e_cache()
+
     lines = ["default:", f"  model-start-port: {MODEL_START}", f"  model-ports: {MODEL_PORTS}"]
+    lines.append("")
+    lines.append("env:")
+    lines.append(f"  HF_HUB_CACHE: {hf_cache}")
     lines.append("")
     lines.append("backends:")
     lines.append(f"  {backend_name}:")
