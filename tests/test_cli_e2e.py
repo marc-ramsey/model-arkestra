@@ -21,6 +21,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from tests.test_backend_e2e import (
+    _MODELS,
     ADMIN_PORT,
     COMBOS,
     _build_e2e_config,
@@ -52,13 +53,15 @@ def e2e_cli_server(request, e2e_cache):
     combo_id = request.param[0] if hasattr(request, "param") else "process-vulkan"
     backend_name = request.param[1] if hasattr(request, "param") else "vulkan-process"
 
+    model_name = _MODELS[0][0]
     config = _build_e2e_config(combo_id, backend_name)
     proxy, client = _start_server(ADMIN_PORT, config, combo_id)
 
     try:
         yield {"server": proxy, "client": client,
                "base_url": f"http://127.0.0.1:{ADMIN_PORT}",
-               "combo_id": combo_id}
+               "combo_id": combo_id,
+               "model_name": model_name}
     finally:
         try:
             _stop_all_and_wait(client, f"http://127.0.0.1:{ADMIN_PORT}")
@@ -71,7 +74,7 @@ class TestCliModels:
 
     @pytest.mark.parametrize("e2e_cli_server", COMBOS, indirect=True)
     def test_list_models(self, e2e_cli_server):
-        model_name = e2e_cli_server["combo_id"]
+        model_name = e2e_cli_server["model_name"]
         env = {"ARKESTRA_URL": f"http://127.0.0.1:{ADMIN_PORT}"}
 
         # Cache weights so /api/models lists the model (UNCACHED entries are hidden).
@@ -80,11 +83,11 @@ class TestCliModels:
 
         result = _run_cli("models", env_extra=env)
         assert result.returncode == 0, f"stderr: {result.stderr}"
-        assert e2e_cli_server["combo_id"] in result.stdout
+        assert model_name in result.stdout
 
     @pytest.mark.parametrize("e2e_cli_server", COMBOS, indirect=True)
     def test_list_models_filter(self, e2e_cli_server):
-        model_name = e2e_cli_server["combo_id"]
+        model_name = e2e_cli_server["model_name"]
         env = {"ARKESTRA_URL": f"http://127.0.0.1:{ADMIN_PORT}"}
 
         # Cache weights so /api/models lists the model (UNCACHED entries are hidden).
@@ -102,7 +105,7 @@ class TestCliChat:
     @pytest.mark.parametrize("e2e_cli_server", COMBOS, indirect=True)
     def test_chat_single_message(self, e2e_cli_server):
         """Send a message via stdin, get a response, then /quit."""
-        model_name = e2e_cli_server["combo_id"]
+        model_name = e2e_cli_server["model_name"]
         env = {"ARKESTRA_URL": f"http://127.0.0.1:{ADMIN_PORT}"}
 
         client = e2e_cli_server["client"]
@@ -120,7 +123,7 @@ class TestCliChat:
     @pytest.mark.parametrize("e2e_cli_server", COMBOS, indirect=True)
     def test_chat_with_inference_flags(self, e2e_cli_server):
         """Chat with -T and --max-tokens flags, send a message, quit."""
-        model_name = e2e_cli_server["combo_id"]
+        model_name = e2e_cli_server["model_name"]
         env = {"ARKESTRA_URL": f"http://127.0.0.1:{ADMIN_PORT}"}
 
         client = e2e_cli_server["client"]
@@ -139,7 +142,7 @@ class TestCliChat:
     @pytest.mark.parametrize("e2e_cli_server", COMBOS, indirect=True)
     def test_chat_slash_commands(self, e2e_cli_server):
         """Test /help, /system, /temperature in-loop commands."""
-        model_name = e2e_cli_server["combo_id"]
+        model_name = e2e_cli_server["model_name"]
         env = {"ARKESTRA_URL": f"http://127.0.0.1:{ADMIN_PORT}"}
 
         client = e2e_cli_server["client"]

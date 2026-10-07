@@ -440,7 +440,8 @@ def e2e_server(request, e2e_cache):
     try:
         yield {"server": proxy, "client": client,
                "base_url": f"http://127.0.0.1:{ADMIN_PORT}",
-               "combo_id": combo_id}
+               "combo_id": combo_id,
+               "model_name": _MODELS[0][0]}
     finally:
         # GUARANTEED cleanup — always runs even on exception/assertion failure
         try:
@@ -464,7 +465,8 @@ def e2e_single(request, e2e_cache):
     try:
         yield {"server": proxy, "client": client,
                "base_url": f"http://127.0.0.1:{unique_port}",
-               "combo_id": combo_id}
+               "combo_id": combo_id,
+               "model_name": _MODELS[0][0]}
     finally:
         # GUARANTEED cleanup — always runs even on exception/assertion failure
         try:
@@ -484,7 +486,7 @@ class TestFullLifecycle:
         """Single message → non-streaming response."""
         client = e2e_server["client"]
         base_url = e2e_server["base_url"]
-        model_name = e2e_server["combo_id"]
+        model_name = e2e_server["model_name"]
 
         ok = _start_model(client, base_url, model_name)
         try:
@@ -517,7 +519,7 @@ class TestFullLifecycle:
         """Single message → streaming SSE response."""
         client = e2e_server["client"]
         base_url = e2e_server["base_url"]
-        model_name = e2e_server["combo_id"]
+        model_name = e2e_server["model_name"]
 
         ok = _start_model(client, base_url, model_name)
         try:
@@ -641,7 +643,7 @@ class TestPullAndEject:
         """Eject a model while running — verify clean stop + cache deletion."""
         client = e2e_single["client"]
         base_url = e2e_single["base_url"]
-        eject_model_id = e2e_single["combo_id"]
+        eject_model_id = e2e_single["model_name"]
 
         ok = _start_model(client, base_url, eject_model_id)
         assert ok, f"{eject_model_id} failed to start"
@@ -683,7 +685,7 @@ class TestPullAndEject:
         """Eject a stopped model — basic cleanup path."""
         client = e2e_single["client"]
         base_url = e2e_single["base_url"]
-        eject_model_id = e2e_single["combo_id"]
+        eject_model_id = e2e_single["model_name"]
 
         resp = client.post(f"{base_url}/admin/eject/{eject_model_id}", timeout=120)
         assert resp.status_code == 200, f"Eject failed: {resp.text}"

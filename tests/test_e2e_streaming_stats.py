@@ -37,8 +37,6 @@ from test_backend_e2e import (  # noqa: E402
 
 E2E_LOCK = "/tmp/arkestra-e2e.lock"
 ADMIN_PORT = 18005          # distinct from test_backend_e2e's 18003/18004
-MODEL_NAME = "qwen3.5-4b"   # maps to Llama-3.2-1B-Instruct in _MODELS[0]
-
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -60,6 +58,7 @@ def streaming_server(e2e_serialized, e2e_cache, request):
 
     Depends on the session ``e2e_cache`` so weights are pre-downloaded —
     without it the model is UNCACHED and /admin/start 409s before any pull."""
+    from test_backend_e2e import _MODELS
     combo_id = request.param[0] if hasattr(request, "param") else "process-vulkan"
     backend_name = request.param[1] if hasattr(request, "param") else "vulkan-process"
 
@@ -69,7 +68,8 @@ def streaming_server(e2e_serialized, e2e_cache, request):
     try:
         yield {"server": proxy, "client": client,
                "base_url": f"http://127.0.0.1:{ADMIN_PORT}",
-               "combo_id": combo_id}
+               "combo_id": combo_id,
+               "model_name": _MODELS[0][0]}
     finally:
         # Guaranteed cleanup even on assertion failure — mirrors e2e_server.
         try:
@@ -118,9 +118,11 @@ class TestStreamingStatsE2E:
     def test_streaming_usage_recorded(self, streaming_server):
         base_url = streaming_server["base_url"]
 
-        _start_model_blocking(base_url, MODEL_NAME)
+        model_name = streaming_server["model_name"]
+
+        _start_model_blocking(base_url, model_name)
         try:
-            body = _consume_stream(base_url, MODEL_NAME)
+            body = _consume_stream(base_url, model_name)
             # Sanity: we got a real SSE stream with at least one content chunk.
             assert "data:" in body and "[DONE]" in body
 
