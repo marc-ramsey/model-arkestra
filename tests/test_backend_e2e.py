@@ -304,7 +304,7 @@ def _build_e2e_config(combo_id: str, backend_name: str, model_key: int = 0,
 
     lines.append("")
     lines.append("models:")
-    lines.append(f"  {combo_id}:")
+    lines.append(f"  {mname}:")
     lines.append(f"    model: {mref}")
     lines.append(f"    backend: {backend_name}")
     lines.append("    temp: 0.7")
